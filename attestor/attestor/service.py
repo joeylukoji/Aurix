@@ -91,7 +91,8 @@ def verify_capture(proof: dict, cap: dict) -> None:
     except (KeyError, TypeError, ValueError):
         raise Refused(f"capture amount invalid: {cap.get('amount')!r}") from None
     order_id = ((cap.get("supplementary_data") or {}).get("related_ids") or {}).get("order_id")
-    if order_id != order_ref:
+    # The gateway stores external_ref as "paypal:<order_id>"; accept both forms.
+    if order_id is None or order_id not in (order_ref, order_ref.removeprefix("paypal:")):
         raise Refused(f"capture order id {order_id!r} != external_ref {order_ref!r}")
     if proof_hash(order_id, cap_ref) != h.lower():
         raise Refused(f"sha256(order_id|capture_id) != proof hash {h}")

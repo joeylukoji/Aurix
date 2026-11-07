@@ -20,10 +20,14 @@ import (
 	evidencekeeper "cosmossdk.io/x/evidence/keeper"
 	evidencetypes "cosmossdk.io/x/evidence/types"
 	"cosmossdk.io/x/tx/signing"
+	"cosmossdk.io/x/upgrade"
+	upgradekeeper "cosmossdk.io/x/upgrade/keeper"
+	upgradetypes "cosmossdk.io/x/upgrade/types"
 	abci "github.com/cometbft/cometbft/abci/types"
 	dbm "github.com/cosmos/cosmos-db"
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/client/flags"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	nodeservice "github.com/cosmos/cosmos-sdk/client/grpc/node"
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -31,6 +35,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	runtimeservices "github.com/cosmos/cosmos-sdk/runtime/services"
+	"github.com/cosmos/cosmos-sdk/server"
 	"github.com/cosmos/cosmos-sdk/server/api"
 	"github.com/cosmos/cosmos-sdk/server/config"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
@@ -54,7 +59,11 @@ import (
 	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
 	"github.com/cosmos/cosmos-sdk/x/genutil"
 	genutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
+	"github.com/cosmos/cosmos-sdk/x/gov"
+	govclient "github.com/cosmos/cosmos-sdk/x/gov/client"
+	govkeeper "github.com/cosmos/cosmos-sdk/x/gov/keeper"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+	govv1beta1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
 	"github.com/cosmos/cosmos-sdk/x/slashing"
 	slashingkeeper "github.com/cosmos/cosmos-sdk/x/slashing/keeper"
 	slashingtypes "github.com/cosmos/cosmos-sdk/x/slashing/types"
@@ -62,6 +71,7 @@ import (
 	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/cosmos/gogoproto/proto"
+	"github.com/spf13/cast"
 
 	"github.com/joeylukoji/aurix/chain/x/smartmoney"
 	smkeeper "github.com/joeylukoji/aurix/chain/x/smartmoney/keeper"
@@ -81,6 +91,7 @@ var (
 		distrtypes.ModuleName:          nil,
 		stakingtypes.BondedPoolName:    {authtypes.Burner, authtypes.Staking},
 		stakingtypes.NotBondedPoolName: {authtypes.Burner, authtypes.Staking},
+		govtypes.ModuleName:            {authtypes.Burner},
 		smtypes.ModuleName:             nil,
 	}
 	_ servertypes.Application = (*App)(nil)
@@ -136,6 +147,8 @@ var ModuleBasics = module.NewBasicManager(
 	distr.AppModuleBasic{},
 	slashing.AppModuleBasic{},
 	evidence.AppModuleBasic{},
+	gov.NewAppModuleBasic([]govclient.ProposalHandler{}),
+	upgrade.AppModuleBasic{},
 	consensus.AppModuleBasic{},
 	smartmoney.AppModule{},
 )
@@ -153,13 +166,16 @@ type App struct {
 	SlashingKeeper   slashingkeeper.Keeper
 	EvidenceKeeper   evidencekeeper.Keeper
 	ConsensusKeeper  consensuskeeper.Keeper
+	GovKeeper        *govkeeper.Keeper
+	UpgradeKeeper    *upgradekeeper.Keeper
 	SmartMoneyKeeper smkeeper.Keeper
 
 	ModuleManager *module.Manager
+	configurator  module.Configurator
 }
 
 func New(logger log.Logger, db dbm.DB, traceStore io.Writer, loadLatest bool,
-	_ servertypes.AppOptions, baseAppOptions ...func(*baseapp.BaseApp)) *App {
+	appOpts servertypes.AppOptions, baseAppOptions ...func(*baseapp.BaseApp)) *App {
 	enc := MakeEncodingConfig()
 	bApp := baseapp.NewBaseApp(Name, logger, db, enc.TxConfig.TxDecoder(), baseAppOptions...)
 	bApp.SetCommitMultiStoreTracer(traceStore)
@@ -167,7 +183,8 @@ func New(logger log.Logger, db dbm.DB, traceStore io.Writer, loadLatest bool,
 	bApp.SetTxEncoder(enc.TxConfig.TxEncoder())
 
 	keys := storetypes.NewKVStoreKeys(authtypes.StoreKey, banktypes.StoreKey, stakingtypes.StoreKey,
-		consensustypes.StoreKey, distrtypes.StoreKey, slashingtypes.StoreKey, evidencetypes.StoreKey, smtypes.StoreKey)
+		consensustypes.StoreKey, distrtypes.StoreKey, slashingtypes.StoreKey, evidencetypes.StoreKey, govtypes.StoreKey,
+		upgradetypes.StoreKey, smtypes.StoreKey)
 	authority := authtypes.NewModuleAddress(govtypes.ModuleName).String()
 
 	app := &App{BaseApp: bApp, cdc: enc.Codec, interfaceRegistry: enc.InterfaceRegistry, txConfig: enc.TxConfig}
@@ -194,6 +211,23 @@ func New(logger log.Logger, db dbm.DB, traceStore io.Writer, loadLatest bool,
 	app.StakingKeeper.SetHooks(stakingtypes.NewMultiStakingHooks(app.DistrKeeper.Hooks(), app.SlashingKeeper.Hooks()))
 	app.EvidenceKeeper = *evidencekeeper.NewKeeper(enc.Codec, runtime.NewKVStoreService(keys[evidencetypes.StoreKey]),
 		app.StakingKeeper, app.SlashingKeeper, app.AccountKeeper.AddressCodec(), runtime.ProvideCometInfoService())
+	// x/upgrade: plans are scheduled by governance; skip heights come from --unsafe-skip-upgrades.
+	skipUpgradeHeights := map[int64]bool{}
+	for _, h := range cast.ToIntSlice(appOpts.Get(server.FlagUnsafeSkipUpgrades)) {
+		skipUpgradeHeights[int64(h)] = true
+	}
+	homePath := cast.ToString(appOpts.Get(flags.FlagHome))
+	if homePath == "" {
+		homePath = DefaultNodeHome
+	}
+	app.UpgradeKeeper = upgradekeeper.NewKeeper(skipUpgradeHeights, runtime.NewKVStoreService(keys[upgradetypes.StoreKey]),
+		enc.Codec, homePath, app.BaseApp, authority)
+	// x/gov v1: proposals execute authority-gated msgs through the msg service router;
+	// the legacy router only handles v1beta1 text proposals.
+	app.GovKeeper = govkeeper.NewKeeper(enc.Codec, runtime.NewKVStoreService(keys[govtypes.StoreKey]),
+		app.AccountKeeper, app.BankKeeper, app.StakingKeeper, app.DistrKeeper, app.MsgServiceRouter(),
+		govtypes.DefaultConfig(), authority)
+	app.GovKeeper.SetLegacyRouter(govv1beta1.NewRouter().AddRoute(govtypes.RouterKey, govv1beta1.ProposalHandler))
 	app.SmartMoneyKeeper = smkeeper.NewKeeper(enc.Codec, runtime.NewKVStoreService(keys[smtypes.StoreKey]), app.BankKeeper, authority)
 
 	app.ModuleManager = module.NewManager(
@@ -204,6 +238,8 @@ func New(logger log.Logger, db dbm.DB, traceStore io.Writer, loadLatest bool,
 		distr.NewAppModule(enc.Codec, app.DistrKeeper, app.AccountKeeper, app.BankKeeper, app.StakingKeeper, nil),
 		slashing.NewAppModule(enc.Codec, app.SlashingKeeper, app.AccountKeeper, app.BankKeeper, app.StakingKeeper, nil, enc.InterfaceRegistry),
 		evidence.NewAppModule(app.EvidenceKeeper),
+		gov.NewAppModule(enc.Codec, app.GovKeeper, app.AccountKeeper, app.BankKeeper, nil),
+		upgrade.NewAppModule(app.UpgradeKeeper, app.AccountKeeper.AddressCodec()),
 		consensus.NewAppModule(enc.Codec, app.ConsensusKeeper),
 		smartmoney.NewAppModule(enc.Codec, app.SmartMoneyKeeper),
 	)
@@ -211,18 +247,23 @@ func New(logger log.Logger, db dbm.DB, traceStore io.Writer, loadLatest bool,
 	// before evidence and staking (downtime jailing uses the last commit).
 	app.ModuleManager.SetOrderBeginBlockers(distrtypes.ModuleName, slashingtypes.ModuleName,
 		evidencetypes.ModuleName, stakingtypes.ModuleName)
-	app.ModuleManager.SetOrderEndBlockers(stakingtypes.ModuleName)
+	// The upgrade module runs in the pre-blocker (halts at a scheduled plan height, or runs its handler).
+	app.ModuleManager.SetOrderPreBlockers(upgradetypes.ModuleName)
+	// gov tallies proposals in its end blocker, before staking updates the validator set.
+	app.ModuleManager.SetOrderEndBlockers(govtypes.ModuleName, stakingtypes.ModuleName)
 	app.ModuleManager.SetOrderInitGenesis(authtypes.ModuleName, banktypes.ModuleName, distrtypes.ModuleName,
-		stakingtypes.ModuleName, slashingtypes.ModuleName, evidencetypes.ModuleName,
-		smtypes.ModuleName, genutiltypes.ModuleName, consensustypes.ModuleName)
+		stakingtypes.ModuleName, slashingtypes.ModuleName, govtypes.ModuleName, evidencetypes.ModuleName,
+		upgradetypes.ModuleName, smtypes.ModuleName, genutiltypes.ModuleName, consensustypes.ModuleName)
 	app.ModuleManager.SetOrderExportGenesis(consensustypes.ModuleName, authtypes.ModuleName, banktypes.ModuleName,
-		distrtypes.ModuleName, stakingtypes.ModuleName, slashingtypes.ModuleName, evidencetypes.ModuleName,
-		smtypes.ModuleName, genutiltypes.ModuleName)
+		distrtypes.ModuleName, stakingtypes.ModuleName, slashingtypes.ModuleName, govtypes.ModuleName,
+		evidencetypes.ModuleName, upgradetypes.ModuleName, smtypes.ModuleName, genutiltypes.ModuleName)
 
 	cfg := module.NewConfigurator(enc.Codec, app.MsgServiceRouter(), app.GRPCQueryRouter())
 	if err := app.ModuleManager.RegisterServices(cfg); err != nil {
 		panic(err)
 	}
+	app.configurator = cfg
+	app.registerUpgradeHandlers()
 	reflectionSvc, err := runtimeservices.NewReflectionService()
 	if err != nil {
 		panic(err)
@@ -231,6 +272,9 @@ func New(logger log.Logger, db dbm.DB, traceStore io.Writer, loadLatest bool,
 
 	app.MountKVStores(keys)
 	app.SetInitChainer(app.InitChainer)
+	app.SetPreBlocker(func(ctx sdk.Context, _ *abci.RequestFinalizeBlock) (*sdk.ResponsePreBlock, error) {
+		return app.ModuleManager.PreBlock(ctx)
+	})
 	app.SetBeginBlocker(func(ctx sdk.Context) (sdk.BeginBlock, error) { return app.ModuleManager.BeginBlock(ctx) })
 	app.SetEndBlocker(func(ctx sdk.Context) (sdk.EndBlock, error) { return app.ModuleManager.EndBlock(ctx) })
 
@@ -256,6 +300,10 @@ func New(logger log.Logger, db dbm.DB, traceStore io.Writer, loadLatest bool,
 func (app *App) InitChainer(ctx sdk.Context, req *abci.RequestInitChain) (*abci.ResponseInitChain, error) {
 	var gs map[string]json.RawMessage
 	if err := json.Unmarshal(req.AppStateBytes, &gs); err != nil {
+		return nil, err
+	}
+	// Record initial module versions so the first upgrade's RunMigrations skips unchanged modules.
+	if err := app.UpgradeKeeper.SetModuleVersionMap(ctx, app.ModuleManager.GetVersionMap()); err != nil {
 		return nil, err
 	}
 	return app.ModuleManager.InitGenesis(ctx, app.cdc, gs)

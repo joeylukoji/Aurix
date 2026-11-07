@@ -179,3 +179,8 @@ def test_health_endpoint():
         assert r.json()["address"] == att.address and r.json()["attested"] == 0 and r.json()["last_error"] is None
     finally:
         srv.shutdown()
+
+
+def test_accepts_gateway_prefixed_external_ref():
+    att, fake = make([proof(external_ref=f"paypal:{ORDER}")], capture())
+    assert list(att.run_once().values()) == ["attested"] and len(fake.broadcasts) == 1

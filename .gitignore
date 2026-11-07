@@ -10,3 +10,4 @@ chain/data/
 guardian/models/*.pkl
 e2e-*.png
 .run/
+.claude/
