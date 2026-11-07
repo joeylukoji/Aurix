@@ -1,0 +1,7 @@
+# aurix-testnet-2 peers. Operators add their entry by PR after the gentx step.
+# Format: <kind> <node_id>@<public_host>:<p2p_port>     kind = seed | persistent
+# node_id: aurixd comet show-node-id --home ~/.aurix
+# Behind sentries, list the SENTRY address here, never the validator's private address.
+#
+# seed       0123456789abcdef0123456789abcdef01234567@seed1.example.org:26656
+# persistent 89abcdef0123456789abcdef0123456789abcdef@val1.example.org:26656

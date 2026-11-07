@@ -1,0 +1,53 @@
+# Prometheus config for AURIX validators. Each operator exposes CometBFT metrics on 26660
+# (prometheus = true in config.toml; operator-start.sh enables it) to this server only.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules/aurix.rules.yml
+
+scrape_configs:
+  - job_name: aurix-validators
+    static_configs:
+      - targets: ["val1.example.org:26660"]
+        labels: { operator: "op1", moniker: "val1" }
+      - targets: ["val2.example.net:26660"]
+        labels: { operator: "op2", moniker: "val2" }
+      - targets: ["val3.example.com:26660"]
+        labels: { operator: "op3", moniker: "val3" }
+      - targets: ["val4.example.io:26660"]
+        labels: { operator: "op4", moniker: "val4" }
+  - job_name: aurix-app
+    metrics_path: /metrics
+    params: { format: ["prometheus"] }
+    static_configs:
+      - targets: ["val1.example.org:1317"]
+
+# ---------------------------------------------------------------------------
+# /etc/prometheus/rules/aurix.rules.yml (save this block as that file):
+#
+# groups:
+#   - name: aurix
+#     rules:
+#       - alert: AurixValidatorMissingBlocks
+#         # Gauge: blocks this node's validator did not sign.
+#         expr: delta(cometbft_consensus_validator_missed_blocks[10m]) > 10
+#         for: 5m
+#         labels: { severity: warning }
+#         annotations:
+#           summary: "{{ $labels.moniker }} missed {{ $value }} blocks in 10m"
+#       - alert: AurixValidatorDown
+#         expr: up{job="aurix-validators"} == 0
+#         for: 2m
+#         labels: { severity: critical }
+#       - alert: AurixChainHalted
+#         expr: increase(cometbft_consensus_height[5m]) == 0
+#         for: 2m
+#         labels: { severity: critical }
+#         annotations:
+#           summary: "no new block on {{ $labels.moniker }} for 5m"
+#       - alert: AurixFewPeers
+#         expr: cometbft_p2p_peers < 2
+#         for: 5m
+#         labels: { severity: warning }

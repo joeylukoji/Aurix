@@ -1,0 +1,61 @@
+# Public AURIX node: TLS (automatic Let's Encrypt), CORS limited to the wallet origin, rate limiting.
+# aurixd keeps RPC on 127.0.0.1:26657 and REST on 127.0.0.1:1317 with enabled-unsafe-cors = false.
+#
+# Rate limiting needs the caddy-ratelimit plugin:
+#   xcaddy build --with github.com/mholt/caddy-ratelimit
+# Env: NODE_DOMAIN (rpc.example.org), WALLET_ORIGIN (https://wallet.example.org)
+{
+	order rate_limit before basicauth
+}
+
+{$NODE_DOMAIN} {
+	encode gzip
+
+	@preflight method OPTIONS
+	@wallet header Origin {$WALLET_ORIGIN}
+
+	header @wallet {
+		Access-Control-Allow-Origin "{$WALLET_ORIGIN}"
+		Access-Control-Allow-Methods "GET, POST, OPTIONS"
+		Access-Control-Allow-Headers "Content-Type"
+		Access-Control-Max-Age "86400"
+		Vary Origin
+	}
+	respond @preflight 204
+
+	rate_limit {
+		zone per_ip {
+			key {remote_host}
+			events 20
+			window 1s
+		}
+		zone broadcast {
+			match {
+				method POST
+				path /rest/cosmos/tx/v1beta1/txs
+			}
+			key {remote_host}
+			events 2
+			window 1s
+		}
+	}
+
+	# REST (grpc-gateway): /rest/cosmos/..., /rest/aurix/...
+	handle_path /rest/* {
+		reverse_proxy 127.0.0.1:1317
+	}
+
+	# CometBFT RPC: read-only routes and tx broadcast; admin/unsafe routes are not exposed.
+	@rpc_allowed path /rpc/status /rpc/block /rpc/block_results /rpc/blockchain /rpc/validators /rpc/abci_info /rpc/abci_query /rpc/tx /rpc/tx_search /rpc/broadcast_tx_sync /rpc/health /rpc/net_info /rpc/commit
+	handle @rpc_allowed {
+		uri strip_prefix /rpc
+		reverse_proxy 127.0.0.1:26657
+	}
+	handle /rpc/* {
+		respond "forbidden" 403
+	}
+
+	handle {
+		respond "AURIX public node: /rest/* and /rpc/*" 200
+	}
+}
