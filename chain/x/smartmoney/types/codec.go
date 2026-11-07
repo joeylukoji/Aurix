@@ -12,10 +12,11 @@ func RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
 	cdc.RegisterConcrete(&MsgReleaseEscrow{}, "aurix/MsgReleaseEscrow", nil)
 	cdc.RegisterConcrete(&MsgRefundEscrow{}, "aurix/MsgRefundEscrow", nil)
 	cdc.RegisterConcrete(&MsgAnchorProof{}, "aurix/MsgAnchorProof", nil)
+	cdc.RegisterConcrete(&MsgUpdateParams{}, "aurix/x/smartmoney/MsgUpdateParams", nil)
 }
 
 func RegisterInterfaces(registry codectypes.InterfaceRegistry) {
 	registry.RegisterImplementations((*sdk.Msg)(nil),
-		&MsgCreateEscrow{}, &MsgReleaseEscrow{}, &MsgRefundEscrow{}, &MsgAnchorProof{})
+		&MsgCreateEscrow{}, &MsgReleaseEscrow{}, &MsgRefundEscrow{}, &MsgAnchorProof{}, &MsgUpdateParams{})
 	msgservice.RegisterMsgServiceDesc(registry, &_Msg_serviceDesc)
 }

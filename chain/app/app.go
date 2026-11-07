@@ -194,7 +194,7 @@ func New(logger log.Logger, db dbm.DB, traceStore io.Writer, loadLatest bool,
 	app.StakingKeeper.SetHooks(stakingtypes.NewMultiStakingHooks(app.DistrKeeper.Hooks(), app.SlashingKeeper.Hooks()))
 	app.EvidenceKeeper = *evidencekeeper.NewKeeper(enc.Codec, runtime.NewKVStoreService(keys[evidencetypes.StoreKey]),
 		app.StakingKeeper, app.SlashingKeeper, app.AccountKeeper.AddressCodec(), runtime.ProvideCometInfoService())
-	app.SmartMoneyKeeper = smkeeper.NewKeeper(enc.Codec, runtime.NewKVStoreService(keys[smtypes.StoreKey]), app.BankKeeper)
+	app.SmartMoneyKeeper = smkeeper.NewKeeper(enc.Codec, runtime.NewKVStoreService(keys[smtypes.StoreKey]), app.BankKeeper, authority)
 
 	app.ModuleManager = module.NewManager(
 		genutil.NewAppModule(app.AccountKeeper, app.StakingKeeper, app, enc.TxConfig),

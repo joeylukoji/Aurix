@@ -78,7 +78,26 @@ func GetQueryCmd() *cobra.Command {
 			return ctx.PrintProto(res)
 		},
 	}
-	for _, c := range []*cobra.Command{escrow, escrows, proof, params} {
+	pending := &cobra.Command{
+		Use: "pending-proofs", Short: "List payment proofs still awaiting attestations", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx, err := client.GetClientQueryContext(cmd)
+			if err != nil {
+				return err
+			}
+			page, err := client.ReadPageRequest(cmd.Flags())
+			if err != nil {
+				return err
+			}
+			res, err := types.NewQueryClient(ctx).PendingProofs(cmd.Context(), &types.QueryPendingProofsRequest{Pagination: page})
+			if err != nil {
+				return err
+			}
+			return ctx.PrintProto(res)
+		},
+	}
+	flags.AddPaginationFlagsToCmd(pending, "pending-proofs")
+	for _, c := range []*cobra.Command{escrow, escrows, proof, pending, params} {
 		flags.AddQueryFlagsToCmd(c)
 		cmd.AddCommand(c)
 	}
@@ -118,7 +137,21 @@ func GetTxCmd() *cobra.Command {
 	refund := idCmd("refund-escrow [id]", "Refund escrowed funds to the sender", func(s string, id uint64) sdk.Msg {
 		return &types.MsgRefundEscrow{Signer: s, EscrowId: id}
 	})
-	for _, c := range []*cobra.Command{create, release, refund} {
+	anchor := &cobra.Command{
+		Use:   "anchor-proof [hash] [external-ref] [capture-ref]",
+		Short: "Attest an external payment proof (signer must be an anchor signer)",
+		Args:  cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, err := client.GetClientTxContext(cmd)
+			if err != nil {
+				return err
+			}
+			msg := &types.MsgAnchorProof{Signer: ctx.GetFromAddress().String(), Hash: args[0],
+				ExternalRef: args[1], CaptureRef: args[2]}
+			return tx.GenerateOrBroadcastTxCLI(ctx, cmd.Flags(), msg)
+		},
+	}
+	for _, c := range []*cobra.Command{create, release, refund, anchor} {
 		flags.AddTxFlagsToCmd(c)
 		cmd.AddCommand(c)
 	}

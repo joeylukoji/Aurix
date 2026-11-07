@@ -15,6 +15,7 @@ import (
 
 type Keeper struct {
 	cdc          codec.BinaryCodec
+	authority    string
 	bank         types.BankKeeper
 	Schema       collections.Schema
 	Params       collections.Item[types.Params]
@@ -23,10 +24,11 @@ type Keeper struct {
 	Proofs       collections.Map[string, types.PaymentProof]
 }
 
-func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, bank types.BankKeeper) Keeper {
+func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, bank types.BankKeeper, authority string) Keeper {
 	sb := collections.NewSchemaBuilder(storeService)
 	k := Keeper{
 		cdc:          cdc,
+		authority:    authority,
 		bank:         bank,
 		Params:       collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 		Escrows:      collections.NewMap(sb, types.EscrowsKey, "escrows", collections.Uint64Key, codec.CollValue[types.Escrow](cdc)),
@@ -40,6 +42,9 @@ func NewKeeper(cdc codec.BinaryCodec, storeService store.KVStoreService, bank ty
 	k.Schema = schema
 	return k
 }
+
+// GetAuthority returns the address allowed to update params (the gov module account).
+func (k Keeper) GetAuthority() string { return k.authority }
 
 func (k Keeper) InitGenesis(ctx context.Context, gs types.GenesisState) error {
 	if err := k.Params.Set(ctx, gs.Params); err != nil {

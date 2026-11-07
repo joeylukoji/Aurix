@@ -136,14 +136,57 @@ func (k msgServer) AnchorProof(goCtx context.Context, msg *types.MsgAnchorProof)
 	if b, err := hex.DecodeString(h); err != nil || len(b) != 32 {
 		return nil, types.ErrInvalidHash
 	}
-	if has, err := k.Proofs.Has(ctx, h); err != nil || has {
-		return nil, types.ErrDuplicateProof
+	threshold := params.AnchorThreshold
+	if threshold == 0 {
+		threshold = 1
 	}
-	p := types.PaymentProof{Hash: h, ExternalRef: msg.ExternalRef, Height: ctx.BlockHeight(), Submitter: msg.Signer}
+	p, err := k.Proofs.Get(ctx, h)
+	switch {
+	case errors.Is(err, collections.ErrNotFound):
+		p = types.PaymentProof{Hash: h, ExternalRef: msg.ExternalRef, CaptureRef: msg.CaptureRef,
+			Height: ctx.BlockHeight(), FirstSeenHeight: ctx.BlockHeight(), Submitter: msg.Signer,
+			Status: types.PROOF_STATUS_PENDING}
+	case err != nil:
+		return nil, err
+	default:
+		if slices.Contains(p.Attestations, msg.Signer) {
+			return nil, types.ErrDuplicateAttestation
+		}
+		if p.ExternalRef != msg.ExternalRef || p.CaptureRef != msg.CaptureRef {
+			return nil, types.ErrProofMismatch
+		}
+	}
+	p.Attestations = append(p.Attestations, msg.Signer)
+	confirmedNow := false
+	if p.Status != types.PROOF_STATUS_CONFIRMED && uint32(len(p.Attestations)) >= threshold {
+		p.Status = types.PROOF_STATUS_CONFIRMED
+		p.ConfirmedHeight = ctx.BlockHeight()
+		confirmedNow = true
+	}
 	if err := k.Proofs.Set(ctx, h, p); err != nil {
 		return nil, err
 	}
-	ctx.EventManager().EmitEvent(sdk.NewEvent("proof_anchored",
-		sdk.NewAttribute("hash", h), sdk.NewAttribute("external_ref", msg.ExternalRef)))
-	return &types.MsgAnchorProofResponse{}, nil
+	n := uint32(len(p.Attestations))
+	ctx.EventManager().EmitEvent(sdk.NewEvent("proof_attested",
+		sdk.NewAttribute("hash", h), sdk.NewAttribute("attestor", msg.Signer),
+		sdk.NewAttribute("attestations", strconv.FormatUint(uint64(n), 10)),
+		sdk.NewAttribute("threshold", strconv.FormatUint(uint64(threshold), 10))))
+	if confirmedNow {
+		ctx.EventManager().EmitEvent(sdk.NewEvent("proof_confirmed",
+			sdk.NewAttribute("hash", h), sdk.NewAttribute("height", strconv.FormatInt(p.ConfirmedHeight, 10))))
+	}
+	return &types.MsgAnchorProofResponse{Status: p.Status, Attestations: n}, nil
+}
+
+func (k msgServer) UpdateParams(goCtx context.Context, msg *types.MsgUpdateParams) (*types.MsgUpdateParamsResponse, error) {
+	if msg.Authority != k.authority {
+		return nil, errorsmod.Wrapf(types.ErrInvalidAuthority, "expected %s, got %s", k.authority, msg.Authority)
+	}
+	if err := msg.Params.Validate(); err != nil {
+		return nil, errorsmod.Wrap(types.ErrInvalidParams, err.Error())
+	}
+	if err := k.Params.Set(goCtx, msg.Params); err != nil {
+		return nil, err
+	}
+	return &types.MsgUpdateParamsResponse{}, nil
 }

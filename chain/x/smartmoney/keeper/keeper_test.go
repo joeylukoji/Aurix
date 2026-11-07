@@ -73,7 +73,7 @@ func setup(t *testing.T) *env {
 	enc := moduletestutil.MakeTestEncodingConfig(smartmoney.AppModule{})
 	e := &env{t: t, ctx: tctx.Ctx.WithBlockHeight(1), bank: &fakeBank{bal: map[string]math.Int{}},
 		alice: addr("alice"), bob: addr("bob"), arb: addr("arbiter"), gate: addr("gateway")}
-	e.k = keeper.NewKeeper(enc.Codec, runtime.NewKVStoreService(key), e.bank)
+	e.k = keeper.NewKeeper(enc.Codec, runtime.NewKVStoreService(key), e.bank, govAuthority)
 	e.srv = keeper.NewMsgServerImpl(e.k)
 	e.bank.bal[e.alice] = math.NewInt(100_000_000)
 	e.supply = e.bank.total()

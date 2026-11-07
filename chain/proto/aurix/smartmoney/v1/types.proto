@@ -26,14 +26,36 @@ message Escrow {
   int64 created_height = 8;
 }
 
+enum ProofStatus {
+  option (gogoproto.goproto_enum_prefix) = false;
+  PROOF_STATUS_UNSPECIFIED = 0;
+  PROOF_STATUS_PENDING = 1;
+  PROOF_STATUS_CONFIRMED = 2;
+}
+
+// PaymentProof is a k-of-n attested proof of an external (PayPal) payment.
 message PaymentProof {
+  // hex sha256(order_id|capture_id), lowercase
   string hash = 1;
+  // PayPal order id
   string external_ref = 2;
+  // height of the first attestation (kept for compatibility)
   int64 height = 3;
+  // first attestor (kept for compatibility)
   string submitter = 4;
+  ProofStatus status = 5;
+  // attestor addresses, in order
+  repeated string attestations = 6;
+  // PayPal capture id
+  string capture_ref = 7;
+  int64 first_seen_height = 8;
+  // 0 while pending
+  int64 confirmed_height = 9;
 }
 
 message Params {
   // Addresses (e.g. the API gateway) allowed to anchor external payment proofs.
   repeated string anchor_signers = 1;
+  // Number of distinct attestations required to confirm a proof.
+  uint32 anchor_threshold = 2;
 }

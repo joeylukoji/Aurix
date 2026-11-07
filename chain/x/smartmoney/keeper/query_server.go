@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"cosmossdk.io/collections"
+	"github.com/cosmos/cosmos-sdk/types/query"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -46,6 +47,16 @@ func (q queryServer) Proof(ctx context.Context, r *types.QueryProofRequest) (*ty
 		return nil, notFound(err, "proof")
 	}
 	return &types.QueryProofResponse{Proof: p}, nil
+}
+
+func (q queryServer) PendingProofs(ctx context.Context, r *types.QueryPendingProofsRequest) (*types.QueryPendingProofsResponse, error) {
+	proofs, page, err := query.CollectionFilteredPaginate(ctx, q.Proofs, r.Pagination,
+		func(_ string, p types.PaymentProof) (bool, error) { return p.Status == types.PROOF_STATUS_PENDING, nil },
+		func(_ string, p types.PaymentProof) (types.PaymentProof, error) { return p, nil })
+	if err != nil {
+		return nil, err
+	}
+	return &types.QueryPendingProofsResponse{Proofs: proofs, Pagination: page}, nil
 }
 
 func (q queryServer) Params(ctx context.Context, _ *types.QueryParamsRequest) (*types.QueryParamsResponse, error) {

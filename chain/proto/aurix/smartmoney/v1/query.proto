@@ -3,6 +3,7 @@ package aurix.smartmoney.v1;
 
 import "gogoproto/gogo.proto";
 import "google/api/annotations.proto";
+import "cosmos/base/query/v1beta1/pagination.proto";
 import "aurix/smartmoney/v1/types.proto";
 
 option go_package = "github.com/joeylukoji/aurix/chain/x/smartmoney/types";
@@ -17,6 +18,9 @@ service Query {
   rpc Proof(QueryProofRequest) returns (QueryProofResponse) {
     option (google.api.http).get = "/aurix/smartmoney/v1/proofs/{hash}";
   }
+  rpc PendingProofs(QueryPendingProofsRequest) returns (QueryPendingProofsResponse) {
+    option (google.api.http).get = "/aurix/smartmoney/v1/proofs_pending";
+  }
   rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
     option (google.api.http).get = "/aurix/smartmoney/v1/params";
   }
@@ -30,3 +34,8 @@ message QueryProofRequest { string hash = 1; }
 message QueryProofResponse { PaymentProof proof = 1 [(gogoproto.nullable) = false]; }
 message QueryParamsRequest {}
 message QueryParamsResponse { Params params = 1 [(gogoproto.nullable) = false]; }
+message QueryPendingProofsRequest { cosmos.base.query.v1beta1.PageRequest pagination = 1; }
+message QueryPendingProofsResponse {
+  repeated PaymentProof proofs = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
