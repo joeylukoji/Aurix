@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AURIX Wallet</title>
+<link rel="stylesheet" href="vendor/ag-grid.min.css">
+<link rel="stylesheet" href="vendor/ag-theme-quartz.min.css">
+<link rel="stylesheet" href="styles.css">
+<script src="vendor/nacl-fast.min.js"></script>
+<script src="vendor/ag-grid-community.min.js"></script>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="logo">◆</span> AURIX <small>testnet</small></div>
+  <div class="tag">Programmable Value, Verifiable Trust.</div>
+  <div id="chainStatus" class="status">connecting…</div>
+</header>
+<nav>
+  <button data-tab="wallet" class="active">Wallet</button>
+  <button data-tab="send">Send AUR</button>
+  <button data-tab="escrow">Smart Money</button>
+  <button data-tab="paypal">PayPal (USD)</button>
+  <button data-tab="explorer">Explorer</button>
+</nav>
+<main>
+  <section id="wallet" class="tab active">
+    <div class="card">
+      <h2>My wallet</h2>
+      <p class="muted">Your key is generated and kept in this browser only. Testnet: AUR has no monetary value.</p>
+      <div id="noWallet"><button id="createWallet" class="primary">Create demo wallet</button>
+        <details><summary>Import a seed</summary><input id="importSeed" placeholder="64 hex chars"><button id="doImport">Import</button></details></div>
+      <div id="hasWallet" hidden>
+        <div class="kv"><span>Address</span><code id="addr"></code></div>
+        <div class="balances">
+          <div class="bal aur"><label>AUR balance (on-chain)</label><strong id="balAur">–</strong></div>
+          <div class="bal usd"><label>USD (PayPal Sandbox)</label><strong>separate rail</strong></div>
+        </div>
+        <div class="row"><button id="faucet" class="primary">Get 100 test AUR</button><button id="refresh">Refresh</button>
+          <button id="showSeed">Show seed</button><button id="forget" class="danger">Forget wallet</button></div>
+        <h3>History</h3><div id="historyGrid" class="grid ag-theme-quartz-auto-dark"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="send" class="tab">
+    <div class="card">
+      <h2>Send AUR</h2>
+      <label>Recipient<input id="sendTo" placeholder="aur1…"></label>
+      <label>Amount (AUR)<input id="sendAmt" type="number" min="0.000001" step="0.000001"></label>
+      <button id="sendCheck" class="primary">Check with Neural Guardian</button>
+      <div id="sendRisk"></div>
+    </div>
+  </section>
+
+  <section id="escrow" class="tab">
+    <div class="card">
+      <h2>Create a conditional payment</h2>
+      <p class="muted">Funds are locked by the protocol, released by you or the arbiter, or refunded once the deadline block is reached.</p>
+      <label>Recipient<input id="escTo" placeholder="aur1…"></label>
+      <label>Arbiter (optional)<input id="escArb" placeholder="aur1…"></label>
+      <label>Amount (AUR)<input id="escAmt" type="number" min="0.000001" step="0.000001"></label>
+      <label>Deadline in blocks from now<input id="escBlocks" type="number" value="120" min="1"></label>
+      <button id="escCheck" class="primary">Check and lock</button>
+      <div id="escRisk"></div>
+    </div>
+    <div class="card"><h2>Escrows</h2><div id="escrowGrid" class="grid ag-theme-quartz-auto-dark"></div></div>
+  </section>
+
+  <section id="paypal" class="tab">
+    <div class="card">
+      <h2>Pay in USD with PayPal Sandbox</h2>
+      <p class="muted">USD never becomes AUR. After capture, only a proof (hash) is anchored on AURIX.</p>
+      <div id="ppMode" class="pill"></div>
+      <label>Amount (USD)<input id="ppAmt" type="number" min="0.01" step="0.01" value="49.90"></label>
+      <label>Description<input id="ppDesc" value="AURIX demo purchase"></label>
+      <button id="ppCreate" class="primary">Create order &amp; assess risk</button>
+      <div id="ppResult"></div>
+    </div>
+    <div class="card"><h2>Orders</h2><div id="ordersGrid" class="grid ag-theme-quartz-auto-dark"></div></div>
+  </section>
+
+  <section id="explorer" class="tab">
+    <div class="card"><h2>Blocks</h2><div id="blocksGrid" class="grid ag-theme-quartz-auto-dark"></div></div>
+    <div class="card"><h2>Transactions</h2><div id="txsGrid" class="grid tall ag-theme-quartz-auto-dark"></div></div>
+  </section>
+</main>
+<div id="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

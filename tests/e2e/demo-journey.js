@@ -1,0 +1,20 @@
+const { chromium } = require('playwright');
+(async () => {
+  const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1200, height: 900 } });
+  globalThis.errs = []; const errs = globalThis.errs; p.on('requestfinished', async r => { if (r.method()==='POST') { const s = await r.response(); console.log(Date.now()%100000, 'POST', r.url().slice(21), s.status(), (await s.text()).slice(0,120)); }}); p.on('response', async r => { if (r.status() >= 400) errs.push(r.url() + ' ' + await r.text()); }); p.on('pageerror', e => errs.push(e.message)); p.on('console', m => m.type()==='error' && errs.push(m.text()));
+  await p.goto((process.env.BASE_URL || 'http://localhost:8080') + '/'); await p.click('#createWallet'); await p.click('#faucet');
+  await p.waitForFunction(() => document.getElementById('balAur').textContent.startsWith('100'), null, {timeout: 10000});
+  await p.click('nav [data-tab=send]'); await p.fill('#sendTo', 'aur1' + 'ab'.repeat(20)); await p.fill('#sendAmt', '80');
+  await p.click('#sendCheck'); await p.waitForSelector('#sendGo'); const risk = await p.textContent('.risk .score');
+  await p.click('#sendGo'); await p.waitForFunction(() => /Confirmed/.test(document.getElementById('toast').textContent)); const t1 = await p.textContent('#toast');
+  await p.click('nav [data-tab=escrow]'); await p.fill('#escTo', 'aur1' + 'cd'.repeat(20)); await p.fill('#escAmt', '5');
+  await p.click('#escCheck'); await p.waitForSelector('#escGo'); await p.click('#escGo');
+  console.log('step escrow'); setTimeout(async()=>{ try{globalThis.__t=await p.evaluate(()=>document.getElementById('toast').textContent+' || '+document.getElementById('escRisk').innerHTML.slice(-300))}catch{} }, 8000); await p.waitForFunction(() => /locked/.test(document.getElementById('toast').textContent));
+  await p.waitForSelector('#escrowGrid button'); await p.click('#escrowGrid button:has-text("Release")');
+  console.log('step release'); await p.waitForFunction(() => /released/.test(document.getElementById('toast').textContent));
+  await p.click('nav [data-tab=paypal]'); await p.click('#ppCreate'); await p.waitForSelector('#ppGo'); await p.click('#ppGo');
+  await p.waitForSelector('text=Captured'); await p.screenshot({ path: 'e2e-paypal.png' });
+  await p.click('nav [data-tab=explorer]'); await p.waitForTimeout(800); await p.screenshot({ path: 'e2e-explorer.png', fullPage: true });
+  console.log('risk:', risk, '| send:', t1, '| errors:', errs);
+  await b.close();
+})().catch(e => { console.error('FAIL', e.message); console.error('toast:', globalThis.__t, globalThis.errs);; process.exit(1); });

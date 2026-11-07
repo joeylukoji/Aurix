@@ -8,3 +8,4 @@ graphify-out/
 chain/data/
 *.db
 guardian/models/*.pkl
+e2e-*.png
