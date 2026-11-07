@@ -9,13 +9,14 @@
 <link rel="stylesheet" href="styles.css">
 <script src="vendor/noble.min.js"></script>
 <script src="cosmos-tx.js"></script>
+<script src="chain.js"></script>
 <script src="vendor/ag-grid-community.min.js"></script>
 </head>
 <body>
 <header>
   <div class="brand"><span class="logo">◆</span> AURIX <small>testnet</small></div>
   <div class="tag">Programmable Value, Verifiable Trust.</div>
-  <div id="chainStatus" class="status">connecting…</div>
+  <div class="status"><span id="chainStatus">connecting…</span> <span id="gwStatus" class="pill" hidden></span></div>
 </header>
 <nav>
   <button data-tab="wallet" class="active">Wallet</button>
@@ -23,6 +24,7 @@
   <button data-tab="escrow">Smart Money</button>
   <button data-tab="paypal">PayPal (USD)</button>
   <button data-tab="explorer">Explorer</button>
+  <button data-tab="settings">Settings</button>
 </nav>
 <main>
   <section id="wallet" class="tab active">
@@ -94,6 +96,25 @@
     </div>
     <div class="card"><h2>Blocks</h2><div id="blocksGrid" class="grid ag-theme-quartz-auto-dark"></div></div>
     <div class="card"><h2>Transactions</h2><div id="txsGrid" class="grid tall ag-theme-quartz-auto-dark"></div></div>
+  </section>
+
+  <section id="settings" class="tab">
+    <div class="card">
+      <h2>Network</h2>
+      <p class="muted">The wallet reads and broadcasts directly to AURIX nodes. Endpoints are tried in order; on a timeout or server error the next one is used. The wallet trusts the node it reads from, so prefer nodes you or several independent operators run.</p>
+      <div class="kv"><span>Expected chain id</span><code id="setChain"></code></div>
+      <div class="kv"><span>Gateway</span><code id="setGw"></code></div>
+      <div class="kv"><span>Faucet</span><code id="setFaucet"></code></div>
+      <h3>Chain endpoints (REST)</h3>
+      <ul id="nodeList" class="nodes"></ul>
+      <h3>Add your own node</h3>
+      <label>REST URL<input id="nodeRest" placeholder="https://rest.my-node.example (port 1317)"></label>
+      <label>RPC URL (optional)<input id="nodeRpc" placeholder="https://rpc.my-node.example (port 26657)"></label>
+      <button id="addNode" class="primary">Add node</button>
+      <h3>Gateway (optional: PayPal and Neural Guardian)</h3>
+      <label>Gateway URL — empty uses config.json, <code>none</code> disables it<input id="gwUrl" placeholder="https://gateway.example"></label>
+      <button id="saveGw">Save gateway</button>
+    </div>
   </section>
 </main>
 <div id="toast" hidden></div>

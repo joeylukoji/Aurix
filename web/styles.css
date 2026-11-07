@@ -46,3 +46,7 @@ button.small{padding:2px 10px;font-size:12px;margin:0}
 a.lnk{color:var(--blue);cursor:pointer;text-decoration:none}a.lnk:hover{text-decoration:underline}
 body{overflow-x:hidden}main{min-width:0}
 @media (max-width:480px){.detail dl{grid-template-columns:1fr}.detail dt{margin-top:6px}header .tag{display:none}.grid{height:320px}}
+.nodes{padding-left:18px;margin:6px 0}.nodes li{margin:4px 0;overflow-wrap:anywhere}
+.probe.ok{color:var(--green)}.probe.bad{color:var(--red)}
+.pill.att{color:var(--amber);border-color:var(--amber)}.pill.att.ok{color:var(--green);border-color:var(--green)}
+#gwStatus{color:var(--amber);border-color:var(--amber)}

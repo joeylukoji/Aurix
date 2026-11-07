@@ -1,0 +1,10 @@
+{
+  "chain_id": "aurix-testnet-1",
+  "endpoints": [
+    { "rest": "http://localhost:1317", "rpc": "http://localhost:26657", "label": "localnet node0" },
+    { "rest": "http://localhost:2317", "rpc": "http://localhost:27657", "label": "localnet node1" }
+  ],
+  "gateway": "",
+  "faucet": "",
+  "guardian": ""
+}
