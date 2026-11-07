@@ -55,6 +55,24 @@ def normalize_escrow(e: dict) -> dict:
             "status": ESCROW_STATUS.get(e["status"], e["status"]), "created_height": int(e.get("created_height", 0))}
 
 
+PROOF_STATUS = {"PROOF_STATUS_PENDING": "PENDING", "PROOF_STATUS_CONFIRMED": "CONFIRMED",
+                "PENDING": "PENDING", "CONFIRMED": "CONFIRMED", 1: "PENDING", 2: "CONFIRMED"}
+
+
+def normalize_proof(p: dict, threshold: int) -> dict:
+    """Chain PaymentProof -> {hash, external_ref, capture_ref, status, attestations, threshold, ...}.
+
+    Backwards compatible with chains that predate k-of-n attestation: a proof without a
+    status field is CONFIRMED, attested by its single submitter."""
+    atts = list(p.get("attestations") or ([p["submitter"]] if p.get("submitter") else []))
+    status = "PENDING" if PROOF_STATUS.get(p.get("status")) == "PENDING" else "CONFIRMED"
+    return {"hash": p.get("hash"), "external_ref": p.get("external_ref", ""), "capture_ref": p.get("capture_ref", ""),
+            "status": status, "attestations": atts, "threshold": threshold,
+            "height": int(p.get("height") or 0), "submitter": p.get("submitter", ""),
+            "first_seen_height": int(p.get("first_seen_height") or p.get("height") or 0),
+            "confirmed_height": int(p.get("confirmed_height") or (p.get("height") if status == "CONFIRMED" else 0) or 0)}
+
+
 class ChainClient:
     """Reads the Cosmos chain via its REST API (:1317) and CometBFT RPC (:26657)."""
 
@@ -100,6 +118,17 @@ class ChainClient:
     def proof(self, h: str) -> dict:
         p = self._get(f"/aurix/smartmoney/v1/proofs/{h}")["proof"]
         return p | {"height": int(p["height"])}
+
+    def proof_raw(self, h: str) -> dict:
+        return self._get(f"/aurix/smartmoney/v1/proofs/{h}")["proof"]
+
+    def anchor_threshold(self) -> int:
+        """anchor_threshold from x/smartmoney params; 1 when absent (older chains) or 0."""
+        params = self._get("/aurix/smartmoney/v1/params").get("params") or {}
+        try:
+            return max(int(params.get("anchor_threshold") or 1), 1)
+        except (TypeError, ValueError):
+            return 1
 
     def tx(self, h: str) -> dict:
         return normalize_tx(self._get(f"/cosmos/tx/v1beta1/txs/{h}")["tx_response"])

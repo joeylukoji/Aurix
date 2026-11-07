@@ -20,6 +20,9 @@ class Settings:
     faucet_seed: str = field(default_factory=lambda: _env("AURIX_FAUCET_SEED", "aurix-dev-faucet"))
     gateway_seed: str = field(default_factory=lambda: _env("AURIX_GATEWAY_SEED", "aurix-dev-gateway"))
 
+    # Seconds between polls of the chain for orders waiting for k-of-n attestations (0 disables the poller).
+    attest_poll_interval: float = field(default_factory=lambda: float(_env("ATTEST_POLL_INTERVAL", "2")))
+
     # "simulator" (local paypal-sim, tests only) or "sandbox" (real PayPal Sandbox)
     paypal_env: str = field(default_factory=lambda: _env("PAYPAL_ENV", "sandbox"))
 
