@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+node_modules/
+graphify-out/
+chain/data/
+*.db
+guardian/models/*.pkl
