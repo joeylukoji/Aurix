@@ -16,6 +16,8 @@
 # gateway, each funded with 10000000uaur; ANCHOR_THRESHOLD (default 1) is written to the
 # smartmoney params only when explicitly set. PENDING_TTL_BLOCKS (default 600, 0 = never)
 # likewise sets params.pending_ttl_blocks only when set.
+# Real keys: AURIX_GATEWAY_ADDR / AURIX_FAUCET_ADDR / ATTESTOR_ADDRS (space separated) replace the
+# seed-derived dev addresses (generate them with networks/aurix-testnet-2/scripts/keygen.sh).
 # Idempotent unless RESET=1.
 set -euo pipefail
 BIN=${AURIXD:-aurixd}
@@ -76,12 +78,16 @@ for ((i = 0; i < N; i++)); do
   addr=$($BIN keys show "val$i" -a $(kr $i))
   $BIN genesis add-genesis-account "$addr" 100000000000uaur --home "$(home 0)"
 done
-GATEWAY=$($BIN seed-address "$GATEWAY_SEED")
-$BIN genesis add-genesis-account "$($BIN seed-address "$FAUCET_SEED")" 1000000000000uaur --home "$(home 0)"
+GATEWAY=${AURIX_GATEWAY_ADDR:-$($BIN seed-address "$GATEWAY_SEED")}
+$BIN genesis add-genesis-account "${AURIX_FAUCET_ADDR:-$($BIN seed-address "$FAUCET_SEED")}" 1000000000000uaur --home "$(home 0)"
 $BIN genesis add-genesis-account "$GATEWAY" 1000000000uaur --home "$(home 0)"
 SIGNERS=("$GATEWAY")
 for seed in $ATTESTOR_SEEDS; do
   a=$($BIN seed-address "$seed")
+  $BIN genesis add-genesis-account "$a" 10000000uaur --home "$(home 0)"
+  SIGNERS+=("$a")
+done
+for a in ${ATTESTOR_ADDRS:-}; do  # real attestor keys (addresses from networks/aurix-testnet-2/scripts/keygen.sh)
   $BIN genesis add-genesis-account "$a" 10000000uaur --home "$(home 0)"
   SIGNERS+=("$a")
 done

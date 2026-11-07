@@ -130,11 +130,41 @@ function signAndSend(msg) {
   return run;
 }
 
+// H3: re-verify each Guardian signature in the browser (secp256k1 over sha256 of the exact payload string),
+// independently of the gateway's own check. Returns { ok, decision, guardian } per guardian.
+function verifyGuardian(g) {
+  const att = g && g.attestation;
+  if (!att) return { ok: false, guardian: g && g.guardian, why: g && g.error || "no attestation" };
+  try {
+    const { secp256k1, sha256 } = window.noble;
+    const msg = sha256(new TextEncoder().encode(att.payload));
+    const ok = secp256k1.verify(att.signature, msg, att.pubkey, { lowS: true });
+    const p = JSON.parse(att.payload);
+    return { ok, decision: p.decision, score: p.score, guardian: att.guardian, why: ok ? "" : "bad signature" };
+  } catch (e) { return { ok: false, guardian: att.guardian, why: String(e.message || e) }; }
+}
+
+function quorumHtml(risk) {
+  const gs = risk.guardians || [];
+  if (!gs.length) return "";
+  const checks = gs.map(verifyGuardian);
+  const valid = checks.filter((c) => c.ok);
+  const agree = valid.filter((c) => c.decision === risk.level).length;
+  const q = risk.quorum || {};
+  const met = valid.length >= (q.required || 1);
+  const rows = gs.map((g, i) => `<li><code>${esc((checks[i].guardian || g.url || "?").slice(0, 16))}…</code> ${checks[i].ok
+    ? `signature ✓ · ${esc(checks[i].decision)} ${Math.round(checks[i].score * 100)}%` : `excluded: ${esc(checks[i].why)}`}</li>`).join("");
+  return `<p class="quorum ${met ? "ok" : "warn"}"><b>${agree}/${gs.length} guardians agree</b>
+    (${valid.length} valid signature${valid.length === 1 ? "" : "s"} verified in your browser, quorum ${q.required || 1}${met ? " met" : " NOT met"})</p>
+    <details><summary class="muted">Guardian signatures</summary><ul class="muted">${rows}</ul></details>`;
+}
+
 function riskHtml(risk, status) {
   if (!risk) return `<div class="risk unavailable"><div class="score">Analysis unavailable</div>
     <p class="muted">${C.gatewayOk ? "Neural Guardian could not be reached." : "No gateway configured, so Neural Guardian scoring is off."} You can still decide.</p></div>`;
   const reasons = risk.reasons.map((r) => `<li>${esc(r.text)} <span class="muted">(+${r.impact})</span></li>`).join("");
   return `<div class="risk ${risk.level}"><div class="score">Risk ${Math.round(risk.risk_score * 100)}% · ${risk.level}</div>
+    ${quorumHtml(risk)}
     ${reasons ? `<ul>${reasons}</ul>` : `<p class="muted">No risk factor stands out.</p>`}
     <p class="muted">Advisory only (model ${esc(risk.model_version)}). The protocol decides, you approve.</p></div>`;
 }

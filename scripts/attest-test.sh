@@ -66,7 +66,7 @@ h = hashlib.sha256(f"{order}|{cap}".encode()).hexdigest()
 rest = os.environ["CHAIN_REST"]
 chain_id = httpx.get(f"{rest}/cosmos/base/tendermint/v1beta1/blocks/latest").json()["block"]["header"]["chain_id"]
 info = httpx.get(f"{rest}/cosmos/auth/v1beta1/account_info/{key.address}").json()["info"]
-tx = crypto.build_tx(key, [crypto.msg_anchor_proof(key.address, h, f"paypal:{order}", cap)], chain_id,
+tx = crypto.build_tx(key, [crypto.msg_anchor_proof(key.address, h, f"paypal:{order}", cap, "10.00", "USD")], chain_id,
                      int(info["account_number"]), int(info["sequence"]))
 r = httpx.post(f"{rest}/cosmos/tx/v1beta1/txs", json={"tx_bytes": base64.b64encode(tx).decode(),
                                                        "mode": "BROADCAST_MODE_SYNC"}).json()["tx_response"]

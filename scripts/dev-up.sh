@@ -9,6 +9,10 @@
 # ATTESTORS (default 0): extra independent PayPal attestors (attestor/). Attestor i (1..N) uses seed
 # "aurix-dev-attestor-i" (override ATTESTOR_SEED_PREFIX), talks to node i (mod VALIDATORS), serves
 # /health on ATTESTOR_PORT(8095)+i-1. ANCHOR_THRESHOLD (default 1) = attestations needed per proof.
+# GUARDIANS (default 1): Neural Guardian instances. Guardian i (1..N) signs scores with dev seed
+# "aurix-dev-guardian-i" (override GUARDIAN_SEED_PREFIX; guardian 1 keeps the built-in dev key when N=1)
+# and listens on GUARDIAN_PORT+i-1. The gateway gets GUARDIAN_URLS (all of them) and GUARDIAN_QUORUM
+# (default: N). PENDING_TTL_BLOCKS: passed to the genesis (pending proof expiry).
 # Stop with scripts/dev-down.sh (same RUN_DIR).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -19,6 +23,8 @@ GUARDIAN_PORT=${GUARDIAN_PORT:-$((8000+OFF))}; SIM_PORT=${SIM_PORT:-$((8090+OFF)
 GATEWAY_PORT=${GATEWAY_PORT:-$((8080+OFF))}
 ATTESTORS=${ATTESTORS:-0}; ATTESTOR_PORT=${ATTESTOR_PORT:-$((8095+OFF))}
 ATTESTOR_SEED_PREFIX=${ATTESTOR_SEED_PREFIX:-aurix-dev-attestor-}
+GUARDIANS=${GUARDIANS:-1}; GUARDIAN_SEED_PREFIX=${GUARDIAN_SEED_PREFIX:-aurix-dev-guardian-}
+GUARDIAN_QUORUM=${GUARDIAN_QUORUM:-$GUARDIANS}
 RUN_DIR=${RUN_DIR:-$ROOT/.run}; mkdir -p "$RUN_DIR"
 export AURIX_NET_HOME=${AURIX_NET_HOME:-$RUN_DIR/chain-net}
 VALIDATORS=${VALIDATORS:-4}; STEP=${VALIDATOR_PORT_STEP:-1000}
@@ -26,7 +32,8 @@ BIN=$ROOT/chain/build/aurixd
 
 log() { echo "[dev-up] $*"; }
 port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
-PORTS=($GUARDIAN_PORT $SIM_PORT $GATEWAY_PORT)
+PORTS=($SIM_PORT $GATEWAY_PORT)
+for ((i = 0; i < GUARDIANS; i++)); do PORTS+=($((GUARDIAN_PORT + i))); done
 for ((i = 0; i < ATTESTORS; i++)); do PORTS+=($((ATTESTOR_PORT + i))); done
 for ((i = 0; i < VALIDATORS; i++)); do
   PORTS+=($((RPC_PORT + i * STEP)) $((REST_PORT + i * STEP)) $((GRPC_PORT + i * STEP)) $((P2P_PORT + i * STEP)) $((PROM_PORT + i * STEP)))
@@ -49,9 +56,10 @@ wait_for() { # name url [jq-filter]
   done
   echo "[dev-up] $name not healthy at $url; see $RUN_DIR/$name.log" >&2; exit 1
 }
-venv() { # dir
-  if [[ ! -x "$1/.venv/bin/uvicorn" ]]; then
-    log "creating venv in $1"; python3 -m venv "$1/.venv"; "$1/.venv/bin/pip" install -q -r "$1/requirements.txt"
+venv() { # dir — (re)installs requirements when requirements.txt changed since the last install
+  if [[ ! -x "$1/.venv/bin/uvicorn" ]]; then log "creating venv in $1"; python3 -m venv "$1/.venv"; fi
+  if [[ ! -f "$1/.venv/.req-stamp" || "$1/requirements.txt" -nt "$1/.venv/.req-stamp" ]]; then
+    "$1/.venv/bin/pip" install -q -r "$1/requirements.txt" && touch "$1/.venv/.req-stamp"
   fi
 }
 
@@ -60,6 +68,7 @@ SEEDS=""; for ((i = 1; i <= ATTESTORS; i++)); do SEEDS+="${SEEDS:+ }$ATTESTOR_SE
 INIT_ENV=()
 if ((ATTESTORS > 0)); then INIT_ENV+=(ATTESTOR_SEEDS="$SEEDS"); fi
 if [[ -n "${ANCHOR_THRESHOLD:-}" ]]; then INIT_ENV+=(ANCHOR_THRESHOLD="$ANCHOR_THRESHOLD"); fi
+if [[ -n "${PENDING_TTL_BLOCKS:-}" ]]; then INIT_ENV+=(PENDING_TTL_BLOCKS="$PENDING_TTL_BLOCKS"); fi
 env "${INIT_ENV[@]}" AURIXD=$BIN VALIDATORS=$VALIDATORS PORT_STEP=$STEP RPC_PORT=$RPC_PORT REST_PORT=$REST_PORT \
   GRPC_PORT=$GRPC_PORT P2P_PORT=$P2P_PORT PROM_PORT=$PROM_PORT "$ROOT/chain/scripts/init-localnet.sh"
 for d in guardian paypal-sim gateway; do venv "$ROOT/$d"; done
@@ -71,7 +80,13 @@ fi
 for ((i = 0; i < VALIDATORS; i++)); do  # ports and peers are written in each node's config
   start "chain$i" "$ROOT/chain" "$BIN" start --home "$AURIX_NET_HOME/node$i"
 done
-start guardian "$ROOT/guardian" .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port "$GUARDIAN_PORT"
+GUARDIAN_URLS=""; GENESIS_CHAIN_ID=$(jq -r .chain_id "$AURIX_NET_HOME/node0/config/genesis.json")
+for ((i = 1; i <= GUARDIANS; i++)); do
+  gname=guardian; ((i > 1)) && gname=guardian$i
+  gseed=(); ((GUARDIANS > 1)) && gseed=(GUARDIAN_SEED="$GUARDIAN_SEED_PREFIX$i")
+  start "$gname" "$ROOT/guardian" env "${gseed[@]}" GUARDIAN_CHAIN_ID="$GENESIS_CHAIN_ID" .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port "$((GUARDIAN_PORT + i - 1))"
+  GUARDIAN_URLS+="${GUARDIAN_URLS:+,}http://127.0.0.1:$((GUARDIAN_PORT + i - 1))"
+done
 SIM_WEBHOOK_URL="http://127.0.0.1:$GATEWAY_PORT/api/paypal/webhook" SIM_PUBLIC_URL="http://localhost:$SIM_PORT" \
 SIM_CLIENT_ID=sim-client-id SIM_CLIENT_SECRET=sim-client-secret SIM_WEBHOOK_ID=SIM-WEBHOOK-ID \
   start paypal-sim "$ROOT/paypal-sim" .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port "$SIM_PORT"
@@ -85,11 +100,14 @@ done
 [[ "$h" -ge 2 ]] || { echo "[dev-up] chain produces no blocks" >&2; exit 1; }
 nv=$(curl -fsS "http://127.0.0.1:$RPC_PORT/validators" | jq -r .result.total)
 log "chain at height $h with $nv validators"
-wait_for guardian "http://127.0.0.1:$GUARDIAN_PORT/health"
+for ((i = 1; i <= GUARDIANS; i++)); do
+  gname=guardian; ((i > 1)) && gname=guardian$i
+  wait_for "$gname" "http://127.0.0.1:$((GUARDIAN_PORT + i - 1))/health"
+done
 wait_for paypal-sim "http://127.0.0.1:$SIM_PORT/sim/health"
 
 CHAIN_RPC_URL="http://127.0.0.1:$RPC_PORT" CHAIN_REST_URL="http://127.0.0.1:$REST_PORT" \
-GUARDIAN_URL="http://127.0.0.1:$GUARDIAN_PORT" DATABASE_URL="sqlite:///$RUN_DIR/gateway.db" \
+GUARDIAN_URLS="$GUARDIAN_URLS" GUARDIAN_QUORUM=$GUARDIAN_QUORUM DATABASE_URL="sqlite:///$RUN_DIR/gateway.db" \
 PAYPAL_ENV=simulator PAYPAL_BASE_URL="http://127.0.0.1:$SIM_PORT" PAYPAL_CLIENT_ID=sim-client-id \
 PAYPAL_CLIENT_SECRET=sim-client-secret PAYPAL_WEBHOOK_ID=SIM-WEBHOOK-ID \
 SIM_WEBHOOK_URL="http://127.0.0.1:$GATEWAY_PORT/api/paypal/webhook" SIM_PUBLIC_URL="http://localhost:$SIM_PORT" \

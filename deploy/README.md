@@ -43,11 +43,20 @@ All images honour `PORT`, which Render sets for web services.
 |---|---|---|---|
 | `AURIX_CHAIN_ID` | chain | `aurix-testnet-1` | chain id for genesis |
 | `AURIX_HOME` | chain | `/data/aurix` | node home dir |
-| `AURIX_FAUCET_SEED` | chain, gateway | `aurix-dev-faucet` | faucet key seed (must match) |
-| `AURIX_GATEWAY_SEED` | chain, gateway | `aurix-dev-gateway` | gateway signer seed (must match) |
+| `AURIX_FAUCET_SEED` | chain, gateway | `aurix-dev-faucet` | **dev only** faucet key seed (must match) |
+| `AURIX_GATEWAY_SEED` | chain, gateway | `aurix-dev-gateway` | **dev only** gateway signer seed (must match) |
 | `CHAIN_RPC_URL` | gateway | `http://localhost:26657` | CometBFT RPC |
 | `CHAIN_REST_URL` | gateway | `http://localhost:1317` | Cosmos REST |
-| `GUARDIAN_URL` | gateway | `http://localhost:8000` | Neural Guardian |
+| `GUARDIAN_URL` | gateway | `http://localhost:8000` | Neural Guardian (single; superseded by `GUARDIAN_URLS`) |
+| `GUARDIAN_URLS` | gateway | `$GUARDIAN_URL` | comma separated Guardians; all are queried and their signatures verified |
+| `GUARDIAN_QUORUM` | gateway | `1` | valid signed scores needed for `quorum_met` (aggregate = most severe decision) |
+| `GUARDIAN_PUBKEYS` | gateway | empty (any key) | optional allowlist of guardian pubkeys (33-byte hex), from `keygen.sh` |
+| `AURIX_ENV` | gateway, attestor, guardian | empty | `production` refuses every dev seed key |
+| `GATEWAY_MNEMONIC` / `GATEWAY_KEY_FILE` | gateway | — | real gateway signer (BIP39 checksum verified; key file = 32-byte hex, 0600) |
+| `FAUCET_MNEMONIC` / `FAUCET_KEY_FILE` | gateway | — | real faucet key |
+| `GUARDIAN_MNEMONIC` / `GUARDIAN_KEY_FILE` / `GUARDIAN_SEED` | guardian | built-in dev seed | key that signs risk scores |
+| `ATTESTOR_MNEMONIC` / `ATTESTOR_KEY_FILE` / `ATTESTOR_SEED` | attestor | none (exits) | attestor signer |
+| `AURIX_GATEWAY_ADDR` / `AURIX_FAUCET_ADDR` / `ATTESTOR_ADDRS` | chain (init) | seed-derived | genesis addresses of real keys |
 | `DATABASE_URL` | gateway | `sqlite:////data/aurix.db` (image) | SQLite path |
 | `WEB_DIR` | gateway | `/srv/web` (image) | static frontend |
 | `PAYPAL_ENV` | gateway | `sandbox` (`simulator` in compose/Render) | PayPal mode |
@@ -69,3 +78,15 @@ All images honour `PORT`, which Render sets for web services.
    `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID` (in `.env` locally, or as secrets on Render).
 4. Remove the `paypal-sim` service (compose: the service and its `depends_on` entry; Render: the
    `aurix-paypal-sim` block).
+
+## Real keys (anything public)
+
+The `*_SEED` variables derive keys from a public string: anyone can recompute them. Before exposing a
+deployment, generate real keys with `networks/aurix-testnet-2/scripts/keygen.sh` (fresh BIP39 mnemonics via
+`aurixd keys add`, written to a 0700 directory, one 0600 env file per service, only addresses printed):
+
+1. `AURIXD=chain/build/aurixd networks/aurix-testnet-2/scripts/keygen.sh ~/aurix-keys`
+2. Chain init: `AURIX_GATEWAY_ADDR`, `AURIX_FAUCET_ADDR` (and `ATTESTOR_ADDRS`) from `~/aurix-keys/addresses.txt`.
+3. Gateway: copy `~/aurix-keys/gateway.env` into `../.env` (it sets `AURIX_ENV=production`, the mnemonics,
+   `GUARDIAN_PUBKEYS`); each guardian / attestor gets its own `guardian-N.env` / `attestor-N.env`.
+4. Back the mnemonics up offline, then delete `~/aurix-keys` from the build machine.

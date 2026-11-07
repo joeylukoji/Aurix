@@ -156,7 +156,7 @@ NODES=http://localhost:1317,http://localhost:2317 node tests/e2e/demo-journey.js
 node tests/e2e/gateway-off.js   # static wallet; stops the gateway, then node0 (destructive: run last)
 ```
 
-`scripts/test-all.sh` runs everything: chain Go tests, slashing, guardian, paypal-sim, gateway and attestor pytest, `attest-test.sh`, `gov-test.sh`, `upgrade-drill.sh`, then both browser journeys on a fresh 4-validator stack.
+`scripts/test-all.sh` runs everything: chain Go tests, slashing, guardian, paypal-sim, gateway and attestor pytest, `attest-test.sh`, `harden-test.sh`, `gov-test.sh`, `upgrade-drill.sh`, then both browser journeys on a fresh 4-validator stack.
 
 ## Implementation status
 
@@ -170,7 +170,7 @@ node tests/e2e/gateway-off.js   # static wallet; stops the gateway, then node0 (
 | `web/` | ✅ V1 | secp256k1 keys generated in the browser; Cosmos txs (`SIGN_MODE_DIRECT`) signed locally and broadcast **directly** to chain nodes with failover (gateway optional). AG Grid explorer. |
 | `api/openapi.json` | ✅ | Generated from the gateway (`create_app().openapi()`). |
 | `deploy/` | ⚠️ | Compose and Render blueprint written; not yet deployed online. See [`deploy/README.md`](deploy/README.md). |
-| `scripts/` | ✅ | `dev-up.sh` (`ATTESTORS=N`), `dev-down.sh`, `test-all.sh`, `attest-test.sh`, `slashing-test.sh`, `bft-demo.sh`, `gov-test.sh`, `upgrade-drill.sh`. |
+| `scripts/` | ✅ | `dev-up.sh` (`ATTESTORS=N`, `GUARDIANS=N`), `dev-down.sh`, `test-all.sh`, `attest-test.sh`, `harden-test.sh`, `slashing-test.sh`, `bft-demo.sh`, `gov-test.sh`, `upgrade-drill.sh`. |
 | Indexer, PostgreSQL, Redis | ❌ planned | The gateway reads the chain directly and keeps a SQLite index. |
 | Real PayPal Sandbox | ❌ pending | Needs Sandbox credentials; config-only switch. |
 | Demo video, Devpost | 📝 drafted | [`docs/submission/`](docs/submission/devpost.md) |
@@ -212,8 +212,15 @@ Backlog, user stories, Definition of Done and ceremonies: [`docs/scrum/`](docs/s
 1. The on-chain ledger is the **single source of truth** for AUR balances.
 2. The AI can neither validate, invalidate nor modify a transaction.
 3. USD funds (PayPal) never become AUR: only a **proof (hash)** is anchored, and only once k-of-n independent attestors confirmed the capture (one compromised signer cannot confirm a fake payment).
-4. PayPal webhooks are signature-verified and idempotent.
-5. No secrets or private keys in the repository.
+4. **Amount in proofs.** Every `MsgAnchorProof` carries the captured `amount` and `currency`; the chain rejects an attestation whose amount/currency/refs differ from the first one (`ErrProofMismatch`), and each attestor compares them with the PayPal capture (exact 2-decimal string) before attesting.
+5. **Expiry.** A proof that never reaches the threshold is deleted after `pending_ttl_blocks` (default 600 blocks) by the EndBlocker; confirmed proofs never expire.
+6. **Real keys.** Gateway, faucet, attestors and guardians load `*_MNEMONIC` (BIP39, wordlist + checksum verified, `m/44'/118'/0'/0/0`) or `*_KEY_FILE`; the `*_SEED` dev keys log a warning and are refused with `AURIX_ENV=production`. `networks/aurix-testnet-2/scripts/keygen.sh` generates them. The web wallet creates a 12-word BIP39 mnemonic in the browser, encrypted in `localStorage` (PBKDF2 + AES-GCM); the old fixed key is only behind "Demo account".
+7. **Signed risk scores.** Each Neural Guardian signs its score (secp256k1 over sha256 of a canonical payload). The gateway queries all `GUARDIAN_URLS`, drops invalid/forged/stale signatures, aggregates the most severe decision and reports `quorum_met` against `GUARDIAN_QUORUM`; the wallet re-verifies every signature in the browser and shows "k/n guardians agree". Still advisory only.
+8. **Cross-verification.** The wallet compares balance, sequence and height across 2 nodes, warns "nodes disagree", and marks a tx final only once 2 nodes return it ("single-node trust" badge otherwise).
+9. PayPal webhooks are signature-verified and idempotent.
+10. No secrets or private keys in the repository (the dev seeds are public by design and dev-only).
+
+`scripts/harden-test.sh` checks 4–7 on a live localnet (wrong amount rejected, wrong-amount first attestation refused and expired, 2-guardian quorum).
 
 ## Limitations and scope
 

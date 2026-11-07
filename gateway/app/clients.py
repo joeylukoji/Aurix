@@ -20,7 +20,9 @@ ESCROW_STATUS = {"ESCROW_STATUS_LOCKED": "LOCKED", "ESCROW_STATUS_RELEASED": "RE
 def _uaur(coins) -> int:
     if isinstance(coins, dict):
         coins = [coins]
-    return sum(int(c["amount"]) for c in coins or [] if c.get("denom") == "uaur")
+    if not isinstance(coins, list):  # e.g. MsgAnchorProof.amount is a fiat decimal string, not coins
+        return 0
+    return sum(int(c["amount"]) for c in coins if isinstance(c, dict) and c.get("denom") == "uaur")
 
 
 def normalize_tx(tr: dict) -> dict:
@@ -180,19 +182,7 @@ class ChainClient:
         raise ChainError(504, f"tx {resp['txhash']} not included within {wait_s}s")
 
 
-class GuardianClient:
-    """Advisory only: any failure returns None and never blocks a payment."""
-
-    def __init__(self, base_url: str, transport: httpx.BaseTransport | None = None):
-        self.http = httpx.Client(base_url=base_url, timeout=3, transport=transport)
-
-    def score(self, **body) -> dict | None:
-        try:
-            r = self.http.post("/v1/risk/score", json=body)
-            r.raise_for_status()
-            return r.json()
-        except (httpx.HTTPError, ValueError):
-            return None
+from .guardians import GuardianClient  # noqa: E402,F401  (quorum client, re-exported)
 
 
 class PayPalError(Exception):

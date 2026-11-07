@@ -285,3 +285,36 @@ proposals that validators and delegators vote on.
 - PayPal proofs require 2-of-3 independent attestations, each checked against PayPal.
 - Rule changes and upgrades go through `x/gov`, and the process is documented and tested.
 - README, architecture docs and the Devpost "limitations" section are updated to match.
+
+---
+
+## 5. Hardening (amount in proofs, expiry, real keys, signed scores, cross-verification) — ✅ done
+
+Tested by `scripts/harden-test.sh` (live localnet), gateway/attestor/guardian pytest and `go test ./...`.
+
+## Limitations (current state, be explicit about them)
+
+- **Attestors trust PayPal's API.** An attestor checks status, order id, capture id, amount and currency of the
+  capture at PayPal; it cannot detect a refund or chargeback after confirmation, nor a compromised PayPal
+  account shared by several attestors. Attestors must use **distinct PayPal API credentials** (read-only apps)
+  and distinct operators, otherwise k-of-n collapses to 1-of-1.
+- **Expiry is a cleanup, not a verdict.** A forged proof that never reaches the threshold is deleted after
+  `pending_ttl_blocks` (default 600); during that window it is visible as `PENDING` (clients must only trust
+  `CONFIRMED`). An attacker holding one signer key can re-submit after expiry: it is detectable (events) but
+  not slashed. There is no on-chain penalty for signers yet.
+- **Amount is fiat metadata.** The chain checks that all attestations agree on `amount`/`currency`
+  (2-decimal string), never that the amount is correct: correctness comes only from the attestors' PayPal check.
+- **Guardian quorum is advisory and off-chain.** Signed scores prove which guardian key produced a score;
+  they do not prove the model is honest. Without `GUARDIAN_PUBKEYS` the gateway accepts any well-signed
+  key, so a man-in-the-middle between gateway and guardians can add its own "guardian": pin the keys
+  (`keygen.sh` writes them into `gateway.env`). The wallet re-verifies signatures but trusts the gateway
+  for *which* guardians were asked. Guardian keys are not registered on chain.
+- **Keys.** `keygen.sh` generates mnemonics on one machine; for a real network each operator should run it
+  for their own role only (or `aurixd keys add` directly) and send back only the address. The dev `*_SEED`
+  keys stay for local stacks and are public; `AURIX_ENV=production` refuses them. The web wallet's vault
+  is as strong as the user's password (PBKDF2 in the browser) and the page's origin integrity.
+- **Cross-verification is not a light client.** The wallet compares 2+ RPC/REST endpoints (balance, sequence,
+  height within 5 blocks, tx seen by 2 nodes). Colluding endpoints, or a single configured endpoint
+  ("single-node trust"), can still lie; no header/Merkle proof verification is done in the browser.
+- **One machine.** Localnets (and `harden-test.sh`) run every role on one host; independence of operators,
+  attestors and guardians is a deployment property not exercised by the tests.

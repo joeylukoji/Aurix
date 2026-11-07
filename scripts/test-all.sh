@@ -15,12 +15,13 @@ run() { # name cmd...
 }
 run chain-go   bash -c "cd '$ROOT/chain' && go test ./..."
 run slashing "$ROOT/scripts/slashing-test.sh"
-run guardian   bash -c "cd '$ROOT/guardian' && .venv/bin/python -m pytest -q"
+run guardian   bash -c "cd '$ROOT/guardian' && .venv/bin/pip install -q -r requirements.txt && .venv/bin/python -m pytest -q"
 run paypal-sim bash -c "cd '$ROOT/paypal-sim' && .venv/bin/python -m pytest -q"
 run gateway    bash -c "cd '$ROOT/gateway' && .venv/bin/pip install -q -r requirements-dev.txt && .venv/bin/python -m pytest -q"
 run attestor   bash -c "cd '$ROOT/attestor' && { [[ -x .venv/bin/python ]] || python3 -m venv .venv; } && .venv/bin/pip install -q -r requirements-dev.txt -r requirements.txt && .venv/bin/python -m pytest -q"
 # Chain scripts with their own stacks (each picks non-colliding ports and cleans up after itself).
 run attest     env -u PORT_OFFSET -u RUN_DIR -u AURIX_NET_HOME "$ROOT/scripts/attest-test.sh"
+run harden     env -u PORT_OFFSET -u RUN_DIR -u AURIX_NET_HOME "$ROOT/scripts/harden-test.sh"
 for s in gov-test upgrade-drill; do
   [[ -x "$ROOT/scripts/$s.sh" ]] && run "$s" env -u PORT_OFFSET -u RUN_DIR -u AURIX_NET_HOME "$ROOT/scripts/$s.sh"
 done

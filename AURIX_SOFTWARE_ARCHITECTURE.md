@@ -85,7 +85,7 @@ flowchart TB
 | `MsgCreateEscrow` | smartmoney | Locks the sender's AUR until a condition or a deadline |
 | `MsgReleaseEscrow` | smartmoney | Releases funds to the recipient if the condition is met |
 | `MsgRefundEscrow` | smartmoney | Refunds the sender (deadline passed or authorised cancellation) |
-| `MsgAnchorProof` | smartmoney | One **attestation** of the tracking proof of an external payment (hash, order ref, capture ref). Only `anchor_signers` may attest; the proof is `PENDING` until `anchor_threshold` distinct signers attested, then `CONFIRMED` (events `proof_attested`, `proof_confirmed`) |
+| `MsgAnchorProof` | smartmoney | One **attestation** of the tracking proof of an external payment (hash, order ref, capture ref, captured `amount` + `currency`). Only `anchor_signers` may attest; every attestation must repeat the same refs/amount/currency (else `ErrProofMismatch`); the proof is `PENDING` until `anchor_threshold` distinct signers attested, then `CONFIRMED` (events `proof_attested`, `proof_confirmed`). A `PENDING` proof is deleted at `expires_height` (`pending_ttl_blocks` param) |
 | `MsgUpdateParams` | smartmoney | Changes `anchor_signers` / `anchor_threshold`; authority = `x/gov` module account (proposal only) |
 
 > **[Proposal]** `MsgAnchorProof` is not in document v1.1, which speaks of "attaching a tracking proof". It materialises that link. It neither creates nor moves any AUR.
@@ -127,6 +127,8 @@ Responsibilities: request authentication, payment flow orchestration, PayPal con
 The API must be described in OpenAPI; this also allows modelling it with APIMatic.
 
 ### 3.4 Neural Guardian (Python, FastAPI, PyTorch)
+
+**Implemented (H3)**: every response also carries `attestation` = `{guardian, pubkey, payload, signature}`, a secp256k1 signature over sha256 of the canonical payload `{chain_id, from, to, amount, denom, score, decision, model_version, issued_at}`. The gateway queries all `GUARDIAN_URLS`, verifies each signature, aggregates the most severe valid decision and flags `quorum_met` (`GUARDIAN_QUORUM`); the wallet re-verifies the signatures in the browser ("k/n guardians agree").
 
 **API contract [Proposal]**:
 
@@ -302,7 +304,9 @@ PAYPAL_CLIENT_SECRET=
 PAYPAL_WEBHOOK_ID=
 PAYPAL_BASE_URL=https://api-m.sandbox.paypal.com
 CHAIN_RPC_URL=
-GUARDIAN_URL=
+GUARDIAN_URLS=        # comma list; GUARDIAN_QUORUM, GUARDIAN_PUBKEYS
+AURIX_ENV=            # production: dev seed keys refused
+GATEWAY_MNEMONIC=     # or GATEWAY_KEY_FILE; FAUCET_*, ATTESTOR_*, GUARDIAN_* likewise
 DATABASE_URL=
 REDIS_URL=
 ```
@@ -323,6 +327,8 @@ REDIS_URL=
 | 8 | No capture without explicit human approval | Gateway |
 | 9 | Neural Guardian's response modifies no transaction | Integration |
 | 10 | If PayPal is unavailable, AUR transfers and escrows still work | Integration |
+| 11 | An attestation with a different amount/currency than the proof is rejected; a pending proof expires after `pending_ttl_blocks` | Chain + `scripts/harden-test.sh` |
+| 12 | A forged or stale Guardian signature is excluded from the quorum | Gateway |
 
 ---
 

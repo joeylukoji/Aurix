@@ -9,6 +9,9 @@ services:
       AURIX_CHAIN_ID: aurix-testnet-1
       AURIX_FAUCET_SEED: ${AURIX_FAUCET_SEED:-aurix-dev-faucet}
       AURIX_GATEWAY_SEED: ${AURIX_GATEWAY_SEED:-aurix-dev-gateway}
+      # Real keys (networks/aurix-testnet-2/scripts/keygen.sh): genesis addresses instead of the dev seeds.
+      AURIX_GATEWAY_ADDR: ${AURIX_GATEWAY_ADDR:-}
+      AURIX_FAUCET_ADDR: ${AURIX_FAUCET_ADDR:-}
       AURIX_NET_HOME: /data
       VALIDATORS: "4"
       PORT_STEP: "0"
@@ -46,6 +49,12 @@ services:
     ports: []
   guardian:
     build: ../guardian
+    # Signs every risk score (H3). Dev default key unless GUARDIAN_MNEMONIC / GUARDIAN_KEY_FILE is set
+    # (required with AURIX_ENV=production).
+    environment:
+      AURIX_ENV: ${AURIX_ENV:-}
+      GUARDIAN_MNEMONIC: ${GUARDIAN_MNEMONIC:-}
+      GUARDIAN_CHAIN_ID: aurix-testnet-1
     ports: ["8000:8000"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health',timeout=4)"]
@@ -79,7 +88,15 @@ services:
     environment:
       CHAIN_RPC_URL: http://chain0:26657
       CHAIN_REST_URL: http://chain0:1317
-      GUARDIAN_URL: http://guardian:8000
+      # H3 quorum: comma separated guardians, valid signed scores required, optional pubkey allowlist.
+      GUARDIAN_URLS: ${GUARDIAN_URLS:-http://guardian:8000}
+      GUARDIAN_QUORUM: ${GUARDIAN_QUORUM:-1}
+      GUARDIAN_PUBKEYS: ${GUARDIAN_PUBKEYS:-}
+      # Keys (H2), in priority order: *_MNEMONIC, *_KEY_FILE, then the dev seeds below (refused with
+      # AURIX_ENV=production). Put real mnemonics in ../.env (from keygen.sh's gateway.env), never here.
+      AURIX_ENV: ${AURIX_ENV:-}
+      GATEWAY_MNEMONIC: ${GATEWAY_MNEMONIC:-}
+      FAUCET_MNEMONIC: ${FAUCET_MNEMONIC:-}
       AURIX_FAUCET_SEED: ${AURIX_FAUCET_SEED:-aurix-dev-faucet}
       AURIX_GATEWAY_SEED: ${AURIX_GATEWAY_SEED:-aurix-dev-gateway}
       PAYPAL_ENV: ${PAYPAL_ENV:-simulator}

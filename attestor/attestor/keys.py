@@ -59,9 +59,11 @@ def derive_private_key(seed: bytes, path: str = COSMOS_PATH) -> bytes:
 
 
 def key_from_mnemonic(mnemonic: str, path: str = COSMOS_PATH) -> Key:
-    words = mnemonic.split()
-    if len(words) not in (12, 15, 18, 21, 24):
-        raise KeyConfigError(f"mnemonic must have 12/15/18/21/24 words, got {len(words)}")
+    from .bip39 import validate
+    try:
+        validate(mnemonic)
+    except ValueError as e:
+        raise KeyConfigError(f"ATTESTOR_MNEMONIC: {e}") from None
     return Key(private_key=derive_private_key(mnemonic_to_seed(mnemonic), path))
 
 

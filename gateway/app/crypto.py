@@ -92,11 +92,9 @@ def _pubkey(k: int) -> bytes:
 
 
 def mnemonic_to_seed(mnemonic: str, passphrase: str = "") -> bytes:
-    """BIP39 seed (PBKDF2-HMAC-SHA512, 2048 rounds). The checksum is not verified (no wordlist bundled);
-    the word count is."""
-    words = unicodedata.normalize("NFKD", mnemonic).split()
-    if len(words) not in (12, 15, 18, 21, 24):
-        raise ValueError("mnemonic must have 12, 15, 18, 21 or 24 words")
+    """BIP39 seed (PBKDF2-HMAC-SHA512, 2048 rounds) after checking words + checksum (app/bip39.py)."""
+    from .bip39 import validate
+    words = validate(mnemonic)
     return hashlib.pbkdf2_hmac("sha512", " ".join(words).encode(),
                                ("mnemonic" + unicodedata.normalize("NFKD", passphrase)).encode(), 2048)
 

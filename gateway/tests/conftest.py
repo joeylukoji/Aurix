@@ -1,3 +1,4 @@
+import json
 import os
 import socket
 import subprocess
@@ -51,16 +52,41 @@ def chain_urls(tmp_path_factory):
     proc.terminate()
 
 
-def guardian_transport(level="high", score=0.82, fail=False):
+def sign_attestation(seed: str, body: dict, score: float, level: str, **override) -> dict:
+    """A Guardian attestation (contract H3) signed with the dev key sha256(seed)."""
+    import hashlib
+    import json
+
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+
+    from app.guardians import N, address_from_pubkey
+    from app.crypto import Key
+
+    k = Key(seed)
+    payload = {"chain_id": "aurix-test", "from": body.get("sender"), "to": body.get("recipient"),
+               "amount": str(body.get("amount")), "denom": body.get("currency"), "score": score,
+               "decision": level, "model_version": "test", "issued_at": int(time.time())} | override
+    payload = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    r, s = decode_dss_signature(k._sk.sign(payload.encode(), ec.ECDSA(hashes.SHA256())))
+    s = min(s, N - s)
+    return {"guardian": address_from_pubkey(k.pubkey), "pubkey": k.pubkey.hex(), "payload": payload,
+            "signature": (r.to_bytes(32, "big") + s.to_bytes(32, "big")).hex()}
+
+
+def guardian_transport(level="high", score=0.82, fail=False, seed="test-guardian"):
     calls = []
 
     def handler(req: httpx.Request):
         calls.append(req)
         if fail:
             return httpx.Response(503)
+        body = json.loads(req.content)
         return httpx.Response(200, json={"risk_score": score, "level": level, "advisory_only": True,
                                          "model_version": "test", "reasons": [
-                                             {"feature": "new_recipient", "impact": 0.3, "text": "First payment"}]})
+                                             {"feature": "new_recipient", "impact": 0.3, "text": "First payment"}],
+                                         "attestation": sign_attestation(seed, body, score, level)})
     t = httpx.MockTransport(handler)
     t.calls = calls
     return t

@@ -29,6 +29,7 @@ stays for local development only.
 
 | Script | Who | What |
 | --- | --- | --- |
+| `keygen.sh [out_dir]` | coordinator / each service operator | real keys for gateway, faucet, attestors (`ATTESTORS`, default 2) and guardians (`GUARDIANS`, default 2) via `aurixd keys add --output json`: 0700 directory, one 0600 env file per service (`<PREFIX>_MNEMONIC`, `AURIX_ENV=production`, gateway gets `GUARDIAN_PUBKEYS`), `addresses.txt` and `anchor_signers.txt`; prints addresses only |
 | `coordinator-pregenesis.sh operators.csv anchor_signers.txt [out]` | coordinator | equal-stake accounts from `moniker,address` lines, faucet + gateway + attestor accounts, slashing/gov/smartmoney params, `genesis_time` = now + 48 h (`GENESIS_TIME` overrides), prints the SHA-256 |
 | `operator-gentx.sh pregenesis.json <sha256>` | each operator | verifies the hash, signs the gentx with the `file`/`os` keyring, writes `gentx/<moniker>.json` |
 | `coordinator-finalize.sh` | coordinator | `collect-gentxs`, `genesis validate`, writes `genesis.json` + `genesis.json.sha256` |
@@ -38,6 +39,21 @@ stays for local development only.
 Params the binary does not know yet (e.g. x/gov or `anchor_threshold` on an older build) are skipped
 with a warning: check the pre-genesis output before publishing it. Always run `dry-run.sh` with the
 release binary before the real ceremony.
+
+## Service keys (gateway, faucet, attestors, guardians)
+
+Never use the dev seeds (`AURIX_*_SEED`, `ATTESTOR_SEED`, `GUARDIAN_SEED`) on this network: they are public.
+
+```bash
+AURIXD=aurixd ATTESTORS=2 GUARDIANS=2 scripts/keygen.sh ./aurix-keys      # 0700, addresses printed only
+FAUCET_ADDR=$(grep ^faucet, aurix-keys/addresses.txt | cut -d, -f2) \
+  scripts/coordinator-pregenesis.sh operators.csv aurix-keys/anchor_signers.txt
+```
+
+Ship `gateway.env`, `attestor-N.env`, `guardian-N.env` to their hosts (fill the `CHANGE_ME` values), keep an
+offline encrypted backup of the mnemonics and delete `aurix-keys/` afterwards. Better: each attestor/guardian
+operator runs `keygen.sh` (or `aurixd keys add`) on their own machine and sends only the address; the
+coordinator then writes `anchor_signers.txt` by hand. Every service refuses seed keys with `AURIX_ENV=production`.
 
 ## Operator checklist
 

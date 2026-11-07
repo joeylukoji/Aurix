@@ -4,6 +4,8 @@
 # Usage: coordinator-pregenesis.sh OPERATORS_CSV ANCHOR_SIGNERS_FILE [OUT_DIR]
 #   OPERATORS_CSV        lines "moniker,address" (a "moniker,address" header and # comments are allowed)
 #   ANCHOR_SIGNERS_FILE  one aur address per line (3 expected; the first is the gateway by default)
+#                        Generate real keys first with scripts/keygen.sh OUT: it writes OUT/anchor_signers.txt
+#                        (gateway + attestors) and OUT/addresses.txt (faucet address for FAUCET_ADDR).
 # Env:
 #   AURIXD (aurixd), CHAIN_ID (aurix-testnet-2), COORD_HOME (scratch home, default ./coordinator-home)
 #   FAUCET_ADDR (required), GATEWAY_ADDR (default: first anchor signer)

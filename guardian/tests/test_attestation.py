@@ -91,3 +91,13 @@ def test_key_sources_and_production_refusal(tmp_path, caplog):
     f = tmp_path / "k"; f.write_text(m.priv.secret.hex()); f.chmod(0o600)
     kf = load_key({"AURIX_ENV": "production", "GUARDIAN_KEY_FILE": str(f)})
     assert kf.source == "key_file" and kf.address == m.address
+
+
+def test_mnemonic_checksum_rejected():
+    import pytest as _pytest
+    from app.keys import KeyConfigError, load_key
+    with _pytest.raises(KeyConfigError, match="mnemonic"):
+        load_key({"GUARDIAN_MNEMONIC": "abandon " * 12})
+    with _pytest.raises(KeyConfigError):
+        load_key({"GUARDIAN_MNEMONIC": "abandon " * 11 + "abandonx"})
+    assert load_key({"GUARDIAN_MNEMONIC": "abandon " * 11 + "about"}).address.startswith("aur1")

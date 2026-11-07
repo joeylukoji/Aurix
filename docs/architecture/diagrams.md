@@ -111,7 +111,7 @@ sequenceDiagram
     P->>G: POST /api/paypal/webhook (signed PAYMENT.CAPTURE.COMPLETED)
     G->>P: POST /v1/notifications/verify-webhook-signature
     G->>G: idempotency check, CONFIRMED
-    G->>C: MsgAnchorProof sha256(order_id|capture_id)
+    G->>C: MsgAnchorProof sha256(order_id|capture_id) + amount, currency
     C-->>G: height
     G->>G: ANCHORED
 ```

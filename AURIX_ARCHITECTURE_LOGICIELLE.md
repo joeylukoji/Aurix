@@ -85,7 +85,7 @@ flowchart TB
 | `MsgCreateEscrow` | smartmoney | Verrouille des AUR de l'émetteur jusqu'à une condition ou une échéance |
 | `MsgReleaseEscrow` | smartmoney | Libère les fonds vers le bénéficiaire si la condition est satisfaite |
 | `MsgRefundEscrow` | smartmoney | Rembourse l'émetteur (échéance dépassée ou annulation autorisée) |
-| `MsgAnchorProof` | smartmoney | Une **attestation** de la preuve de suivi d'un paiement externe (hash, réf. commande, réf. capture). Seuls les `anchor_signers` peuvent attester ; la preuve reste `PENDING` jusqu'à `anchor_threshold` signataires distincts, puis devient `CONFIRMED` (événements `proof_attested`, `proof_confirmed`) |
+| `MsgAnchorProof` | smartmoney | Une **attestation** de la preuve de suivi d'un paiement externe (hash, réf. commande, réf. capture, `amount` + `currency` capturés). Seuls les `anchor_signers` peuvent attester ; chaque attestation doit reprendre les mêmes réf./montant/devise (sinon `ErrProofMismatch`) ; la preuve reste `PENDING` jusqu'à `anchor_threshold` signataires distincts, puis devient `CONFIRMED` (événements `proof_attested`, `proof_confirmed`). Une preuve `PENDING` est supprimée à `expires_height` (paramètre `pending_ttl_blocks`) |
 | `MsgUpdateParams` | smartmoney | Modifie `anchor_signers` / `anchor_threshold` ; autorité = compte du module `x/gov` (proposition uniquement) |
 
 > **[Proposition]** `MsgAnchorProof` n'est pas dans le document v1.1, qui parle d'« associer une preuve de suivi ». Elle matérialise ce lien. Elle ne crée ni ne déplace aucun AUR.
@@ -127,6 +127,8 @@ Responsabilités : authentification des requêtes, orchestration du parcours de 
 L'API doit être décrite en OpenAPI ; c'est aussi ce qui permet de la modéliser avec APIMatic.
 
 ### 3.4 Neural Guardian (Python, FastAPI, PyTorch)
+
+**Implémenté (H3)** : chaque réponse contient aussi `attestation` = `{guardian, pubkey, payload, signature}`, une signature secp256k1 sur sha256 du payload canonique `{chain_id, from, to, amount, denom, score, decision, model_version, issued_at}`. La passerelle interroge tous les `GUARDIAN_URLS`, vérifie chaque signature, agrège la décision valide la plus sévère et indique `quorum_met` (`GUARDIAN_QUORUM`) ; le portefeuille revérifie les signatures dans le navigateur (« k/n guardians agree »).
 
 **Contrat d'API [Proposition]** :
 
@@ -300,7 +302,9 @@ PAYPAL_CLIENT_SECRET=
 PAYPAL_WEBHOOK_ID=
 PAYPAL_BASE_URL=https://api-m.sandbox.paypal.com
 CHAIN_RPC_URL=
-GUARDIAN_URL=
+GUARDIAN_URLS=        # liste séparée par des virgules ; GUARDIAN_QUORUM, GUARDIAN_PUBKEYS
+AURIX_ENV=            # production : clés de dev (seed) refusées
+GATEWAY_MNEMONIC=     # ou GATEWAY_KEY_FILE ; idem FAUCET_*, ATTESTOR_*, GUARDIAN_*
 DATABASE_URL=
 REDIS_URL=
 ```
@@ -321,6 +325,8 @@ REDIS_URL=
 | 8 | Aucune capture sans approbation humaine explicite | Gateway |
 | 9 | La réponse de Neural Guardian ne modifie aucune transaction | Intégration |
 | 10 | Si PayPal est indisponible, transferts et séquestres AUR fonctionnent | Intégration |
+| 11 | Une attestation dont montant/devise diffèrent de la preuve est rejetée ; une preuve en attente expire après `pending_ttl_blocks` | Chaîne + `scripts/harden-test.sh` |
+| 12 | Une signature Guardian falsifiée ou périmée est exclue du quorum | Passerelle |
 
 ---
 

@@ -50,7 +50,11 @@ class GuardianKey:
 
 
 def from_mnemonic(mnemonic: str) -> coincurve.PrivateKey:
-    seed = Bip39SeedGenerator(" ".join(mnemonic.split())).Generate()
+    """bip_utils validates the English wordlist and the checksum; errors become KeyConfigError."""
+    try:
+        seed = Bip39SeedGenerator(" ".join(mnemonic.split())).Generate()
+    except Exception as e:  # MnemonicChecksumError, ValueError (unknown word / length)
+        raise KeyConfigError(f"GUARDIAN_MNEMONIC: invalid BIP39 mnemonic ({e})") from None
     node = Bip32Slip10Secp256k1.FromSeed(seed).DerivePath("m/44'/118'/0'/0/0")
     return coincurve.PrivateKey(node.PrivateKey().Raw().ToBytes())
 

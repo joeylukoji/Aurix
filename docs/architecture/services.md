@@ -79,6 +79,14 @@ In the code, `CREATED` and `SCORED` happen in the same request; the stored statu
 
 `POST /v1/risk/score` → `{risk_score, level, reasons[], advisory_only: true}`. LightGBM classifier with native TreeSHAP reasons, **trained on PaySim** (Kaggle `ealaxi/paysim1`, out-of-time ROC-AUC 0.978, PR-AUC 0.939; see `guardian/MODEL_CARD.md`). If Guardian is down, the gateway returns `risk_status: "unavailable"` and the user can still proceed (US-10). Model card: [`guardian/MODEL_CARD.md`](../../guardian/MODEL_CARD.md). GNN analysis is **planned**.
 
+Signed scores (H3): each response carries `attestation` (secp256k1 signature over sha256 of the canonical
+payload `{chain_id, from, to, amount, denom, score, decision, model_version, issued_at}`), `GET /pubkey`
+returns the guardian key. The gateway queries every `GUARDIAN_URLS` entry in parallel, drops unsigned,
+forged, stale (>300 s), duplicate-key or wrong-payment attestations (and keys outside `GUARDIAN_PUBKEYS`
+when set), returns the most severe valid decision plus `quorum {configured, valid, agree, required,
+quorum_met}` and per-guardian `guardians[]`; `risk_status` is `ok`, `quorum_not_met` or `unavailable`.
+The wallet re-verifies each signature with noble-secp256k1 and shows "k/n guardians agree".
+
 ## 4. `paypal-sim` — PayPal API simulator (temporary)
 
 Implements the subset of PayPal used by the gateway: `POST /v1/oauth2/token`, `POST /v2/checkout/orders`, `GET /v2/checkout/orders/{id}`, `POST /v2/checkout/orders/{id}/capture`, `POST /v1/notifications/verify-webhook-signature`, a buyer approval page `GET /checkoutnow?token=…`, and test helpers under `/sim/*` (list, resend and forge webhook events). On capture it POSTs a signed `PAYMENT.CAPTURE.COMPLETED` webhook to the gateway. The gateway uses the same PayPal client for the simulator and the real Sandbox; switching is configuration only — see [`paypal-sim/README.md`](../../paypal-sim/README.md).

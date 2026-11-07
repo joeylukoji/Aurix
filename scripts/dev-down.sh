@@ -4,7 +4,7 @@ set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 RUN_DIR=${RUN_DIR:-$ROOT/.run}
 shopt -s nullglob
-for f in "$RUN_DIR"/attestor*.pid "$RUN_DIR"/gateway.pid "$RUN_DIR"/webstatic.pid "$RUN_DIR"/paypal-sim.pid "$RUN_DIR"/guardian.pid "$RUN_DIR"/chain*.pid; do
+for f in "$RUN_DIR"/attestor*.pid "$RUN_DIR"/gateway.pid "$RUN_DIR"/webstatic.pid "$RUN_DIR"/paypal-sim.pid "$RUN_DIR"/guardian*.pid "$RUN_DIR"/chain*.pid; do
   [[ -f "$f" ]] || continue
   name=$(basename "$f" .pid)
   pid=$(cat "$f")

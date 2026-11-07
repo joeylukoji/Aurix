@@ -34,6 +34,13 @@ from .keys import load_key
 log = logging.getLogger("aurix.gateway")
 
 RISKY_TYPES = {"MsgSend", "MsgCreateEscrow"}
+
+
+def risk_state(risk: dict | None) -> str:
+    """ok | quorum_not_met (some valid signed scores, fewer than GUARDIAN_QUORUM) | unavailable."""
+    if not risk:
+        return "unavailable"
+    return "ok" if risk.get("quorum_met", True) else "quorum_not_met"
 TYPE_URLS = {
     "MsgSend": "/cosmos.bank.v1beta1.MsgSend",
     "MsgCreateEscrow": "/aurix.smartmoney.v1.MsgCreateEscrow",
@@ -78,7 +85,7 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
                guardian: GuardianClient | None = None, paypal=None) -> FastAPI:
     s = settings or Settings()
     chain = chain or ChainClient(s.chain_url, s.chain_rest_url)
-    guardian = guardian or GuardianClient(s.guardian_url)
+    guardian = guardian or GuardianClient(s.guardian_urls, quorum=s.guardian_quorum, pubkeys=s.guardian_pubkeys)
     if paypal is None and s.paypal_configured:
         paypal = PayPalClient(s.paypal_base_url, s.paypal_client_id, s.paypal_client_secret, s.paypal_webhook_id)
     paypal_mode = s.paypal_env if paypal is not None else "disabled"
@@ -126,7 +133,8 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
     @app.get("/api/health")
     def health():
         return {"status": "ok", "paypal_mode": paypal_mode,
-                }
+                "guardians": len(guardian.urls) if hasattr(guardian, "urls") else 1,
+                "guardian_quorum": getattr(guardian, "quorum", 1)}
 
     @app.get("/api/chain/status")
     def chain_status():
@@ -182,7 +190,7 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
                                   sender=req.sender, recipient=msg.get("to", ""),
                                   amount=max(msg.get("amount", 0), 1) / crypto.MICRO, currency="AUR",
                                   sender_balance=acct["balance"] / crypto.MICRO, record=False)
-            risk_status = "ok" if risk else "unavailable"
+            risk_status = risk_state(risk)
         return {"chain_id": chain_id(), "account_number": acct["account_number"], "sequence": acct["sequence"],
                 "fee": {"denom": crypto.DENOM, "amount": crypto.FEE, "gas_limit": crypto.GAS_LIMIT},
                 "type_url": TYPE_URLS[msg["type"]], "msg": msg,
@@ -449,7 +457,7 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
         db.save_risk("paypal_order", order["id"], risk)
         approve = next((l["href"] for l in order.get("links", []) if l["rel"] in ("approve", "payer-action")), None)
         return {"order_id": order["id"], "status": "SCORED", "amount_usd": value, "approve_url": approve,
-                "risk": risk, "risk_status": "ok" if risk else "unavailable", "advisory_only": True,
+                "risk": risk, "risk_status": risk_state(risk), "advisory_only": True,
                 "paypal_mode": paypal_mode}
 
     @app.get("/api/paypal/orders")

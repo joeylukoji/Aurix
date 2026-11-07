@@ -16,7 +16,9 @@ Each validator signs its own gentx with an equal stake (50,000 AUR); nodes are w
 peers. Node *i* listens on the base ports + *i* × `PORT_STEP` (default 1000): node0 on RPC 26657 /
 REST 1317, node1 on 27657 / 2317, and so on. `ATTESTOR_SEEDS` (space separated) adds funded anchor
 signers after the gateway and `ANCHOR_THRESHOLD` (default 1) sets the attestations required;
-`scripts/dev-up.sh` sets both when `ATTESTORS=N` and starts the attestor daemons.
+`scripts/dev-up.sh` sets both when `ATTESTORS=N` and starts the attestor daemons. `PENDING_TTL_BLOCKS`
+sets `params.pending_ttl_blocks` (pending proof expiry). Real keys instead of dev seeds:
+`AURIX_GATEWAY_ADDR`, `AURIX_FAUCET_ADDR`, `ATTESTOR_ADDRS` (from `networks/aurix-testnet-2/scripts/keygen.sh`).
 
 ```bash
 go build -o build/aurixd ./cmd/aurixd
@@ -54,7 +56,7 @@ AURIXD=./build/aurixd scripts/init-local.sh
 
 Endpoints: CometBFT RPC `:26657`, REST `:1317` (e.g. `/aurix/smartmoney/v1/escrows`, `/cosmos/bank/v1beta1/balances/{addr}`), gRPC `:9090`.
 
-`aurixd seed-address <seed>` prints the address of the dev key `secp256k1(sha256(seed))`, the derivation used by the gateway and the web wallet. The faucet and gateway seeds (`AURIX_FAUCET_SEED`, `AURIX_GATEWAY_SEED`) are dev-only.
+`aurixd seed-address <seed>` prints the address of the dev key `secp256k1(sha256(seed))`, the derivation used by the gateway and the web wallet. The faucet and gateway seeds (`AURIX_FAUCET_SEED`, `AURIX_GATEWAY_SEED`) are dev-only: anyone can recompute those keys. For anything public generate real keys (`networks/aurix-testnet-2/scripts/keygen.sh`, or `aurixd keys add <name>` and feed the mnemonic to `GATEWAY_MNEMONIC` / `FAUCET_MNEMONIC` / `ATTESTOR_MNEMONIC` / `GUARDIAN_MNEMONIC`; same address, coin type 118) and set `AURIX_ENV=production` so the services refuse seed keys.
 
 ## Develop
 
