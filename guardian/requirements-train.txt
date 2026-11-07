@@ -1,0 +1,3 @@
+# Offline training only (not needed by the API at runtime).
+-r requirements.txt
+pandas==2.2.3

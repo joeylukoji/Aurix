@@ -168,7 +168,7 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
             risk = guardian.score(context="escrow" if msg["type"] == "MsgCreateEscrow" else "aur_transfer",
                                   sender=req.sender, recipient=msg.get("to", ""),
                                   amount=max(msg.get("amount", 0), 1) / crypto.MICRO, currency="AUR",
-                                  record=False)
+                                  sender_balance=acct["balance"] / crypto.MICRO, record=False)
             risk_status = "ok" if risk else "unavailable"
         return {"chain_id": chain_id(), "account_number": acct["account_number"], "sequence": acct["sequence"],
                 "fee": {"denom": crypto.DENOM, "amount": crypto.FEE, "gas_limit": crypto.GAS_LIMIT},

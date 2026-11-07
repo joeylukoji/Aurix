@@ -1,0 +1,104 @@
+{
+  "dataset": "PaySim (Kaggle ealaxi/paysim1), 6,362,620 transactions, 8,213 fraud",
+  "dataset_sha256": "16910f90577b0d981bf8ff289714510bb89bc71bff7d3f220f024e287e4eea6b",
+  "features": [
+    "amount_to_balance",
+    "drains_account",
+    "tx_type",
+    "sender_prior_txs",
+    "amount_vs_sender_avg",
+    "recipient_prior_txs"
+  ],
+  "dropped_features": [
+    "hour",
+    "log_amount"
+  ],
+  "split": "out-of-time: train steps 1-500, test steps 501-744 (true prevalence)",
+  "train_rows": 6061807,
+  "train_fraud": 5561,
+  "test_rows": 300813,
+  "test_fraud": 2652,
+  "test_prevalence": 0.00882,
+  "roc_auc": 0.9775,
+  "pr_auc": 0.9385,
+  "thresholds": [
+    {
+      "threshold": 0.05,
+      "precision": 0.945,
+      "recall": 0.954,
+      "flag_rate": 0.0089,
+      "true_positives": 2529,
+      "flagged": 2676
+    },
+    {
+      "threshold": 0.1,
+      "precision": 0.961,
+      "recall": 0.95,
+      "flag_rate": 0.00871,
+      "true_positives": 2520,
+      "flagged": 2621
+    },
+    {
+      "threshold": 0.3,
+      "precision": 0.962,
+      "recall": 0.94,
+      "flag_rate": 0.00861,
+      "true_positives": 2492,
+      "flagged": 2590
+    },
+    {
+      "threshold": 0.5,
+      "precision": 0.964,
+      "recall": 0.918,
+      "flag_rate": 0.0084,
+      "true_positives": 2435,
+      "flagged": 2527
+    },
+    {
+      "threshold": 0.7,
+      "precision": 0.989,
+      "recall": 0.524,
+      "flag_rate": 0.00467,
+      "true_positives": 1389,
+      "flagged": 1404
+    },
+    {
+      "threshold": 0.9,
+      "precision": 0.99,
+      "recall": 0.517,
+      "flag_rate": 0.00461,
+      "true_positives": 1372,
+      "flagged": 1386
+    }
+  ],
+  "by_type": {
+    "TRANSFER": {
+      "test_rows": 28212,
+      "test_fraud": 1326
+    },
+    "CASH_OUT": {
+      "test_rows": 96418,
+      "test_fraud": 1326
+    },
+    "PAYMENT": {
+      "test_rows": 105160,
+      "test_fraud": 0
+    },
+    "CASH_IN": {
+      "test_rows": 68567,
+      "test_fraud": 0
+    },
+    "DEBIT": {
+      "test_rows": 2456,
+      "test_fraud": 0
+    }
+  },
+  "feature_importance_gain": {
+    "recipient_prior_txs": 273409971831.99182,
+    "amount_vs_sender_avg": 184808364377.55267,
+    "amount_to_balance": 14472589333.112244,
+    "tx_type": 31425101.905250013,
+    "drains_account": 3928013.613989979,
+    "sender_prior_txs": 3174752.854791213
+  }
+}
