@@ -1,0 +1,32 @@
+syntax = "proto3";
+package aurix.smartmoney.v1;
+
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "aurix/smartmoney/v1/types.proto";
+
+option go_package = "github.com/joeylukoji/aurix/chain/x/smartmoney/types";
+
+service Query {
+  rpc Escrow(QueryEscrowRequest) returns (QueryEscrowResponse) {
+    option (google.api.http).get = "/aurix/smartmoney/v1/escrows/{id}";
+  }
+  rpc Escrows(QueryEscrowsRequest) returns (QueryEscrowsResponse) {
+    option (google.api.http).get = "/aurix/smartmoney/v1/escrows";
+  }
+  rpc Proof(QueryProofRequest) returns (QueryProofResponse) {
+    option (google.api.http).get = "/aurix/smartmoney/v1/proofs/{hash}";
+  }
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/aurix/smartmoney/v1/params";
+  }
+}
+
+message QueryEscrowRequest { uint64 id = 1; }
+message QueryEscrowResponse { Escrow escrow = 1 [(gogoproto.nullable) = false]; }
+message QueryEscrowsRequest {}
+message QueryEscrowsResponse { repeated Escrow escrows = 1 [(gogoproto.nullable) = false]; }
+message QueryProofRequest { string hash = 1; }
+message QueryProofResponse { PaymentProof proof = 1 [(gogoproto.nullable) = false]; }
+message QueryParamsRequest {}
+message QueryParamsResponse { Params params = 1 [(gogoproto.nullable) = false]; }

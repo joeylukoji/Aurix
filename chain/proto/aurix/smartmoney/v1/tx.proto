@@ -1,0 +1,56 @@
+syntax = "proto3";
+package aurix.smartmoney.v1;
+
+import "gogoproto/gogo.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "amino/amino.proto";
+
+option go_package = "github.com/joeylukoji/aurix/chain/x/smartmoney/types";
+
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+  rpc CreateEscrow(MsgCreateEscrow) returns (MsgCreateEscrowResponse);
+  rpc ReleaseEscrow(MsgReleaseEscrow) returns (MsgReleaseEscrowResponse);
+  rpc RefundEscrow(MsgRefundEscrow) returns (MsgRefundEscrowResponse);
+  rpc AnchorProof(MsgAnchorProof) returns (MsgAnchorProofResponse);
+}
+
+message MsgCreateEscrow {
+  option (cosmos.msg.v1.signer) = "sender";
+  option (amino.name) = "aurix/MsgCreateEscrow";
+  string sender = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string recipient = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string arbiter = 3;
+  cosmos.base.v1beta1.Coin amount = 4 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
+  int64 deadline_height = 5;
+}
+message MsgCreateEscrowResponse { uint64 id = 1; }
+
+message MsgReleaseEscrow {
+  option (cosmos.msg.v1.signer) = "signer";
+  option (amino.name) = "aurix/MsgReleaseEscrow";
+  string signer = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  uint64 escrow_id = 2;
+}
+message MsgReleaseEscrowResponse {}
+
+message MsgRefundEscrow {
+  option (cosmos.msg.v1.signer) = "signer";
+  option (amino.name) = "aurix/MsgRefundEscrow";
+  string signer = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  uint64 escrow_id = 2;
+}
+message MsgRefundEscrowResponse {}
+
+// MsgAnchorProof records the hash of an external (e.g. PayPal) payment.
+// It never creates or moves AUR.
+message MsgAnchorProof {
+  option (cosmos.msg.v1.signer) = "signer";
+  option (amino.name) = "aurix/MsgAnchorProof";
+  string signer = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string hash = 2;
+  string external_ref = 3;
+}
+message MsgAnchorProofResponse {}

@@ -1,0 +1,14 @@
+syntax = "proto3";
+package aurix.smartmoney.v1;
+
+import "gogoproto/gogo.proto";
+import "aurix/smartmoney/v1/types.proto";
+
+option go_package = "github.com/joeylukoji/aurix/chain/x/smartmoney/types";
+
+message GenesisState {
+  Params params = 1 [(gogoproto.nullable) = false];
+  repeated Escrow escrows = 2 [(gogoproto.nullable) = false];
+  repeated PaymentProof proofs = 3 [(gogoproto.nullable) = false];
+  uint64 next_escrow_id = 4;
+}

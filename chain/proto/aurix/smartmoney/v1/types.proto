@@ -1,0 +1,39 @@
+syntax = "proto3";
+package aurix.smartmoney.v1;
+
+import "gogoproto/gogo.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "cosmos_proto/cosmos.proto";
+
+option go_package = "github.com/joeylukoji/aurix/chain/x/smartmoney/types";
+
+enum EscrowStatus {
+  option (gogoproto.goproto_enum_prefix) = false;
+  ESCROW_STATUS_UNSPECIFIED = 0;
+  ESCROW_STATUS_LOCKED = 1;
+  ESCROW_STATUS_RELEASED = 2;
+  ESCROW_STATUS_REFUNDED = 3;
+}
+
+message Escrow {
+  uint64 id = 1;
+  string sender = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string recipient = 3 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string arbiter = 4;
+  cosmos.base.v1beta1.Coin amount = 5 [(gogoproto.nullable) = false];
+  int64 deadline_height = 6;
+  EscrowStatus status = 7;
+  int64 created_height = 8;
+}
+
+message PaymentProof {
+  string hash = 1;
+  string external_ref = 2;
+  int64 height = 3;
+  string submitter = 4;
+}
+
+message Params {
+  // Addresses (e.g. the API gateway) allowed to anchor external payment proofs.
+  repeated string anchor_signers = 1;
+}

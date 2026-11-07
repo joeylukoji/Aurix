@@ -1,168 +1,142 @@
-// aurixd is a single-validator AURIX node exposing a JSON RPC over HTTP.
 package main
 
 import (
-	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
-	"log"
-	"net/http"
+	"fmt"
+	"io"
 	"os"
-	"strconv"
-	"sync"
-	"time"
 
-	"github.com/joeylukoji/aurix/chain/ledger"
+	"cosmossdk.io/log"
+	cmtcfg "github.com/cometbft/cometbft/config"
+	dbm "github.com/cosmos/cosmos-db"
+	"github.com/cosmos/cosmos-sdk/baseapp"
+	"github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/client/config"
+	"github.com/cosmos/cosmos-sdk/client/debug"
+	"github.com/cosmos/cosmos-sdk/client/flags"
+	"github.com/cosmos/cosmos-sdk/client/keys"
+	"github.com/cosmos/cosmos-sdk/client/rpc"
+	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
+	"github.com/cosmos/cosmos-sdk/server"
+	serverconfig "github.com/cosmos/cosmos-sdk/server/config"
+	servertypes "github.com/cosmos/cosmos-sdk/server/types"
+	svrcmd "github.com/cosmos/cosmos-sdk/server/cmd"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	authcmd "github.com/cosmos/cosmos-sdk/x/auth/client/cli"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	genutilcli "github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
+	"github.com/spf13/cast"
+	"github.com/spf13/cobra"
+
+	"github.com/joeylukoji/aurix/chain/app"
 )
 
-type pending struct {
-	tx   ledger.Tx
-	done chan ledger.TxResult
-}
-
-type node struct {
-	state   *ledger.State
-	mu      sync.Mutex
-	mempool []pending
-	txIndex sync.Map // hash -> TxResult
-}
-
-func seedKey(seed string) ed25519.PrivateKey {
-	h := sha256.Sum256([]byte(seed))
-	return ed25519.NewKeyFromSeed(h[:])
-}
-
-func env(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return def
-}
-
-// produce commits the mempool into a block at every tick (empty blocks too,
-// so that escrow deadlines expressed in block height advance).
-func (n *node) produce(interval time.Duration) {
-	for range time.Tick(interval) {
-		n.mu.Lock()
-		batch := n.mempool
-		n.mempool = nil
-		n.mu.Unlock()
-		txs := make([]ledger.Tx, len(batch))
-		for i, p := range batch {
-			txs[i] = p.tx
-		}
-		b := n.state.CommitBlock(txs, time.Now().Unix())
-		for i, r := range b.Txs {
-			n.txIndex.Store(r.Hash, r)
-			batch[i].done <- r
-		}
-	}
-}
-
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func errJSON(w http.ResponseWriter, code int, err error) {
-	writeJSON(w, code, map[string]any{"error": err.Error()})
-}
-
-func (n *node) routes() *http.ServeMux {
-	m := http.NewServeMux()
-	m.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"chain_id": n.state.ChainID, "height": n.state.Height(),
-			"total_supply": n.state.TotalSupply(), "denom": "uaur"})
-	})
-	m.HandleFunc("GET /accounts/{addr}", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, n.state.Account(r.PathValue("addr")))
-	})
-	m.HandleFunc("POST /txs", func(w http.ResponseWriter, r *http.Request) {
-		var tx ledger.Tx
-		if err := json.NewDecoder(r.Body).Decode(&tx); err != nil {
-			errJSON(w, 400, err)
-			return
-		}
-		if err := n.state.CheckTx(tx); err != nil { // CheckTx: reject early
-			errJSON(w, 400, err)
-			return
-		}
-		p := pending{tx, make(chan ledger.TxResult, 1)}
-		n.mu.Lock()
-		n.mempool = append(n.mempool, p)
-		n.mu.Unlock()
-		select {
-		case res := <-p.done:
-			code := 200
-			if res.Code != 0 {
-				code = 400
-			}
-			writeJSON(w, code, res)
-		case <-time.After(15 * time.Second):
-			errJSON(w, 504, errors.New("timeout waiting for block"))
-		}
-	})
-	m.HandleFunc("GET /txs/{hash}", func(w http.ResponseWriter, r *http.Request) {
-		if v, ok := n.txIndex.Load(r.PathValue("hash")); ok {
-			writeJSON(w, 200, v)
-			return
-		}
-		errJSON(w, 404, errors.New("tx not found"))
-	})
-	m.HandleFunc("GET /blocks", func(w http.ResponseWriter, r *http.Request) {
-		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		if limit <= 0 || limit > 500 {
-			limit = 50
-		}
-		writeJSON(w, 200, n.state.Blocks(limit))
-	})
-	m.HandleFunc("GET /blocks/{h}", func(w http.ResponseWriter, r *http.Request) {
-		h, _ := strconv.ParseInt(r.PathValue("h"), 10, 64)
-		if b, ok := n.state.Block(h); ok {
-			writeJSON(w, 200, b)
-			return
-		}
-		errJSON(w, 404, errors.New("block not found"))
-	})
-	m.HandleFunc("GET /escrows", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, n.state.Escrows())
-	})
-	m.HandleFunc("GET /escrows/{id}", func(w http.ResponseWriter, r *http.Request) {
-		id, _ := strconv.ParseUint(r.PathValue("id"), 10, 64)
-		if e, ok := n.state.Escrow(id); ok {
-			writeJSON(w, 200, e)
-			return
-		}
-		errJSON(w, 404, errors.New("escrow not found"))
-	})
-	m.HandleFunc("GET /proofs/{hash}", func(w http.ResponseWriter, r *http.Request) {
-		if p, ok := n.state.Proof(r.PathValue("hash")); ok {
-			writeJSON(w, 200, p)
-			return
-		}
-		errJSON(w, 404, errors.New("proof not found"))
-	})
-	return m
-}
-
 func main() {
-	faucet := seedKey(env("AURIX_FAUCET_SEED", "aurix-dev-faucet"))
-	gateway := seedKey(env("AURIX_GATEWAY_SEED", "aurix-dev-gateway"))
-	addr := func(k ed25519.PrivateKey) string { return ledger.AddressFromPubKey(k.Public().(ed25519.PublicKey)) }
-	g := ledger.Genesis{
-		ChainID: env("AURIX_CHAIN_ID", "aurix-testnet-1"),
-		Balances: map[string]uint64{
-			addr(faucet):  1_000_000 * ledger.MicroPerAUR,
-			addr(gateway): 1_000 * ledger.MicroPerAUR,
-		},
-		AnchorSigners: []string{addr(gateway)},
+	app.SetConfig()
+	if err := svrcmd.Execute(rootCmd(), "AURIXD", app.DefaultNodeHome); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
-	interval, _ := time.ParseDuration(env("AURIX_BLOCK_INTERVAL", "1s"))
-	n := &node{state: ledger.NewState(g)}
-	go n.produce(interval)
-	listen := env("AURIX_LISTEN", ":26657")
-	log.Printf("aurixd chain=%s faucet=%s gateway=%s listening on %s", g.ChainID, addr(faucet), addr(gateway), listen)
-	log.Fatal(http.ListenAndServe(listen, n.routes()))
+}
+
+func rootCmd() *cobra.Command {
+	enc := app.MakeEncodingConfig()
+	initCtx := client.Context{}.
+		WithCodec(enc.Codec).
+		WithInterfaceRegistry(enc.InterfaceRegistry).
+		WithTxConfig(enc.TxConfig).
+		WithLegacyAmino(enc.Amino).
+		WithInput(os.Stdin).
+		WithAccountRetriever(authtypes.AccountRetriever{}).
+		WithHomeDir(app.DefaultNodeHome).
+		WithViper("AURIXD")
+
+	root := &cobra.Command{
+		Use:   "aurixd",
+		Short: "AURIX node (Cosmos SDK + CometBFT)",
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SetOut(cmd.OutOrStdout())
+			cmd.SetErr(cmd.ErrOrStderr())
+			ctx, err := client.ReadPersistentCommandFlags(initCtx, cmd.Flags())
+			if err != nil {
+				return err
+			}
+			if ctx, err = config.ReadFromClientConfig(ctx); err != nil {
+				return err
+			}
+			if err := client.SetCmdClientContextHandler(ctx, cmd); err != nil {
+				return err
+			}
+			srvCfg := serverconfig.DefaultConfig()
+			srvCfg.MinGasPrices = "0.0025" + app.BondDenom
+			cmt := cmtcfg.DefaultConfig()
+			cmt.Consensus.TimeoutCommit = 1_000_000_000 // 1s blocks for the demo
+			return server.InterceptConfigsPreRunHandler(cmd, serverconfig.DefaultConfigTemplate, srvCfg, cmt)
+		},
+	}
+
+	root.AddCommand(
+		genutilcli.InitCmd(app.ModuleBasics, app.DefaultNodeHome),
+		debug.Cmd(),
+		seedAddressCmd(),
+	)
+	server.AddCommands(root, app.DefaultNodeHome, newApp, exportApp, func(*cobra.Command) {})
+	root.AddCommand(
+		server.StatusCommand(),
+		genutilcli.Commands(enc.TxConfig, app.ModuleBasics, app.DefaultNodeHome),
+		queryCmd(),
+		txCmd(),
+		keys.Commands(),
+	)
+	return root
+}
+
+func queryCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "query", Aliases: []string{"q"}, Short: "Querying subcommands", RunE: client.ValidateCmd}
+	cmd.AddCommand(rpc.QueryEventForTxCmd(), rpc.ValidatorCommand(), server.QueryBlockCmd(),
+		authcmd.QueryTxsByEventsCmd(), server.QueryBlocksCmd(), authcmd.QueryTxCmd())
+	return cmd
+}
+
+func txCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "tx", Short: "Transactions subcommands", RunE: client.ValidateCmd}
+	cmd.AddCommand(authcmd.GetSignCommand(), authcmd.GetBroadcastCommand(), authcmd.GetEncodeCommand(),
+		authcmd.GetDecodeCommand(), authcmd.GetSimulateCmd())
+	return cmd
+}
+
+// seedAddressCmd prints the address of the dev key derived as secp256k1(sha256(seed)),
+// the same derivation the gateway and the web wallet use.
+func seedAddressCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "seed-address [seed]",
+		Short: "Print the aur1... address of the dev key derived from a seed string",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			h := sha256.Sum256([]byte(args[0]))
+			pk := &secp256k1.PrivKey{Key: h[:]}
+			fmt.Fprintln(cmd.OutOrStdout(), sdk.AccAddress(pk.PubKey().Address()).String())
+			return nil
+		},
+	}
+}
+
+func newApp(logger log.Logger, db dbm.DB, traceStore io.Writer, opts servertypes.AppOptions) servertypes.Application {
+	return app.New(logger, db, traceStore, true, opts, server.DefaultBaseappOptions(opts)...)
+}
+
+func exportApp(logger log.Logger, db dbm.DB, traceStore io.Writer, height int64, forZeroHeight bool,
+	jailAllowedAddrs []string, opts servertypes.AppOptions, modulesToExport []string) (servertypes.ExportedApp, error) {
+	homePath, ok := opts.Get(flags.FlagHome).(string)
+	if !ok || homePath == "" {
+		return servertypes.ExportedApp{}, errors.New("application home not set")
+	}
+	a := app.New(logger, db, traceStore, height == -1, opts, baseapp.SetChainID(cast.ToString(opts.Get(flags.FlagChainID))))
+	if height != -1 {
+		if err := a.LoadHeight(height); err != nil {
+			return servertypes.ExportedApp{}, err
+		}
+	}
+	return a.ExportAppStateAndValidators(forZeroHeight, jailAllowedAddrs, modulesToExport)
 }
