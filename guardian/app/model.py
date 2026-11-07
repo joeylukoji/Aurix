@@ -7,6 +7,7 @@ TreeSHAP (`pred_contrib=True`). The score is advisory only.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from dataclasses import dataclass
@@ -77,11 +78,15 @@ class RiskModel:
         self.booster = lgb.Booster(model_file=str(MODEL_FILE))
         self.features = self.booster.feature_name()
         self.metrics = json.loads(METRICS_FILE.read_text())
+        self.model_sha256 = hashlib.sha256(MODEL_FILE.read_bytes()).hexdigest()
+        # Version signed into attestations: release tag + hash of the trained model file actually loaded.
+        self.signed_version = f"{self.metrics.get('model_version', MODEL_VERSION)}+{self.model_sha256[:12]}"
 
     def info(self) -> dict:
         m = self.metrics
         return {
-            "model_version": MODEL_VERSION, "model_type": "LightGBM gradient-boosted trees (binary)",
+            "model_version": MODEL_VERSION, "signed_model_version": self.signed_version,
+            "model_sha256": self.model_sha256, "model_type": "LightGBM gradient-boosted trees (binary)",
             "training_data": {"name": m["dataset"], "sha256": m["dataset_sha256"], "split": m["split"],
                               "synthetic": False, "note": "PaySim is itself a simulator calibrated on real "
                               "mobile-money logs; it is not AURIX or PayPal data."},

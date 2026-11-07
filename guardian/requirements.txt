@@ -5,3 +5,6 @@ numpy==2.2.1
 pydantic==2.10.4
 httpx==0.28.1
 pytest==8.3.4
+ecdsa==0.19.2
+coincurve==21.0.0
+bip_utils==2.9.3
