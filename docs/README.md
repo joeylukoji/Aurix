@@ -13,3 +13,5 @@
 Diagrams are written in **Mermaid** and render directly on GitHub.
 
 Sources: [`AURIX_SOFTWARE_ARCHITECTURE.md`](../AURIX_SOFTWARE_ARCHITECTURE.md), [`AURIX_hackathon_brief.md`](../AURIX_hackathon_brief.md). Items marked **[Proposal]** are still to be validated by the team.
+
+| Planning | [planning/decentralization.md](planning/decentralization.md) | Detailed plan: independent validators, direct wallet, k-of-n anchoring, governance |
