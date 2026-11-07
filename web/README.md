@@ -11,7 +11,8 @@ scoring.
 |------|------|
 | `config.json` | chain id, chain endpoints, optional gateway / faucet / guardian URLs |
 | `chain.js` | `window.AurixChain`: REST reads, broadcast, endpoint failover, normalisers, settings storage |
-| `cosmos-tx.js` | protobuf tx encoding + secp256k1 signing (SIGN_MODE_DIRECT) |
+| `cosmos-tx.js` | protobuf tx encoding + secp256k1 signing (SIGN_MODE_DIRECT), demo dev keys |
+| `keys.js` | `window.AurixKeys`: BIP39/BIP32 derivation, encrypted vault |
 | `app.js` | UI |
 
 ## `config.json`
@@ -81,5 +82,43 @@ The proof card in the explorer and the PayPal tab show `attestations k/n`, from
 `order.attestations` when present. Proofs from a chain without attestation fields are shown as
 confirmed by their submitter (1/1).
 
-Limit: the wallet trusts the node it reads from (no light-client verification); use several
-independent endpoints.
+## Keys
+
+| Path | Key | Storage |
+|------|-----|---------|
+| **Create wallet** | 12-word BIP39 mnemonic (128-bit entropy from `crypto.getRandomValues`), BIP32 path `m/44'/118'/0'/0/0` (cointype 118, same address as `aurixd keys add <name> --recover`) | `localStorage["aurix.vault"]`: the phrase encrypted with AES-256-GCM, key = PBKDF2-SHA256(password, random 16-byte salt, 310 000 iterations). Only the address is stored in clear. |
+| **Import** | an existing 12/15/18/21/24-word phrase (checksum verified) | same vault |
+| **Demo account** | dev key `secp256k1(sha256(random seed))`, as the gateway's dev mode | `localStorage["aurix.seed"]` **unencrypted**. Testnet / e2e tests only. |
+
+- The phrase is shown **once**, on the backup screen; it is never shown again (no "show phrase"
+  button for real wallets). Lost password = restore from the phrase.
+- Each page load (or **Lock**) shows the unlock screen; the decrypted key lives in memory only.
+- If storage is blocked (private mode, sandbox), every access is wrapped in `try/catch`: the
+  wallet works for the tab's lifetime and says so.
+- `keys.js` implements BIP39 seed (PBKDF2-HMAC-SHA512, 2048 rounds) and BIP32 private derivation
+  with WebCrypto + `vendor/noble.min.js` (secp256k1). `vendor/bip39-english.js` is the wordlist
+  from npm `@scure/bip39@1.4.0` (tarball sha256 `c500e784…87dc`).
+- Test vector: `abandon ×11 about` → `aur19rl4cm2hmr8afy4kldpxz3fka4jguq0a69v8uw`
+  (= `cosmos19rl4cm2hmr8afy4kldpxz3fka4jguq0auqdal4` re-encoded).
+
+## Trust model and cross-verification
+
+The wallet has no light client: it believes what REST nodes return. To make a single lying or
+stale node visible, it compares **two** endpoints (the active one plus the next reachable one
+from the list):
+
+- **Balance, account sequence and latest height** are read from both on every wallet refresh
+  (and every ~9 s). Balance or sequence differ, or heights more than 5 blocks apart → red
+  **nodes disagree** badge and a warning box with the details (both values per node).
+  Both match → green **2 nodes agree**.
+- **Tx inclusion**: after broadcast, a tx is reported *final* only once a second node returns it
+  (`GET /cosmos/tx/v1beta1/txs/{hash}`, up to 10 s). Otherwise the toast says
+  "seen by 1 node only, not final until a 2nd node sees it".
+- Only one endpoint configured or answering → amber **single-node trust** badge (the tooltip
+  says which). Reading through the gateway fallback is also single-source trust.
+
+Limits: two nodes run by the same operator, or a majority of colluding nodes, can still agree
+on a false state; a node can also hide a tx (censorship) rather than fake one. Nothing here
+verifies validator signatures or Merkle proofs — that needs a light client (CometBFT light
+verification of headers + ICS-23 proofs on ABCI queries), not implemented. Configure endpoints
+from independent operators, ideally including your own node.

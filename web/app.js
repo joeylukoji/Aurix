@@ -21,17 +21,96 @@ async function busy(btn, fn) {
   try { await fn(); } catch (e) { toast(e.message, true); } finally { btn.disabled = false; }
 }
 
-// ---------- keys (seed string -> sha256 -> secp256k1; same as the gateway) ----------
+// ---------- keys ----------
+// Real wallets: BIP39 mnemonic (keys.js), stored only encrypted (aurix.vault) and unlocked with a
+// password each session. Demo account: dev key sha256(seed), seed kept in clear (aurix.seed), testnet only.
 let wallet = null;
+const K = window.AurixKeys;
 function store(seed) { try { seed ? localStorage.setItem("aurix.seed", seed) : localStorage.removeItem("aurix.seed"); } catch {} }
 function stored() { try { return localStorage.getItem("aurix.seed"); } catch { return null; } }
 
-async function setWallet(seed) {
-  wallet = seed ? AurixTx.keyFromSeed(seed) : null;
-  store(seed);
-  $("noWallet").hidden = !!wallet; $("hasWallet").hidden = !wallet;
-  if (wallet) { $("addr").textContent = wallet.address; refreshWallet(); }
+// Which panel of the wallet card is visible: none | backup | unlock | wallet.
+function showPanel(name) {
+  for (const [id, n] of [["noWallet", "none"], ["backup", "backup"], ["unlock", "unlock"], ["hasWallet", "wallet"]]) $(id).hidden = n !== name;
 }
+function useKey(key) {
+  wallet = key;
+  showPanel("wallet");
+  $("addr").textContent = wallet.address;
+  const demo = wallet.kind === "demo";
+  $("walletKind").textContent = demo ? "demo account: dev key, never use on a public network" : `recovery phrase · ${K.PATH}`;
+  $("walletKind").className = "pill " + (demo ? "warn" : "ok");
+  $("showSeed").hidden = !demo;
+  $("lock").hidden = demo;
+  renderTrust(null);
+  refreshWallet();
+}
+async function setWallet(seed) { // demo account path (used by the e2e tests)
+  store(seed);
+  if (seed) useKey(AurixTx.keyFromSeed(seed)); else showStart();
+}
+function showStart() {
+  wallet = null;
+  const v = K.loadVault();
+  if (v) { $("unlockAddr").textContent = v.address; $("unlockPw").value = ""; showPanel("unlock"); }
+  else showPanel("none");
+}
+
+let pendingMnemonic = null; // shown once on the backup screen, then dropped
+function startBackup(mnemonic) {
+  pendingMnemonic = mnemonic;
+  $("backupWords").innerHTML = mnemonic.split(" ").map((w) => `<li>${esc(w)}</li>`).join("");
+  $("backupAck").checked = false; $("backupPw").value = $("backupPw2").value = "";
+  showPanel("backup");
+}
+async function saveNewWallet(mnemonic, pw, pw2) {
+  if (!pw || pw.length < 8) throw new Error("Choose a password of at least 8 characters");
+  if (pw !== pw2) throw new Error("The two passwords differ");
+  const key = await K.keyFromMnemonic(mnemonic);
+  const saved = K.saveVault(await K.encryptVault(mnemonic, pw, key.address));
+  store(null);
+  useKey(key);
+  toast(saved ? "Wallet saved, encrypted with your password" : "Browser storage is blocked: the wallet lives in this tab only — keep your recovery phrase");
+}
+async function finishBackup() {
+  if (!$("backupAck").checked) throw new Error("Confirm you wrote the 12 words down");
+  await saveNewWallet(pendingMnemonic, $("backupPw").value, $("backupPw2").value);
+  pendingMnemonic = null; $("backupWords").innerHTML = "";
+}
+async function importMnemonic() {
+  const m = K.normalize($("importMnemonic").value);
+  if (!K.validateMnemonic(m)) throw new Error("Invalid recovery phrase (unknown word or bad checksum)");
+  await saveNewWallet(m, $("importPw").value, $("importPw2").value);
+  $("importMnemonic").value = $("importPw").value = $("importPw2").value = "";
+}
+async function unlock() {
+  const v = K.loadVault();
+  if (!v) return showStart();
+  const key = await K.keyFromMnemonic(await K.decryptVault(v, $("unlockPw").value));
+  $("unlockPw").value = "";
+  useKey(key);
+}
+
+// ---------- cross-verification badge (H4) ----------
+function renderTrust(t) {
+  const b = $("trustBadge"), w = $("nodeWarn");
+  if (!t) { b.hidden = true; w.hidden = true; return; }
+  b.hidden = false;
+  const lines = t.nodes.map((n) => `${n.rest}: #${n.height}${wallet ? `, ${fmt(n.balance)} AUR, seq ${n.sequence}` : ""}`);
+  const label = { agree: `${t.nodes.length} nodes agree`, disagree: "nodes disagree", single: "single-node trust", none: "no node verified" }[t.trust];
+  b.textContent = label;
+  b.className = "pill " + (t.trust === "agree" ? "ok" : t.trust === "disagree" ? "bad" : "warn");
+  const why = t.trust !== "single" ? "" : t.configured < 2 ? "Only one endpoint is configured: add a second independent node in Settings." : "Only one endpoint answered.";
+  b.title = [why, ...lines, ...t.issues].filter(Boolean).join("\n");
+  w.hidden = t.trust !== "disagree";
+  if (t.trust === "disagree") w.innerHTML = `<strong>Nodes disagree.</strong> Do not rely on this balance until they match.<ul>${t.issues.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>`;
+}
+async function crossCheck() {
+  if (C.state.viaGateway) return renderTrust({ nodes: [], trust: "single", issues: ["reading through the gateway, not a node"], configured: 0 });
+  renderTrust(await C.crossCheck(wallet?.address).catch(() => null));
+}
+const finalText = (r) => r.finality?.final ? `final: seen by ${r.finality.seen_by} nodes`
+  : `seen by ${r.finality?.seen_by ?? 1} node only, not final until a 2nd node sees it`;
 
 // Serialise this wallet's transactions so two clicks never reuse the same sequence.
 let txQueue = Promise.resolve();
@@ -43,6 +122,8 @@ function signAndSend(msg) {
     // The gateway re-reads the tx from the chain (never trusts us) and dedupes by hash.
     if (C.gatewayOk && res && res.hash && (msg.type === "MsgSend" || msg.type === "MsgCreateEscrow"))
       api("/api/txs/observed", { method: "POST", body: { txhash: res.hash } }).catch(() => {});
+    // Final for the wallet only once a second node returns the tx (H4).
+    res.finality = res.seen_ep ? await C.confirmTx(res.hash, res.seen_ep) : { seen_by: 1, need: 2, final: false };
     return res;
   });
   txQueue = run.catch(() => {});
@@ -75,6 +156,7 @@ async function refreshWallet() {
   const w = await C.account(addr);
   if (addr !== wallet?.address) return;
   $("balAur").textContent = fmt(w.balance) + " AUR";
+  crossCheck();
   set("historyGrid", await C.history(addr));
 }
 
@@ -90,7 +172,7 @@ async function checkSend() {
   $("sendCancel").onclick = () => ($("sendRisk").innerHTML = "");
   $("sendGo").onclick = (e) => busy(e.target, async () => {
     const r = await signAndSend(msg);
-    toast(`Confirmed in block ${r.height}`); $("sendRisk").innerHTML = ""; refreshWallet();
+    toast(`Confirmed in block ${r.height} (${finalText(r)})`, !r.finality?.final); $("sendRisk").innerHTML = ""; refreshWallet();
   });
 }
 
@@ -111,13 +193,13 @@ async function checkEscrow() {
     `<button id="escGo" class="primary">I approve: lock ${fmt(amt)} AUR until block ${msg.deadline_height}</button>`;
   $("escGo").onclick = (e) => busy(e.target, async () => {
     const r = await signAndSend(msg);
-    toast(`Escrow #${r.escrow_id} locked`); $("escRisk").innerHTML = ""; refreshEscrows(); refreshWallet();
+    toast(`Escrow #${r.escrow_id} locked (${finalText(r)})`, !r.finality?.final); $("escRisk").innerHTML = ""; refreshEscrows(); refreshWallet();
   });
 }
 async function doEscrowAction(type, id) {
   if (!wallet) throw new Error("Create a wallet first");
   const r = await signAndSend({ type, escrow_id: id });
-  toast(`Escrow #${id} ${type === "MsgReleaseEscrow" ? "released" : "refunded"} (block ${r.height})`);
+  toast(`Escrow #${id} ${type === "MsgReleaseEscrow" ? "released" : "refunded"} (block ${r.height}, ${finalText(r)})`, !r.finality?.final);
   refreshEscrows(); refreshWallet();
 }
 window.escrowAction = (type, id, btn) => busy(btn, () => doEscrowAction(type, id));
@@ -269,6 +351,7 @@ async function refreshStatus() {
   } catch { $("chainStatus").textContent = "chain offline"; $("chainStatus").title = ""; }
   $("gwStatus").textContent = C.gatewayOk ? "" : "gateway off: PayPal & risk scoring disabled";
   $("gwStatus").hidden = C.gatewayOk;
+  if (wallet && statusTick % 3 === 1) crossCheck();
 }
 
 // ---------- init ----------
@@ -302,9 +385,22 @@ function init() {
     b.classList.add("active"); $(b.dataset.tab).classList.add("active");
     ({ wallet: refreshWallet, escrow: refreshEscrows, paypal: refreshOrders, explorer: refreshExplorer, settings: renderSettings })[b.dataset.tab]?.().catch((e) => toast(e.message, true));
   }));
-  $("createWallet").onclick = () => setWallet(hex(crypto.getRandomValues(new Uint8Array(32))));
+  $("createWallet").onclick = () => setWallet(hex(crypto.getRandomValues(new Uint8Array(32)))); // demo account
   $("doImport").onclick = () => { const s = $("importSeed").value.trim(); if (s) setWallet(s); };
-  $("forget").onclick = () => confirm("Forget this wallet? Without the seed, funds are lost.") && setWallet(null);
+  $("newMnemonic").onclick = () => startBackup(K.generateMnemonic());
+  $("backupDone").onclick = (e) => busy(e.target, finishBackup);
+  $("backupCancel").onclick = () => { pendingMnemonic = null; $("backupWords").innerHTML = ""; showStart(); };
+  $("doImportMnemonic").onclick = (e) => busy(e.target, importMnemonic);
+  $("unlockGo").onclick = (e) => busy(e.target, unlock);
+  $("unlockPw").onkeydown = (e) => { if (e.key === "Enter") $("unlockGo").click(); };
+  $("lock").onclick = () => { renderTrust(null); showStart(); };
+  $("forgetVault").onclick = () => confirm("Remove the encrypted wallet from this browser? Without the recovery phrase, funds are lost.") && (K.saveVault(null), showStart());
+  $("forget").onclick = () => {
+    const demo = wallet?.kind === "demo";
+    if (!confirm(demo ? "Forget this demo wallet? Without the seed, funds are lost." : "Remove the encrypted wallet from this browser? Without the recovery phrase, funds are lost.")) return;
+    if (!demo) K.saveVault(null);
+    setWallet(null);
+  };
   $("showSeed").onclick = () => prompt("Your seed (keep it private):", wallet.seed);
   $("refresh").onclick = (e) => busy(e.target, refreshWallet);
   $("faucet").onclick = (e) => busy(e.target, async () => { const r = await C.faucet(wallet.address);
@@ -321,7 +417,8 @@ function init() {
     toast(C.gatewayOk ? "Gateway connected" : "No gateway: PayPal and risk scoring are off"); });
 
   applyGateway();
-  setWallet(stored());
+  // An encrypted wallet takes precedence (unlock screen); otherwise restore a demo account.
+  if (!K.loadVault() && stored()) setWallet(stored()); else showStart();
   refreshStatus(); setInterval(refreshStatus, 3000);
 }
 

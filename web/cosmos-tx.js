@@ -23,12 +23,15 @@
   const bech32 = (hrp, data) => { const d = conv(data, 8, 5); const chk = polymod(hrpExp(hrp).concat(d, [0, 0, 0, 0, 0, 0])) ^ 1; return hrp + "1" + d.concat([0, 1, 2, 3, 4, 5].map((i) => (chk >>> (5 * (5 - i))) & 31)).map((x) => CH[x]).join(""); };
   const validAddress = (a) => { try { a = a.toLowerCase(); const p = a.lastIndexOf("1"); return a.slice(0, p) === "aur" && polymod(hrpExp("aur").concat([...a.slice(p + 1)].map((c) => { const i = CH.indexOf(c); if (i < 0) throw 0; return i; }))) === 1; } catch { return false; } };
 
-  // ---- keys: privkey = sha256(seed string), as in the gateway and `aurixd seed-address` ----
+  // ---- DEMO keys only: privkey = sha256(seed string), the gateway's dev mode. Real wallets use keys.js ----
   function keyFromSeed(seed) {
     const priv = sha256(enc.encode(seed));
     const pub = secp256k1.getPublicKey(priv, true);
-    return { seed, priv, pub, address: bech32("aur", ripemd160(sha256(pub))) };
+    return { kind: "demo", seed, priv, pub, address: addressFromPub(pub) };
   }
+  const addressFromPub = (pub) => bech32("aur", ripemd160(sha256(pub)));
+  // Re-encodes a bech32 address (e.g. cosmos1...) with another prefix.
+  const rebech = (a, hrp) => { const p = a.lastIndexOf("1"); const d = [...a.slice(p + 1, -6)].map((c) => CH.indexOf(c)); return bech32(hrp, conv(d, 5, 8).slice(0, Math.floor(d.length * 5 / 8))); };
 
   // ---- messages (proto field numbers from chain/proto and cosmos-sdk) ----
   function encodeMsg(m, sender) {
@@ -57,5 +60,5 @@
     return btoa(String.fromCharCode(...raw));
   }
 
-  window.AurixTx = { keyFromSeed, signTx, validAddress };
+  window.AurixTx = { keyFromSeed, signTx, validAddress, addressFromPub, rebech };
 })();
