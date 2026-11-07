@@ -1,8 +1,0 @@
-Metadata-Version: 2.4
-Name: aurix-common
-Version: 0.1.0
-Summary: Shared library of the AURIX Python services
-Requires-Python: >=3.11
-Requires-Dist: httpx>=0.28
-Requires-Dist: cryptography>=43
-Requires-Dist: pycryptodome>=3.21

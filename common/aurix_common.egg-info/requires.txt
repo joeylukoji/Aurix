@@ -1,3 +1,0 @@
-httpx>=0.28
-cryptography>=43
-pycryptodome>=3.21
