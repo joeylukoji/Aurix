@@ -20,6 +20,9 @@ class Settings:
     faucet_seed: str = field(default_factory=lambda: _env("AURIX_FAUCET_SEED", "aurix-dev-faucet"))
     gateway_seed: str = field(default_factory=lambda: _env("AURIX_GATEWAY_SEED", "aurix-dev-gateway"))
 
+    # "simulator" (local paypal-sim, tests only) or "sandbox" (real PayPal Sandbox)
+    paypal_env: str = field(default_factory=lambda: _env("PAYPAL_ENV", "sandbox"))
+
     @property
-    def paypal_mock(self) -> bool:
-        return not (self.paypal_client_id and self.paypal_client_secret)
+    def paypal_configured(self) -> bool:
+        return bool(self.paypal_client_id and self.paypal_client_secret)

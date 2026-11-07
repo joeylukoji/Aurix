@@ -122,17 +122,36 @@ window.escrowAction = (type, id, btn) => busy(btn, () => doEscrowAction(type, id
 
 // ---------- PayPal ----------
 async function refreshOrders() { set("ordersGrid", await api("/api/paypal/orders")); }
+async function waitAnchored(oid, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    const o = await api(`/api/paypal/orders/${oid}`);
+    if (o.status === "ANCHORED") return o;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return api(`/api/paypal/orders/${oid}`);
+}
+
 async function createOrder() {
   const o = await api("/api/paypal/orders", { method: "POST", body: { amount_usd: $("ppAmt").value,
     description: $("ppDesc").value, payer: wallet?.address } });
-  const link = o.approve_url && !o.mock ? `<p><a href="${esc(o.approve_url)}" target="_blank" rel="noopener">Open PayPal approval page</a> (buyer logs in with a Sandbox account), then confirm below.</p>` : "";
-  $("ppResult").innerHTML = `<p>Order <code>${esc(o.order_id)}</code> · ${esc(o.amount_usd)} USD</p>` + riskHtml(o.risk, o.risk_status) + link +
-    `<button id="ppGo" class="primary">I approve: capture ${esc(o.amount_usd)} USD</button><button id="ppNo">Cancel order</button>`;
+  const who = o.paypal_mode === "simulator" ? "PayPal simulator" : "PayPal Sandbox";
+  $("ppResult").innerHTML = `<p>Order <code>${esc(o.order_id)}</code> · ${esc(o.amount_usd)} USD</p>` + riskHtml(o.risk, o.risk_status) +
+    `<ol class="steps"><li><a id="ppLink" href="${esc(o.approve_url)}" target="_blank" rel="noopener">Open the ${who} page</a> and pay as the buyer.</li>
+      <li>Come back and confirm the capture below.</li></ol>
+    <button id="ppGo" class="primary">I approve: capture ${esc(o.amount_usd)} USD</button><button id="ppNo">Cancel order</button><div id="ppMsg"></div>`;
   $("ppGo").onclick = (e) => busy(e.target, async () => {
-    const r = await api(`/api/paypal/orders/${o.order_id}/approve`, { method: "POST", body: { confirm: true } });
+    let r;
+    try {
+      r = await api(`/api/paypal/orders/${o.order_id}/approve`, { method: "POST", body: { confirm: true } });
+    } catch (err) {
+      $("ppMsg").innerHTML = `<p class="muted">${esc(err.message)}</p>`;
+      return;
+    }
+    $("ppResult").innerHTML = `<p>Captured. Waiting for PayPal's signed webhook…</p>`;
+    r = await waitAnchored(o.order_id);
     $("ppResult").innerHTML = r.status === "ANCHORED"
       ? `<div class="risk low"><div class="score">Captured &amp; anchored</div><p>Proof <code>${esc(r.proof_hash)}</code> in block ${r.anchor_height}. No AUR was created.</p></div>`
-      : `<p>Status: ${esc(r.status)} — waiting for the signed PayPal webhook.</p>`;
+      : `<p>Status: ${esc(r.status)} — the webhook has not arrived yet. Refresh the orders list later.</p>`;
     refreshOrders();
   });
   $("ppNo").onclick = (e) => busy(e.target, async () => {
@@ -166,7 +185,7 @@ function init() {
       `<button onclick="escrowAction('MsgReleaseEscrow',${p.data.id},this)">Release</button><button onclick="escrowAction('MsgRefundEscrow',${p.data.id},this)">Refund</button>` }]);
   grid("ordersGrid", [{ field: "order_id" }, { field: "amount_usd", headerName: "USD" }, { field: "status" },
     { field: "risk_level", headerName: "Risk" }, { field: "anchor_height", headerName: "Proof block" },
-    { field: "proof_hash", valueFormatter: (p) => short(p.value) }, { field: "mock", valueFormatter: (p) => (p.value ? "mock" : "sandbox") }]);
+    { field: "proof_hash", valueFormatter: (p) => short(p.value) }, { field: "simulated", headerName: "Rail", valueFormatter: (p) => (p.value ? "simulator" : "sandbox") }]);
   grid("blocksGrid", [{ field: "height", maxWidth: 110 }, { field: "time", valueFormatter: (p) => new Date(p.value).toLocaleTimeString() },
     { field: "num_txs", headerName: "Txs", maxWidth: 90 }, { field: "hash", valueFormatter: (p) => short(p.value) },
     { field: "proposer", headerName: "Validator", valueFormatter: (p) => short(p.value) }]);
@@ -189,8 +208,11 @@ function init() {
   $("sendCheck").onclick = (e) => busy(e.target, checkSend);
   $("escCheck").onclick = (e) => busy(e.target, checkEscrow);
   $("ppCreate").onclick = (e) => busy(e.target, createOrder);
-  api("/api/health").then((h) => ($("ppMode").textContent = h.paypal_mode === "mock"
-    ? "Offline mock mode (no Sandbox credentials configured)" : "PayPal Sandbox")).catch(() => {});
+  api("/api/health").then((h) => {
+    $("ppMode").textContent = { simulator: "Local PayPal simulator (tests only — no real PayPal)",
+      sandbox: "PayPal Sandbox", disabled: "PayPal not configured" }[h.paypal_mode] || h.paypal_mode;
+    $("ppCreate").disabled = h.paypal_mode === "disabled";
+  }).catch(() => {});
 
   setWallet(stored());
   refreshStatus(); setInterval(refreshStatus, 3000);

@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest==8.3.4
+# Needed only to load the PayPal simulator (paypal-sim/) in the integration tests.
+python-multipart==0.0.20

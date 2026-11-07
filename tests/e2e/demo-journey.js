@@ -12,8 +12,11 @@ const { chromium } = require('playwright');
   console.log('step escrow'); setTimeout(async()=>{ try{globalThis.__t=await p.evaluate(()=>document.getElementById('toast').textContent+' || '+document.getElementById('escRisk').innerHTML.slice(-300))}catch{} }, 8000); await p.waitForFunction(() => /locked/.test(document.getElementById('toast').textContent));
   await p.waitForSelector('#escrowGrid button'); await p.click('#escrowGrid button:has-text("Release")');
   console.log('step release'); await p.waitForFunction(() => /released/.test(document.getElementById('toast').textContent));
-  await p.click('nav [data-tab=paypal]'); await p.click('#ppCreate'); await p.waitForSelector('#ppGo'); await p.click('#ppGo');
-  await p.waitForSelector('text=Captured'); await p.screenshot({ path: process.env.SHOT_DIR + '/e2e-paypal.png' });
+  await p.click('nav [data-tab=paypal]'); await p.click('#ppCreate'); await p.waitForSelector('#ppGo');
+  await p.click('#ppGo'); await p.waitForSelector('#ppMsg >> text=not approved');  // capture refused before the buyer pays
+  const [pay] = await Promise.all([p.context().waitForEvent('page'), p.click('#ppLink')]);
+  await pay.click('#pay'); await pay.waitForSelector('text=Payment approved'); await pay.close();  // buyer pays on PayPal
+  await p.click('#ppGo'); await p.waitForSelector('text=Captured & anchored', { timeout: 20000 }); await p.screenshot({ path: process.env.SHOT_DIR + '/e2e-paypal.png' });
   await p.click('nav [data-tab=explorer]'); await p.waitForTimeout(800); await p.screenshot({ path: process.env.SHOT_DIR + '/e2e-explorer.png', fullPage: true });
   console.log('risk:', risk, '| send:', t1, '| errors:', errs);
   await b.close();

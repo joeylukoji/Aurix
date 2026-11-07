@@ -154,10 +154,18 @@ class GuardianClient:
             return None
 
 
-class PayPalClient:
-    """PayPal REST (Orders v2 + webhook signature verification)."""
+class PayPalError(Exception):
+    def __init__(self, status: int, issue: str, message: str):
+        super().__init__(message)
+        self.status, self.issue, self.message = status, issue, message
 
-    mock = False
+
+class PayPalClient:
+    """PayPal REST (Orders v2 + webhook signature verification).
+
+    Works unchanged against the real PayPal Sandbox or the local simulator
+    (paypal-sim/): only the base URL and credentials differ.
+    """
 
     def __init__(self, base_url: str, client_id: str, secret: str, webhook_id: str,
                  transport: httpx.BaseTransport | None = None):
@@ -178,12 +186,20 @@ class PayPalClient:
             {"amount": {"currency_code": "USD", "value": amount_usd}, "description": description[:127]}]}
         r = self.http.post("/v2/checkout/orders", json=body,
                            headers=self._headers() | {"PayPal-Request-Id": str(uuid.uuid4())})
-        r.raise_for_status()
-        return r.json()
+        return self._json(r)
 
     def capture(self, order_id: str) -> dict:
-        r = self.http.post(f"/v2/checkout/orders/{order_id}/capture", headers=self._headers())
-        r.raise_for_status()
+        return self._json(self.http.post(f"/v2/checkout/orders/{order_id}/capture", headers=self._headers()))
+
+    @staticmethod
+    def _json(r: httpx.Response) -> dict:
+        if r.status_code >= 400:
+            try:
+                b = r.json()
+            except ValueError:
+                b = {}
+            issue = (b.get("details") or [{}])[0].get("issue") or b.get("name") or "PAYPAL_ERROR"
+            raise PayPalError(r.status_code, issue, b.get("message") or r.text[:200])
         return r.json()
 
     def verify_webhook(self, headers: dict, event: dict) -> bool:
@@ -201,26 +217,3 @@ class PayPalClient:
             return False
         r = self.http.post("/v1/notifications/verify-webhook-signature", json=body, headers=self._headers())
         return r.status_code == 200 and r.json().get("verification_status") == "SUCCESS"
-
-
-class MockPayPalClient:
-    """Offline stand-in used when no Sandbox credentials are configured.
-
-    Clearly flagged as mock in API responses. Webhooks are simulated internally
-    after capture; external webhooks are always rejected in mock mode.
-    """
-
-    mock = True
-
-    def create_order(self, amount_usd: str, description: str) -> dict:
-        oid = "MOCK-" + uuid.uuid4().hex[:12].upper()
-        return {"id": oid, "status": "CREATED",
-                "links": [{"rel": "approve", "href": f"https://www.sandbox.paypal.com/checkoutnow?token={oid}"}]}
-
-    def capture(self, order_id: str) -> dict:
-        cid = "MOCKCAP-" + uuid.uuid4().hex[:10].upper()
-        return {"id": order_id, "status": "COMPLETED",
-                "purchase_units": [{"payments": {"captures": [{"id": cid, "status": "COMPLETED"}]}}]}
-
-    def verify_webhook(self, headers: dict, event: dict) -> bool:
-        return False

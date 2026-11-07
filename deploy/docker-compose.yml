@@ -11,6 +11,14 @@ services:
   guardian:
     build: ../guardian
     ports: ["8000:8000"]
+  # Local PayPal simulator for tests. DELETE this service (and the PAYPAL_* overrides
+  # below) when switching to the real PayPal Sandbox.
+  paypal-sim:
+    build: ../paypal-sim
+    environment:
+      SIM_WEBHOOK_URL: http://gateway:8080/api/paypal/webhook
+      SIM_PUBLIC_URL: http://localhost:8090
+    ports: ["8090:8090"]
   gateway:
     build:
       context: ..
@@ -24,9 +32,15 @@ services:
       GUARDIAN_URL: http://guardian:8000
       AURIX_FAUCET_SEED: ${AURIX_FAUCET_SEED:-aurix-dev-faucet}
       AURIX_GATEWAY_SEED: ${AURIX_GATEWAY_SEED:-aurix-dev-gateway}
+      # PayPal simulator settings (replace with real Sandbox values from .env later)
+      PAYPAL_ENV: ${PAYPAL_ENV:-simulator}
+      PAYPAL_BASE_URL: ${PAYPAL_BASE_URL:-http://paypal-sim:8090}
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-sim-client-id}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-sim-client-secret}
+      PAYPAL_WEBHOOK_ID: ${PAYPAL_WEBHOOK_ID:-SIM-WEBHOOK-ID}
     volumes: ["gateway-data:/data"]
     ports: ["8080:8080"]
-    depends_on: [chain, guardian]
+    depends_on: [chain, guardian, paypal-sim]
 volumes:
   chain-data:
   gateway-data:

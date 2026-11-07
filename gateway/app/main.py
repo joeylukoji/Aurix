@@ -15,12 +15,13 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import crypto
-from .clients import ChainClient, ChainError, GuardianClient, MockPayPalClient, PayPalClient
+from .clients import ChainClient, ChainError, GuardianClient, PayPalClient, PayPalError
 from .config import Settings
 from .db import DB
 
@@ -66,9 +67,9 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
     s = settings or Settings()
     chain = chain or ChainClient(s.chain_url, s.chain_rest_url)
     guardian = guardian or GuardianClient(s.guardian_url)
-    if paypal is None:
-        paypal = MockPayPalClient() if s.paypal_mock else PayPalClient(
-            s.paypal_base_url, s.paypal_client_id, s.paypal_client_secret, s.paypal_webhook_id)
+    if paypal is None and s.paypal_configured:
+        paypal = PayPalClient(s.paypal_base_url, s.paypal_client_id, s.paypal_client_secret, s.paypal_webhook_id)
+    paypal_mode = s.paypal_env if paypal is not None else "disabled"
     db = DB(s.database_path)
     faucet_key = crypto.Key(s.faucet_seed)
     gateway_key = crypto.Key(s.gateway_seed)
@@ -76,6 +77,17 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
 
     app = FastAPI(title="AURIX API Gateway", version="0.1.0")
     app.state.db = db
+
+    @app.exception_handler(PayPalError)
+    def _paypal_err(_: Request, e: PayPalError):
+        if e.issue == "ORDER_NOT_APPROVED":
+            return JSONResponse(status_code=409, content={"detail": "The buyer has not approved this order on PayPal yet.",
+                                                          "issue": e.issue})
+        return JSONResponse(status_code=502, content={"detail": f"PayPal error: {e.message}", "issue": e.issue})
+
+    def require_paypal():
+        if paypal is None:
+            raise HTTPException(503, "PayPal is not configured (set PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET)")
 
     @app.exception_handler(ChainError)
     def _chain_err(_: Request, e: ChainError):
@@ -93,7 +105,7 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
     # ---------------- health & wallets ----------------
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "paypal_mode": "mock" if paypal.mock else "sandbox",
+        return {"status": "ok", "paypal_mode": paypal_mode,
                 }
 
     @app.get("/api/chain/status")
@@ -200,7 +212,7 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
         return res
 
     def handle_event(event: dict) -> str:
-        """Shared by the real webhook and the mock simulation. Idempotent by event id."""
+        """Processes a verified PayPal webhook event. Idempotent by event id."""
         etype = event.get("event_type")
         resource = event.get("resource", {})
         order_id = resource.get("supplementary_data", {}).get("related_ids", {}).get("order_id")
@@ -217,6 +229,7 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
 
     @app.post("/api/paypal/orders")
     def create_order(req: OrderReq):
+        require_paypal()
         try:
             amount = Decimal(req.amount_usd)
             if amount <= 0 or amount.as_tuple().exponent < -2:
@@ -227,14 +240,14 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
         order = paypal.create_order(value, req.description)
         risk = guardian.score(context="paypal_order", sender=req.payer or "anonymous", recipient="merchant",
                               amount=float(amount), currency="USD")
-        db.exec("INSERT INTO paypal_orders(order_id, amount_usd, payer, description, status, risk_score, risk_level, mock)"
+        db.exec("INSERT INTO paypal_orders(order_id, amount_usd, payer, description, status, risk_score, risk_level, simulated)"
                 " VALUES (?,?,?,?,?,?,?,?)", order["id"], value, req.payer, req.description, "SCORED",
-                risk and risk["risk_score"], risk and risk["level"], int(paypal.mock))
+                risk and risk["risk_score"], risk and risk["level"], int(paypal_mode == "simulator"))
         db.save_risk("paypal_order", order["id"], risk)
         approve = next((l["href"] for l in order.get("links", []) if l["rel"] in ("approve", "payer-action")), None)
         return {"order_id": order["id"], "status": "SCORED", "amount_usd": value, "approve_url": approve,
                 "risk": risk, "risk_status": "ok" if risk else "unavailable", "advisory_only": True,
-                "mock": paypal.mock}
+                "paypal_mode": paypal_mode}
 
     @app.get("/api/paypal/orders")
     def list_orders():
@@ -249,6 +262,7 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
 
     @app.post("/api/paypal/orders/{order_id}/approve")
     def approve(order_id: str, req: ApproveReq):
+        require_paypal()
         o = get_order(order_id)
         if not req.confirm:  # invariant 8: no capture without explicit human approval
             raise HTTPException(400, "explicit approval required (confirm=true)")
@@ -256,11 +270,8 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
             raise HTTPException(409, f"order is {o['status']}")
         cap = paypal.capture(order_id)
         capture = cap["purchase_units"][0]["payments"]["captures"][0]
+        # The order is ANCHORED only once PayPal's signed webhook arrives (see /api/paypal/webhook).
         db.update_order(order_id, status="CAPTURED", capture_id=capture["id"])
-        if paypal.mock:  # simulate the webhook PayPal would send
-            handle_event({"id": "WH-MOCK-" + capture["id"], "event_type": "PAYMENT.CAPTURE.COMPLETED",
-                          "resource": {"id": capture["id"],
-                                       "supplementary_data": {"related_ids": {"order_id": order_id}}}})
         return get_order(order_id)
 
     @app.post("/api/paypal/orders/{order_id}/cancel")
@@ -273,10 +284,11 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
 
     @app.post("/api/paypal/webhook")
     async def webhook(request: Request):
+        require_paypal()
         event = await request.json()
-        if not paypal.verify_webhook(dict(request.headers), event):  # invariant 7
+        if not await run_in_threadpool(paypal.verify_webhook, dict(request.headers), event):  # invariant 7
             raise HTTPException(400, "invalid webhook signature")
-        return {"result": handle_event(event)}  # invariant 6: duplicates are a 200 no-op
+        return {"result": await run_in_threadpool(handle_event, event)}  # invariant 6: duplicates are a 200 no-op
 
     web_dir = Path(os.environ.get("WEB_DIR", Path(__file__).resolve().parents[2] / "web"))
     if web_dir.is_dir():

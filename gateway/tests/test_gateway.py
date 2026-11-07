@@ -1,6 +1,9 @@
 import base64
 import hashlib
+import importlib.util
 import secrets
+import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -118,74 +121,91 @@ def test_explorer(chain_urls, tmp_path):
     assert any(t["type"] == "MsgSend" for t in c.get("/api/explorer/txs").json())
 
 
-def test_paypal_mock_flow_anchors_proof(chain_urls, tmp_path):
-    c = make(chain_urls, tmp_path)  # no credentials -> mock PayPal
+def test_bad_inputs(chain_urls, tmp_path):
+    c = make(chain_urls, tmp_path)
+    assert c.post("/api/wallets/cosmos1abc/faucet").status_code == 400
+    assert c.post("/api/txs", json={"tx_bytes": "%%%"}).status_code == 400
+
+
+# ---- PayPal flow against the local PayPal simulator (paypal-sim/) ----
+
+def _load_sim():
+    spec = importlib.util.spec_from_file_location("paypal_sim", Path(__file__).resolve().parents[2] / "paypal-sim/app/main.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+SIM = _load_sim()
+
+
+@pytest.fixture
+def paypal_env(chain_urls, tmp_path, monkeypatch):
+    """Gateway wired to the simulator through the real PayPalClient; the simulator's
+    webhooks are delivered to the gateway under test."""
+    pp = PayPalClient(SIM.PUBLIC_URL, SIM.CLIENT_ID, SIM.CLIENT_SECRET, SIM.WEBHOOK_ID)
+    pp.http = TestClient(SIM.app, base_url=SIM.PUBLIC_URL)
+    c = make(chain_urls, tmp_path, paypal=pp)
+    monkeypatch.setattr(SIM, "WEBHOOK_DELAY", 0)
+
+    class Delivered:
+        def __init__(self, r):
+            self.status_code, self.text = r.status_code, r.text
+
+    monkeypatch.setattr(SIM.httpx, "post", lambda url, json, headers, timeout:
+                        Delivered(c.post("/api/paypal/webhook", json=json, headers=headers)))
+    return c, TestClient(SIM.app)
+
+
+def wait_status(c, oid, status, timeout=10):
+    end = time.time() + timeout
+    while time.time() < end:
+        o = c.get(f"/api/paypal/orders/{oid}").json()
+        assert "status" in o, o
+        if o["status"] == status:
+            return o
+        time.sleep(0.1)
+    raise AssertionError(f"order {oid} stuck in {o['status']}")
+
+
+def test_paypal_flow_with_simulator(paypal_env):
+    c, sim = paypal_env
     o = c.post("/api/paypal/orders", json={"amount_usd": "25.50"}).json()
-    assert o["mock"] and o["risk"]["level"] == "high"
+    assert o["risk"]["level"] == "high" and o["approve_url"].startswith(SIM.PUBLIC_URL + "/checkoutnow")
     oid = o["order_id"]
-    assert c.post(f"/api/paypal/orders/{oid}/approve", json={}).status_code == 400  # invariant 8
-    done = c.post(f"/api/paypal/orders/{oid}/approve", json={"confirm": True}).json()
-    assert done["status"] == "ANCHORED"
+    assert c.post(f"/api/paypal/orders/{oid}/approve", json={}).status_code == 400  # invariant 8 (AURIX user)
+    r = c.post(f"/api/paypal/orders/{oid}/approve", json={"confirm": True})
+    assert r.status_code == 409 and r.json()["issue"] == "ORDER_NOT_APPROVED"  # buyer has not paid on PayPal
+    sim.post(f"/sim/orders/{oid}/approve")  # buyer approves on the PayPal page
+    assert c.post(f"/api/paypal/orders/{oid}/approve", json={"confirm": True}).json()["status"] == "CAPTURED"
+    done = wait_status(c, oid, "ANCHORED")  # anchored only after the signed webhook
     expected = hashlib.sha256(f"{oid}|{done['capture_id']}".encode()).hexdigest()
     assert done["proof_hash"] == expected
     assert c.get(f"/api/explorer/proofs/{expected}").json()["external_ref"] == f"paypal:{oid}"
     assert c.post(f"/api/paypal/orders/{oid}/approve", json={"confirm": True}).status_code == 409
 
+    event_id = next(e["id"] for e in sim.get("/sim/events").json() if e["order_id"] == oid)
+    # invariant 6: the identical signed webhook replayed is a 200 no-op
+    replay = sim.post(f"/sim/events/{event_id}/resend").json()
+    assert replay["status"] == 200 and "duplicate" in replay["response"]
+    # invariant 7: tampered payload with the original signature is rejected
+    assert sim.post(f"/sim/events/{event_id}/forge").json()["status"] == 400
+    assert c.get(f"/api/paypal/orders/{oid}").json()["anchor_tx"] == done["anchor_tx"]
 
-def test_bad_inputs(chain_urls, tmp_path):
+
+def test_webhook_missing_headers_rejected(paypal_env):
+    c, _ = paypal_env
+    ev = {"id": "WH-X", "event_type": "PAYMENT.CAPTURE.COMPLETED", "resource": {"id": "C"}}
+    assert c.post("/api/paypal/webhook", json=ev).status_code == 400
+
+
+def test_paypal_disabled_without_credentials(chain_urls, tmp_path):
     c = make(chain_urls, tmp_path)
+    assert c.get("/api/health").json()["paypal_mode"] == "disabled"
+    assert c.post("/api/paypal/orders", json={"amount_usd": "1"}).status_code == 503
+
+
+def test_bad_amounts(paypal_env):
+    c, _ = paypal_env
     for v in ("-1", "abc", "1.234"):
         assert c.post("/api/paypal/orders", json={"amount_usd": v}).status_code == 422
-    assert c.post("/api/wallets/cosmos1abc/faucet").status_code == 400
-    assert c.post("/api/txs", json={"tx_bytes": "%%%"}).status_code == 400
-
-
-# ---- real PayPal client against a fake PayPal API ----
-
-def fake_paypal(verified: bool, order_id: str):
-    def handler(req: httpx.Request):
-        p = req.url.path
-        if p == "/v1/oauth2/token":
-            return httpx.Response(200, json={"access_token": "T"})
-        if p == "/v2/checkout/orders":
-            return httpx.Response(201, json={"id": order_id, "status": "CREATED",
-                                             "links": [{"rel": "approve", "href": "https://x/approve"}]})
-        if p.endswith("/capture"):
-            return httpx.Response(201, json={"id": order_id, "status": "COMPLETED", "purchase_units": [
-                {"payments": {"captures": [{"id": "CAP-" + order_id, "status": "COMPLETED"}]}}]})
-        if p == "/v1/notifications/verify-webhook-signature":
-            return httpx.Response(200, json={"verification_status": "SUCCESS" if verified else "FAILURE"})
-        return httpx.Response(404)
-    return PayPalClient("https://paypal", "id", "secret", "WH", transport=httpx.MockTransport(handler))
-
-
-HEADERS = {"PAYPAL-AUTH-ALGO": "SHA256withRSA", "PAYPAL-CERT-URL": "https://api.paypal.com/cert",
-           "PAYPAL-TRANSMISSION-ID": "t1", "PAYPAL-TRANSMISSION-SIG": "sig", "PAYPAL-TRANSMISSION-TIME": "now"}
-
-
-def event(order_id):
-    return {"id": "WH-" + order_id, "event_type": "PAYMENT.CAPTURE.COMPLETED",
-            "resource": {"id": "CAP-" + order_id, "supplementary_data": {"related_ids": {"order_id": order_id}}}}
-
-
-@pytest.mark.parametrize("verified", [True, False])
-def test_webhook_signature_and_idempotency(chain_urls, tmp_path, verified):
-    oid = "ORDER-" + secrets.token_hex(4)
-    c = make(chain_urls, tmp_path, paypal=fake_paypal(verified, oid))
-    assert c.post("/api/paypal/orders", json={"amount_usd": "10"}).json()["order_id"] == oid
-    assert c.post(f"/api/paypal/orders/{oid}/approve", json={"confirm": True}).json()["status"] == "CAPTURED"
-    r = c.post("/api/paypal/webhook", json=event(oid), headers=HEADERS)
-    if not verified:  # invariant 7
-        assert r.status_code == 400
-        assert c.get(f"/api/paypal/orders/{oid}").json()["status"] == "CAPTURED"
-        return
-    assert r.json()["result"] == "anchored"
-    first = c.get(f"/api/paypal/orders/{oid}").json()
-    # invariant 6: replay is a 200 no-op
-    assert c.post("/api/paypal/webhook", json=event(oid), headers=HEADERS).json()["result"] == "duplicate"
-    assert c.get(f"/api/paypal/orders/{oid}").json()["anchor_tx"] == first["anchor_tx"]
-
-
-def test_webhook_missing_headers_rejected(chain_urls, tmp_path):
-    c = make(chain_urls, tmp_path, paypal=fake_paypal(True, "O"))
-    assert c.post("/api/paypal/webhook", json=event("O")).status_code == 400

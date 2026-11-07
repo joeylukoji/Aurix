@@ -9,7 +9,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS paypal_orders (
   order_id TEXT PRIMARY KEY, amount_usd TEXT NOT NULL, payer TEXT, description TEXT,
   status TEXT NOT NULL, capture_id TEXT, proof_hash TEXT, anchor_tx TEXT, anchor_height INTEGER,
-  risk_score REAL, risk_level TEXT, mock INTEGER NOT NULL DEFAULT 0,
+  risk_score REAL, risk_level TEXT, simulated INTEGER NOT NULL DEFAULT 0,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS webhook_events (
   event_id TEXT PRIMARY KEY, event_type TEXT, order_id TEXT, signature_valid INTEGER,
@@ -32,11 +32,13 @@ class DB:
             return self.conn.execute(sql, args)
 
     def one(self, sql: str, *args) -> dict | None:
-        row = self.exec(sql, *args).fetchone()
+        with self.lock:  # fetch under the lock: the connection is shared across threads
+            row = self.conn.execute(sql, args).fetchone()
         return dict(row) if row else None
 
     def all(self, sql: str, *args) -> list[dict]:
-        return [dict(r) for r in self.exec(sql, *args).fetchall()]
+        with self.lock:
+            return [dict(r) for r in self.conn.execute(sql, args).fetchall()]
 
     def record_event_once(self, event_id: str, event_type: str, order_id: str | None) -> bool:
         """Idempotency: True only the first time an event id is seen."""

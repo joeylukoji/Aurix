@@ -78,6 +78,7 @@ aurix/
 ├── chain/        # Cosmos SDK node: app/, x/smartmoney, proto/, cmd/aurixd
 ├── gateway/      # API Gateway / orchestration
 ├── guardian/     # Neural Guardian (FastAPI)
+├── paypal-sim/   # Temporary local PayPal simulator (tests only)
 ├── web/          # Wallet, explorer, AG Grid
 ├── api/          # openapi.json (generated)
 ├── deploy/       # docker-compose.yml, render.yaml
@@ -94,7 +95,7 @@ aurix/
 docker compose -f deploy/docker-compose.yml up --build
 ```
 
-Then open http://localhost:8080. Without PayPal credentials the gateway runs in an **offline mock mode** (clearly labelled in the UI). To use the real PayPal Sandbox, copy `.env.example` to `.env` and fill `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` and `PAYPAL_WEBHOOK_ID` (never commit it).
+Then open http://localhost:8080. By default PayPal is served by the **local PayPal simulator** (`paypal-sim/`, port 8090, clearly labelled in the UI): the buyer pays on the simulator's page, the capture is confirmed by a signed webhook, then the proof is anchored. To switch to the real PayPal Sandbox later, follow [`paypal-sim/README.md`](paypal-sim/README.md#switching-to-the-real-paypal-sandbox-and-deleting-this-folder).
 
 ### Without Docker
 
@@ -109,7 +110,11 @@ cd guardian && python -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
 ```bash
-cd gateway && python -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/uvicorn app.main:app --port 8080
+cd paypal-sim && python -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/uvicorn app.main:app --port 8090
+```
+
+```bash
+cd gateway && python -m venv .venv && .venv/bin/pip install -r requirements.txt && PAYPAL_ENV=simulator PAYPAL_BASE_URL=http://localhost:8090 PAYPAL_CLIENT_ID=sim-client-id PAYPAL_CLIENT_SECRET=sim-client-secret PAYPAL_WEBHOOK_ID=SIM-WEBHOOK-ID .venv/bin/uvicorn app.main:app --port 8080
 ```
 
 ### Tests
@@ -123,7 +128,11 @@ cd guardian && .venv/bin/python -m pytest -q
 ```
 
 ```bash
-cd gateway && .venv/bin/python -m pytest -q
+cd paypal-sim && .venv/bin/python -m pytest -q
+```
+
+```bash
+cd gateway && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/python -m pytest -q
 ```
 
 The gateway tests build, initialise and start a real single-validator `aurixd` node (needs Go and `jq`). The browser journey (wallet → send → escrow → PayPal → explorer) runs with Playwright against a running stack:
@@ -139,6 +148,7 @@ node tests/e2e/demo-journey.js
 | `chain/` | ✅ V1 | **Cosmos SDK v0.50 + CometBFT v0.38**, single validator. `x/aurixbank` = `x/auth` + `x/bank` (`uaur`, fixed supply, sequences as nonces, fees); custom `x/smartmoney` module (escrow, proof anchoring). See [`chain/README.md`](chain/README.md). |
 | `guardian/` | ✅ V1 | FastAPI + LightGBM, SHAP reasons via native TreeSHAP. **Trained on a synthetic dataset** generated in `guardian/app/model.py`. |
 | `gateway/` | ✅ V1 | FastAPI (variant recommended in the architecture doc). PayPal Orders v2, webhook signature verification, idempotency, proof anchoring. SQLite index (PostgreSQL planned). |
+| `paypal-sim/` | 🧪 temporary | Local PayPal API simulator used until the real Sandbox is connected. |
 | `web/` | ✅ V1 | secp256k1 keys generated in the browser; Cosmos txs (`SIGN_MODE_DIRECT`) signed locally. AG Grid explorer. |
 | `api/openapi.json` | ✅ | Generated from the gateway (`create_app().openapi()`). |
 | `deploy/` | ⚠️ | Compose and Render blueprint written; images not yet built in CI. |
