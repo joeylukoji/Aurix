@@ -8,12 +8,14 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import re
 import os
 import secrets
 import threading
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
@@ -91,7 +93,12 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
 
     @app.exception_handler(ChainError)
     def _chain_err(_: Request, e: ChainError):
-        return JSONResponse(status_code=400 if e.status < 500 else 502, content={"detail": e.detail})
+        code = 404 if e.status == 404 else 400 if e.status < 500 else 504 if e.status == 504 else 502
+        return JSONResponse(status_code=code, content={"detail": e.detail})
+
+    @app.exception_handler(httpx.HTTPError)
+    def _chain_down(_: Request, e: httpx.HTTPError):
+        return JSONResponse(status_code=502, content={"detail": f"chain node unreachable: {type(e).__name__}"})
 
     def chain_id() -> str:
         return chain.status()["chain_id"]
@@ -202,6 +209,60 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
     @app.get("/api/explorer/proofs/{h}")
     def proof(h: str):
         return chain.proof(h)
+
+    @app.get("/api/explorer/txs/{h}")
+    def tx_by_hash(h: str):
+        try:
+            return chain.tx(h.upper())
+        except ChainError as e:
+            if e.status >= 500 and e.status != 404:
+                raise
+            raise HTTPException(404, "not found")
+
+    def address_history(addr: str) -> list:
+        seen, history = set(), []
+        for q in (f"message.sender='{addr}'", f"transfer.recipient='{addr}'"):
+            for t in chain.search_txs(q, 100):
+                if t["hash"] not in seen:
+                    seen.add(t["hash"])
+                    history.append(t)
+        history.sort(key=lambda t: t["height"], reverse=True)
+        return history
+
+    def _missing(e: ChainError) -> bool:
+        return e.status < 500 or "not found" in e.detail.lower()
+
+    @app.get("/api/explorer/search")
+    def search(q: str = ""):
+        q = q.strip()
+        if not q:
+            raise HTTPException(400, "empty query")
+        low = q.lower()
+        try:
+            if low.startswith("aur1"):
+                if not crypto.valid_address(low):
+                    raise HTTPException(404, "not found")
+                return {"kind": "address", "address": low, "balance": chain.account(low)["balance"],
+                        "history": address_history(low)}
+            m = re.fullmatch(r"(?:escrow:\s*|#)(\d+)", low)
+            if m:
+                return {"kind": "escrow", "escrow": chain.escrow(int(m.group(1)))}
+            if q.isdigit():
+                h = int(q)
+                if h < 1 or h > chain.status()["height"]:
+                    raise HTTPException(404, "not found")
+                return {"kind": "block", "block": chain.block(h) | {"txs": chain.search_txs(f"tx.height={h}", 100)}}
+            if re.fullmatch(r"[0-9a-fA-F]{64}", q):
+                try:
+                    return {"kind": "tx", "tx": chain.tx(q.upper())}
+                except ChainError as e:
+                    if not _missing(e):
+                        raise
+                return {"kind": "proof", "proof": chain.proof(low)}
+        except ChainError as e:
+            if not _missing(e):
+                raise
+        raise HTTPException(404, "not found")
 
     # ---------------- PayPal ----------------
     def anchor(order_id: str, capture_id: str) -> dict:

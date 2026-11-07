@@ -121,6 +121,43 @@ def test_explorer(chain_urls, tmp_path):
     assert any(t["type"] == "MsgSend" for t in c.get("/api/explorer/txs").json())
 
 
+def test_explorer_search(chain_urls, tmp_path):
+    c = make(chain_urls, tmp_path)
+    k = funded(c)
+    tx = c.get("/api/explorer/txs").json()[0]
+    assert c.get(f"/api/explorer/txs/{tx['hash'].lower()}").json()["hash"] == tx["hash"]
+    assert c.get("/api/explorer/txs/" + "0" * 64).status_code == 404
+    r = c.get(f"/api/explorer/search?q={tx['hash'].lower()}").json()
+    assert r["kind"] == "tx" and r["tx"]["hash"] == tx["hash"]
+    r = c.get(f"/api/explorer/search?q={k.address}").json()
+    assert r["kind"] == "address" and r["balance"] > 0 and r["history"]
+    r = c.get(f"/api/explorer/search?q={tx['height']}").json()
+    assert r["kind"] == "block" and r["block"]["height"] == tx["height"] and r["block"]["num_txs"] >= 1
+    assert any(t["hash"] == tx["hash"] for t in r["block"]["txs"])
+    for q in ("0" * 64, "99999999", "#999999", "escrow:999999", "hello"):
+        assert c.get("/api/explorer/search", params={"q": q}).status_code == 404, q
+    assert c.get("/api/explorer/search?q=").status_code == 400
+
+
+def test_escrow_search(chain_urls, tmp_path):
+    c = make(chain_urls, tmp_path)
+    es = c.get("/api/escrows").json()
+    if es:
+        eid = es[0]["id"]
+        for q in (f"escrow:{eid}", f"%23{eid}"):
+            r = c.get(f"/api/explorer/search?q={q}").json()
+            assert r["kind"] == "escrow" and r["escrow"]["id"] == eid
+
+
+def test_chain_down_is_502(tmp_path):
+    dead = ("http://127.0.0.1:1", "http://127.0.0.1:1")
+    c = make(dead, tmp_path)
+    for path in ("/api/chain/status", "/api/explorer/txs", "/api/explorer/search?q=5",
+                 "/api/explorer/txs/" + "A" * 64, f"/api/wallets/{crypto.Key('ab').address}"):
+        r = c.get(path)
+        assert r.status_code == 502 and "unreachable" in r.json()["detail"], path
+
+
 def test_bad_inputs(chain_urls, tmp_path):
     c = make(chain_urls, tmp_path)
     assert c.post("/api/wallets/cosmos1abc/faucet").status_code == 400
@@ -183,6 +220,8 @@ def test_paypal_flow_with_simulator(paypal_env):
     assert done["proof_hash"] == expected
     assert c.get(f"/api/explorer/proofs/{expected}").json()["external_ref"] == f"paypal:{oid}"
     assert c.post(f"/api/paypal/orders/{oid}/approve", json={"confirm": True}).status_code == 409
+    sr = c.get(f"/api/explorer/search?q={expected}").json()
+    assert sr["kind"] == "proof" and sr["proof"]["external_ref"] == f"paypal:{oid}"
 
     event_id = next(e["id"] for e in sim.get("/sim/events").json() if e["order_id"] == oid)
     # invariant 6: the identical signed webhook replayed is a 200 no-op

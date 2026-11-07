@@ -64,7 +64,10 @@ class ChainClient:
 
     def _get(self, path: str, **params):
         r = self.rest.get(path, params=params or None)
-        body = r.json()
+        try:
+            body = r.json()
+        except ValueError:
+            body = {}
         if r.status_code >= 400:
             raise ChainError(r.status_code if r.status_code != 500 or body.get("code") != 5 else 404,
                              body.get("message", r.text))
@@ -104,6 +107,15 @@ class ChainClient:
     def search_txs(self, query: str, limit: int = 100) -> list:
         body = self._get("/cosmos/tx/v1beta1/txs", query=query, order_by="ORDER_BY_DESC", limit=limit)
         return [normalize_tx(t) for t in body.get("tx_responses") or []]
+
+    def block(self, height: int) -> dict:
+        r = self.rpc.get("/block", params={"height": height}).json()
+        if "result" not in r:
+            raise ChainError(404, (r.get("error") or {}).get("data") or f"block {height} not found")
+        res = r["result"]
+        hdr = res["block"]["header"]
+        return {"height": int(hdr["height"]), "time": hdr["time"], "hash": res["block_id"]["hash"],
+                "num_txs": len(res["block"]["data"].get("txs") or []), "proposer": hdr["proposer_address"]}
 
     def blocks(self, limit: int = 50) -> list:
         h = self.status()["height"]
