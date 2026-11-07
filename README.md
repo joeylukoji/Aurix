@@ -63,7 +63,7 @@ Full details: [`docs/architecture/services.md`](docs/architecture/services.md).
 | Need | Technology |
 | --- | --- |
 | Consensus | CometBFT (PoS + BFT) |
-| Blockchain core | Go state machine (V1), Cosmos SDK + CometBFT as target |
+| Blockchain core | Cosmos SDK v0.50 + Go (`x/auth`, `x/bank`, `x/staking`, custom `x/smartmoney`) |
 | Gateway | FastAPI *(Spring Boot in the original target)* |
 | AI | Python, FastAPI, LightGBM + SHAP (PyTorch Geometric on the roadmap) |
 | Data | SQLite (V1 index), PostgreSQL + Redis planned |
@@ -75,7 +75,7 @@ Full details: [`docs/architecture/services.md`](docs/architecture/services.md).
 
 ```
 aurix/
-├── chain/        # AURIX node (Go): aurixbank + smartmoney state machine
+├── chain/        # Cosmos SDK node: app/, x/smartmoney, proto/, cmd/aurixd
 ├── gateway/      # API Gateway / orchestration
 ├── guardian/     # Neural Guardian (FastAPI)
 ├── web/          # Wallet, explorer, AG Grid
@@ -101,7 +101,7 @@ Then open http://localhost:8080. Without PayPal credentials the gateway runs in 
 Run the commands below from the repository root, each in its own terminal.
 
 ```bash
-cd chain && go run ./cmd/aurixd
+cd chain && go build -o build/aurixd ./cmd/aurixd && AURIXD=./build/aurixd scripts/init-local.sh && ./build/aurixd start
 ```
 
 ```bash
@@ -126,7 +126,7 @@ cd guardian && .venv/bin/python -m pytest -q
 cd gateway && .venv/bin/python -m pytest -q
 ```
 
-The gateway tests build and start a real `aurixd` node. The browser journey (wallet → send → escrow → PayPal → explorer) runs with Playwright against a running stack:
+The gateway tests build, initialise and start a real single-validator `aurixd` node (needs Go and `jq`). The browser journey (wallet → send → escrow → PayPal → explorer) runs with Playwright against a running stack:
 
 ```bash
 node tests/e2e/demo-journey.js
@@ -136,10 +136,10 @@ node tests/e2e/demo-journey.js
 
 | Component | Status | Notes |
 | --- | --- | --- |
-| `chain/` | ✅ V1 | Go state machine implementing `x/aurixbank` and `x/smartmoney` messages and invariants 1–5, single validator, in-memory state. Porting to Cosmos SDK modules is the next step. |
+| `chain/` | ✅ V1 | **Cosmos SDK v0.50 + CometBFT v0.38**, single validator. `x/aurixbank` = `x/auth` + `x/bank` (`uaur`, fixed supply, sequences as nonces, fees); custom `x/smartmoney` module (escrow, proof anchoring). See [`chain/README.md`](chain/README.md). |
 | `guardian/` | ✅ V1 | FastAPI + LightGBM, SHAP reasons via native TreeSHAP. **Trained on a synthetic dataset** generated in `guardian/app/model.py`. |
 | `gateway/` | ✅ V1 | FastAPI (variant recommended in the architecture doc). PayPal Orders v2, webhook signature verification, idempotency, proof anchoring. SQLite index (PostgreSQL planned). |
-| `web/` | ✅ V1 | Keys generated and signed in the browser. AG Grid explorer. |
+| `web/` | ✅ V1 | secp256k1 keys generated in the browser; Cosmos txs (`SIGN_MODE_DIRECT`) signed locally. AG Grid explorer. |
 | `api/openapi.json` | ✅ | Generated from the gateway (`create_app().openapi()`). |
 | `deploy/` | ⚠️ | Compose and Render blueprint written; images not yet built in CI. |
 

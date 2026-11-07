@@ -6,7 +6,8 @@ services:
       AURIX_CHAIN_ID: aurix-testnet-1
       AURIX_FAUCET_SEED: ${AURIX_FAUCET_SEED:-aurix-dev-faucet}
       AURIX_GATEWAY_SEED: ${AURIX_GATEWAY_SEED:-aurix-dev-gateway}
-    ports: ["26657:26657"]
+    volumes: ["chain-data:/data"]
+    ports: ["26657:26657", "1317:1317"]
   guardian:
     build: ../guardian
     ports: ["8000:8000"]
@@ -19,6 +20,7 @@ services:
         required: false
     environment:
       CHAIN_RPC_URL: http://chain:26657
+      CHAIN_REST_URL: http://chain:1317
       GUARDIAN_URL: http://guardian:8000
       AURIX_FAUCET_SEED: ${AURIX_FAUCET_SEED:-aurix-dev-faucet}
       AURIX_GATEWAY_SEED: ${AURIX_GATEWAY_SEED:-aurix-dev-gateway}
@@ -26,4 +28,5 @@ services:
     ports: ["8080:8080"]
     depends_on: [chain, guardian]
 volumes:
+  chain-data:
   gateway-data:

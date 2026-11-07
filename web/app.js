@@ -26,36 +26,27 @@ async function busy(btn, fn) {
   try { await fn(); } catch (e) { toast(e.message, true); } finally { btn.disabled = false; }
 }
 
-// ---------- keys (seed string -> sha256 -> ed25519 seed; same as the gateway) ----------
+// ---------- keys (seed string -> sha256 -> secp256k1; same as the gateway) ----------
 let wallet = null;
-async function loadKey(seed) {
-  const h = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(seed)));
-  const kp = nacl.sign.keyPair.fromSeed(h);
-  const ah = new Uint8Array(await crypto.subtle.digest("SHA-256", kp.publicKey));
-  return { seed, kp, address: "aur1" + hex(ah.slice(0, 20)) };
-}
 function store(seed) { try { seed ? localStorage.setItem("aurix.seed", seed) : localStorage.removeItem("aurix.seed"); } catch {} }
 function stored() { try { return localStorage.getItem("aurix.seed"); } catch { return null; } }
 
 async function setWallet(seed) {
-  wallet = seed ? await loadKey(seed) : null;
+  wallet = seed ? AurixTx.keyFromSeed(seed) : null;
   store(seed);
   $("noWallet").hidden = !!wallet; $("hasWallet").hidden = !wallet;
   if (wallet) { $("addr").textContent = wallet.address; refreshWallet(); }
 }
 
-// Serialise this wallet's transactions so two clicks never reuse the same nonce.
+// Serialise this wallet's transactions so two clicks never reuse the same sequence.
 let txQueue = Promise.resolve();
 function signAndSend(msg) {
-  const run = txQueue.then(() => doSignAndSend(msg));
+  const run = txQueue.then(async () => {
+    const p = await api("/api/txs/prepare", { method: "POST", body: { from: wallet.address, msg } });
+    return api("/api/txs", { method: "POST", body: { tx_bytes: AurixTx.signTx(wallet, p) } });
+  });
   txQueue = run.catch(() => {});
   return run;
-}
-async function doSignAndSend(msg) {
-  const p = await api("/api/txs/prepare", { method: "POST", body: { from: wallet.address, msg } });
-  const sig = nacl.sign.detached(new TextEncoder().encode(p.sign_bytes), wallet.kp.secretKey);
-  return api("/api/txs", { method: "POST", body: { msg: p.msg, from: wallet.address,
-    pub_key: hex(wallet.kp.publicKey), nonce: p.nonce, fee: p.fee, signature: hex(sig) } });
 }
 
 function riskHtml(risk, status) {
@@ -89,7 +80,7 @@ async function refreshWallet() {
 async function checkSend() {
   const to = $("sendTo").value.trim(), amt = Math.round(parseFloat($("sendAmt").value) * MICRO);
   if (!wallet) throw new Error("Create a wallet first");
-  if (!to.startsWith("aur1") || !(amt > 0)) throw new Error("Enter a valid recipient and amount");
+  if (!AurixTx.validAddress(to) || !(amt > 0)) throw new Error("Enter a valid aur1… recipient and amount");
   const msg = { type: "MsgSend", to, amount: amt };
   const p = await api("/api/txs/prepare", { method: "POST", body: { from: wallet.address, msg } });
   $("sendRisk").innerHTML = riskHtml(p.risk, p.risk_status) +
@@ -110,7 +101,7 @@ async function checkEscrow() {
   if (!wallet) throw new Error("Create a wallet first");
   const to = $("escTo").value.trim(), arb = $("escArb").value.trim();
   const amt = Math.round(parseFloat($("escAmt").value) * MICRO), blocks = parseInt($("escBlocks").value, 10);
-  if (!to.startsWith("aur1") || !(amt > 0) || !(blocks > 0)) throw new Error("Check recipient, amount and deadline");
+  if (!AurixTx.validAddress(to) || (arb && !AurixTx.validAddress(arb)) || !(amt > 0) || !(blocks > 0)) throw new Error("Check addresses, amount and deadline");
   const { height } = await api("/api/chain/status");
   const msg = { type: "MsgCreateEscrow", to, amount: amt, deadline_height: height + blocks, ...(arb ? { arbiter: arb } : {}) };
   const p = await api("/api/txs/prepare", { method: "POST", body: { from: wallet.address, msg } });
@@ -152,8 +143,8 @@ async function createOrder() {
 
 // ---------- explorer ----------
 async function refreshExplorer() {
-  const [blocks, txs] = await Promise.all([api("/api/explorer/blocks?limit=200"), api("/api/explorer/txs?limit=500")]);
-  set("blocksGrid", blocks.map((b) => ({ ...b, ntx: b.txs.length })));
+  const [blocks, txs] = await Promise.all([api("/api/explorer/blocks?limit=200"), api("/api/explorer/txs?limit=100")]);
+  set("blocksGrid", blocks);
   set("txsGrid", txs);
 }
 
@@ -176,8 +167,9 @@ function init() {
   grid("ordersGrid", [{ field: "order_id" }, { field: "amount_usd", headerName: "USD" }, { field: "status" },
     { field: "risk_level", headerName: "Risk" }, { field: "anchor_height", headerName: "Proof block" },
     { field: "proof_hash", valueFormatter: (p) => short(p.value) }, { field: "mock", valueFormatter: (p) => (p.value ? "mock" : "sandbox") }]);
-  grid("blocksGrid", [{ field: "height", maxWidth: 110 }, { field: "time", valueFormatter: (p) => p.value ? new Date(p.value * 1000).toLocaleTimeString() : "genesis" },
-    { field: "ntx", headerName: "Txs", maxWidth: 90 }, { field: "hash", valueFormatter: (p) => short(p.value) }]);
+  grid("blocksGrid", [{ field: "height", maxWidth: 110 }, { field: "time", valueFormatter: (p) => new Date(p.value).toLocaleTimeString() },
+    { field: "num_txs", headerName: "Txs", maxWidth: 90 }, { field: "hash", valueFormatter: (p) => short(p.value) },
+    { field: "proposer", headerName: "Validator", valueFormatter: (p) => short(p.value) }]);
   grid("txsGrid", [{ field: "height", headerName: "Block", maxWidth: 100 }, { field: "type" },
     { field: "from", valueFormatter: (p) => short(p.value) }, { field: "to", valueFormatter: (p) => short(p.value) }, amountCol,
     { field: "escrow_id", headerName: "Escrow", maxWidth: 100 }, statusCol, { field: "hash", valueFormatter: (p) => short(p.value) }]);
@@ -187,7 +179,7 @@ function init() {
     b.classList.add("active"); $(b.dataset.tab).classList.add("active");
     ({ wallet: refreshWallet, escrow: refreshEscrows, paypal: refreshOrders, explorer: refreshExplorer })[b.dataset.tab]?.().catch((e) => toast(e.message, true));
   }));
-  $("createWallet").onclick = () => setWallet(hex(nacl.randomBytes(32)));
+  $("createWallet").onclick = () => setWallet(hex(crypto.getRandomValues(new Uint8Array(32))));
   $("doImport").onclick = () => { const s = $("importSeed").value.trim(); if (s) setWallet(s); };
   $("forget").onclick = () => confirm("Forget this wallet? Without the seed, funds are lost.") && setWallet(null);
   $("showSeed").onclick = () => prompt("Your seed (keep it private):", wallet.seed);

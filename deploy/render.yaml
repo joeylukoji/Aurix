@@ -1,11 +1,12 @@
 # Render Blueprint. Copy to the repository root (render.yaml) to deploy.
-# The chain is a single in-memory validator: its state resets on restart (demo testnet).
+# Single-validator Cosmos SDK testnet. Attach a persistent disk at /data to keep state across deploys.
 services:
   - type: pserv
     name: aurix-chain
     runtime: docker
     dockerfilePath: ./chain/Dockerfile
     dockerContext: ./chain
+    disk: { name: chain-data, mountPath: /data, sizeGB: 1 }
     envVars:
       - { key: AURIX_FAUCET_SEED, sync: false }
       - { key: AURIX_GATEWAY_SEED, sync: false }
@@ -22,6 +23,7 @@ services:
     healthCheckPath: /api/health
     envVars:
       - { key: CHAIN_RPC_URL, value: "http://aurix-chain:26657" }
+      - { key: CHAIN_REST_URL, value: "http://aurix-chain:1317" }
       - { key: GUARDIAN_URL, value: "http://aurix-guardian:8000" }
       - { key: DATABASE_URL, value: "sqlite:////tmp/aurix.db" }
       - { key: AURIX_FAUCET_SEED, sync: false }
