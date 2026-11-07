@@ -124,8 +124,8 @@ Backlog, user stories, Definition of Done and ceremonies: [`docs/scrum/`](docs/s
 | [docs/scrum/sprints.md](docs/scrum/sprints.md) | Detailed sprint plan and burndown |
 | [docs/architecture/services.md](docs/architecture/services.md) | Service modelling |
 | [docs/architecture/diagrams.md](docs/architecture/diagrams.md) | Use cases, sequences, states, classes, ER, deployment |
-| [AURIX_ARCHITECTURE_LOGICIELLE.md](AURIX_ARCHITECTURE_LOGICIELLE.md) | Reference software architecture (French) |
-| [AURIX_dossier_hackathon.md](AURIX_dossier_hackathon.md) | Hackathon pitch file (French) |
+| [AURIX_SOFTWARE_ARCHITECTURE.md](AURIX_SOFTWARE_ARCHITECTURE.md) | Reference software architecture ([French original](AURIX_ARCHITECTURE_LOGICIELLE.md)) |
+| [AURIX_hackathon_brief.md](AURIX_hackathon_brief.md) | Hackathon pitch file ([French original](AURIX_dossier_hackathon.md)) |
 
 ## Security
 

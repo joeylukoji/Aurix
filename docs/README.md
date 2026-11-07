@@ -10,4 +10,4 @@
 
 Diagrams are written in **Mermaid** and render directly on GitHub.
 
-Sources: [`AURIX_ARCHITECTURE_LOGICIELLE.md`](../AURIX_ARCHITECTURE_LOGICIELLE.md), [`AURIX_dossier_hackathon.md`](../AURIX_dossier_hackathon.md). Items marked **[Proposal]** are still to be validated by the team.
+Sources: [`AURIX_SOFTWARE_ARCHITECTURE.md`](../AURIX_SOFTWARE_ARCHITECTURE.md), [`AURIX_hackathon_brief.md`](../AURIX_hackathon_brief.md). Items marked **[Proposal]** are still to be validated by the team.
