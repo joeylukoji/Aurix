@@ -46,6 +46,9 @@ def any_(type_url: str, value: bytes) -> bytes:
 ANCHOR_PROOF_TYPE_URL = "/aurix.smartmoney.v1.MsgAnchorProof"
 
 
-def msg_anchor_proof(signer: str, hash_hex: str, external_ref: str, capture_ref: str = "") -> bytes:
-    """aurix.smartmoney.v1.MsgAnchorProof {signer=1, hash=2, external_ref=3, capture_ref=4} (one attestation)."""
-    return string(1, signer) + string(2, hash_hex) + string(3, external_ref) + string(4, capture_ref)
+def msg_anchor_proof(signer: str, hash_hex: str, external_ref: str, capture_ref: str = "",
+                     amount: str = "", currency: str = "") -> bytes:
+    """aurix.smartmoney.v1.MsgAnchorProof {signer=1, hash=2, external_ref=3, capture_ref=4, amount=5,
+    currency=6} (one attestation). Empty fields are omitted (proto3 default)."""
+    return (string(1, signer) + string(2, hash_hex) + string(3, external_ref) + string(4, capture_ref)
+            + string(5, amount) + string(6, currency))

@@ -16,7 +16,8 @@ class Settings:
     paypal_client_secret: str = field(default_factory=lambda: _env("PAYPAL_CLIENT_SECRET"))
     paypal_webhook_id: str = field(default_factory=lambda: _env("PAYPAL_WEBHOOK_ID"))
     paypal_base_url: str = field(default_factory=lambda: _env("PAYPAL_BASE_URL", "https://api-m.sandbox.paypal.com"))
-    # Dev-only seeds; must match the chain's genesis. Never use in production.
+    # Dev-only seed fallbacks (legacy names). GATEWAY_/FAUCET_ MNEMONIC, KEY_FILE or SEED take priority
+    # (app/keys.py); seeds are refused when AURIX_ENV=production. Defaults match the dev genesis.
     faucet_seed: str = field(default_factory=lambda: _env("AURIX_FAUCET_SEED", "aurix-dev-faucet"))
     gateway_seed: str = field(default_factory=lambda: _env("AURIX_GATEWAY_SEED", "aurix-dev-gateway"))
 
