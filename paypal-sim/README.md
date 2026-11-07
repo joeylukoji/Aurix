@@ -11,12 +11,12 @@ the real integration is done; the gateway code does not change.
 | `POST /v1/oauth2/token` | Client-credentials OAuth (`sim-client-id` / `sim-client-secret`) |
 | `POST /v2/checkout/orders` | Creates an order (`intent: CAPTURE`, USD), honours `PayPal-Request-Id` |
 | `GET /v2/checkout/orders/{id}` | Order details |
-| `GET /checkoutnow?token={id}` | Buyer approval page ("Pay now") |
-| `POST /v2/checkout/orders/{id}/capture` | Refused with `ORDER_NOT_APPROVED` until the buyer pays, then `COMPLETED` |
+| `GET /checkoutnow?token={id}` | Buyer page: "Pay now" or "Cancel and return" (order stays `CREATED`, capture refused). Redirects to `return_url?token=&PayerID=` / `cancel_url?token=` when given in `application_context` or `payment_source.paypal.experience_context` |
+| `POST /v2/checkout/orders/{id}/capture` | Refused with `ORDER_NOT_APPROVED` until the buyer pays, then `COMPLETED`. With `SIM_DECLINE_ABOVE=<USD>` larger amounts get 422 `INSTRUMENT_DECLINED` and no webhook |
 | Webhook delivery | Signed `PAYMENT.CAPTURE.COMPLETED` POSTed to `SIM_WEBHOOK_URL`, retried on failure |
 | `POST /v1/notifications/verify-webhook-signature` | `SUCCESS` / `FAILURE` |
 
-Simulator-only helpers: `POST /sim/orders/{id}/approve` (approve without a browser),
+Simulator-only helpers: `GET /sim` (HTML dashboard of orders, statuses and webhook deliveries, for demos), `POST /sim/orders/{id}/approve` (approve without a browser),
 `GET /sim/events`, `POST /sim/events/{id}/resend` (replay → tests idempotency),
 `POST /sim/events/{id}/forge` (tampered payload → tests signature checks).
 

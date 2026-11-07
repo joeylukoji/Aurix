@@ -86,3 +86,51 @@ def test_request_id_idempotent_and_validation():
     assert a["id"] == b["id"]
     assert create(h, value="-3").status_code == 400
     assert c.get("/v2/checkout/orders/NOPE", headers=h).status_code == 404
+
+
+def test_cancel_and_return_urls():
+    h = token()
+    o = c.post("/v2/checkout/orders", headers=h, json={
+        "intent": "CAPTURE", "purchase_units": [{"amount": {"currency_code": "USD", "value": "5.00"}}],
+        "payment_source": {"paypal": {"experience_context": {
+            "return_url": "https://shop.example/ok", "cancel_url": "https://shop.example/no?x=1"}}}}).json()
+    assert "Cancel and return" in c.get(f"/checkoutnow?token={o['id']}").text
+    r = c.post(f"/checkoutnow/{o['id']}/cancel", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == f"https://shop.example/no?x=1&token={o['id']}"
+    assert c.get(f"/v2/checkout/orders/{o['id']}", headers=h).json()["status"] == "CREATED"
+    cap = c.post(f"/v2/checkout/orders/{o['id']}/capture", headers=h)
+    assert cap.status_code == 422 and cap.json()["details"][0]["issue"] == "ORDER_NOT_APPROVED"
+    # application_context works too, and Pay redirects to return_url with token + PayerID
+    o2 = c.post("/v2/checkout/orders", headers=h, json={
+        "intent": "CAPTURE", "purchase_units": [{"amount": {"currency_code": "USD", "value": "5.00"}}],
+        "application_context": {"return_url": "https://shop.example/ok"}}).json()
+    r = c.post(f"/checkoutnow/{o2['id']}/approve", follow_redirects=False)
+    assert r.headers["location"].startswith(f"https://shop.example/ok?token={o2['id']}&PayerID=SIMBUYER")
+    # without urls the page just reloads
+    o3 = create(h).json()
+    r = c.post(f"/checkoutnow/{o3['id']}/cancel", follow_redirects=False)
+    assert r.headers["location"] == f"/checkoutnow?token={o3['id']}"
+
+
+def test_decline_above(delivered, monkeypatch):
+    monkeypatch.setattr(main, "DECLINE_ABOVE", 100.0)
+    h = token()
+    big, small = create(h, value="150.00").json(), create(h, value="99.00").json()
+    for o in (big, small):
+        c.post(f"/sim/orders/{o['id']}/approve")
+    r = c.post(f"/v2/checkout/orders/{big['id']}/capture", headers=h)
+    assert r.status_code == 422 and r.json()["details"][0]["issue"] == "INSTRUMENT_DECLINED"
+    assert c.post(f"/v2/checkout/orders/{small['id']}/capture", headers=h).status_code == 201
+    assert wait_for(lambda: delivered)
+    time.sleep(0.1)
+    assert [e["resource"]["supplementary_data"]["related_ids"]["order_id"] for e, _ in delivered] == [small["id"]]
+
+
+def test_dashboard(delivered):
+    h = token()
+    o = create(h).json()
+    c.post(f"/sim/orders/{o['id']}/approve")
+    c.post(f"/v2/checkout/orders/{o['id']}/capture", headers=h)
+    assert wait_for(lambda: delivered)
+    page = c.get("/sim")
+    assert page.status_code == 200 and o["id"] in page.text and "COMPLETED" in page.text

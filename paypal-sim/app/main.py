@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import html
 import hmac
 import json
 import os
@@ -26,6 +27,7 @@ import threading
 import time
 import uuid
 import zlib
+from urllib.parse import urlencode
 from datetime import datetime, timezone
 
 import httpx
@@ -38,6 +40,8 @@ WEBHOOK_ID = os.environ.get("SIM_WEBHOOK_ID", "SIM-WEBHOOK-ID")
 WEBHOOK_URL = os.environ.get("SIM_WEBHOOK_URL", "http://localhost:8080/api/paypal/webhook")
 PUBLIC_URL = os.environ.get("SIM_PUBLIC_URL", "http://localhost:8090").rstrip("/")
 WEBHOOK_DELAY = float(os.environ.get("SIM_WEBHOOK_DELAY", "0.5"))
+# Test failure mode: captures above this USD amount fail with INSTRUMENT_DECLINED (unset = never).
+DECLINE_ABOVE = float(os.environ["SIM_DECLINE_ABOVE"]) if os.environ.get("SIM_DECLINE_ABOVE") else None
 _SIGNING_KEY = secrets.token_bytes(32)  # stands in for PayPal's certificate private key
 
 app = FastAPI(title="PayPal Sandbox simulator (AURIX tests only)", version="0.1.0")
@@ -119,8 +123,10 @@ async def create_order(request: Request, _: str = Depends(bearer),
                 raise ValueError
         except (KeyError, IndexError, ValueError):
             paypal_error(400, "INVALID_REQUEST", "Invalid purchase_units amount", "INVALID_PARAMETER_VALUE")
+        ctx = body.get("application_context") or {}
+        ctx = ctx | ((body.get("payment_source") or {}).get("paypal") or {}).get("experience_context", {})
         oid = secrets.token_hex(8).upper()[:17]
-        ORDERS[oid] = {"id": oid, "intent": "CAPTURE", "status": "CREATED", "create_time": now(),
+        ORDERS[oid] = {"return_url": ctx.get("return_url"), "cancel_url": ctx.get("cancel_url"),"id": oid, "intent": "CAPTURE", "status": "CREATED", "create_time": now(),
                        "purchase_units": [{"reference_id": "default", **units[0]}], "request_id": paypal_request_id}
         return order_view(ORDERS[oid])
 
@@ -152,22 +158,47 @@ def checkout_page(token: str):
     o = get_or_404(token)
     amt = o["purchase_units"][0]["amount"]
     done = o["status"] != "CREATED"
+    if o.get("payer_cancelled") and not done:
+        msg = "<p>You cancelled this payment. You can still pay below.</p>"
+    else:
+        msg = ""
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>PayPal Simulator</title>
 <style>body{{font:16px system-ui;background:#f5f7fa;margin:0;display:grid;place-items:center;min-height:100vh}}
 .c{{background:#fff;border-radius:12px;padding:24px;max-width:380px;width:calc(100% - 32px);box-shadow:0 4px 20px #0001}}
 .b{{background:#ffc439;border:0;border-radius:24px;padding:12px;width:100%;font-weight:700;font-size:16px;cursor:pointer}}
+.l{{background:none;border:0;color:#0070ba;margin-top:12px;width:100%;cursor:pointer;font-size:14px}}
 .w{{background:#fff3cd;border-radius:6px;padding:8px;font-size:13px}}</style></head><body><div class="c">
 <p class="w">⚠️ Local PayPal <b>simulator</b> for AURIX tests. No real money.</p>
 <h2>Pay {amt['value']} {amt['currency_code']}</h2><p>Order <code>{o['id']}</code> · status <b id="st">{o['status']}</b></p>
-{"<p>Payment approved. You can close this tab and return to AURIX.</p>" if done else
- f'<form method="post" action="/checkoutnow/{o["id"]}/approve"><p>Logged in as sb-buyer@personal.example.com</p><button class="b" id="pay">Pay now</button></form>'}
+{"<p>Payment approved. You can close this tab and return to AURIX.</p>" if done else msg +
+ f'<form method="post" action="/checkoutnow/{o["id"]}/approve"><p>Logged in as sb-buyer@personal.example.com</p><button class="b" id="pay">Pay now</button></form>'
+ f'<form method="post" action="/checkoutnow/{o["id"]}/cancel"><button class="l" id="cancel">Cancel and return to merchant</button></form>'}
 </div></body></html>"""
 
 
 @app.post("/checkoutnow/{oid}/approve")
 def checkout_approve(oid: str):
-    approve(oid)
+    o = approve(oid)
+    if o.get("return_url"):  # like PayPal: return_url?token=<order id>&PayerID=<payer id>
+        q = urlencode({"token": oid, "PayerID": o["payer"]["payer_id"]})
+        return RedirectResponse(_with_query(o["return_url"], q), status_code=303)
+    return RedirectResponse(f"/checkoutnow?token={oid}", status_code=303)
+
+
+def _with_query(url: str, q: str) -> str:
+    return url + ("&" if "?" in url else "?") + q
+
+
+@app.post("/checkoutnow/{oid}/cancel")
+def checkout_cancel(oid: str):
+    """Buyer clicks "Cancel and return": the order stays CREATED (not capturable), like PayPal."""
+    with lock:
+        o = get_or_404(oid)
+        if o["status"] == "CREATED":
+            o["payer_cancelled"] = True
+    if o.get("cancel_url"):  # like PayPal: cancel_url?token=<order id>
+        return RedirectResponse(_with_query(o["cancel_url"], urlencode({"token": oid})), status_code=303)
     return RedirectResponse(f"/checkoutnow?token={oid}", status_code=303)
 
 
@@ -181,6 +212,11 @@ def capture(oid: str, _: str = Depends(bearer)):
             paypal_error(422, "UNPROCESSABLE_ENTITY", "Payer has not yet approved the Order for payment.",
                          "ORDER_NOT_APPROVED")
         amount = o["purchase_units"][0]["amount"]
+        if DECLINE_ABOVE is not None and float(amount["value"]) > DECLINE_ABOVE:
+            o["declined"] = True  # order stays APPROVED, no capture, no webhook
+            paypal_error(422, "UNPROCESSABLE_ENTITY",
+                         "The instrument presented was either declined by the processor or bank, or it can't be "
+                         "used for this payment.", "INSTRUMENT_DECLINED")
         cap = {"id": secrets.token_hex(9).upper()[:17], "status": "COMPLETED", "amount": amount,
                "final_capture": True, "create_time": now(),
                "supplementary_data": {"related_ids": {"order_id": oid}}}
@@ -245,6 +281,32 @@ async def verify(request: Request, _: str = Depends(bearer)):
 @app.get("/sim/health")
 def health():
     return {"status": "ok", "simulator": True, "webhook_url": WEBHOOK_URL, "orders": len(ORDERS), "events": len(EVENTS)}
+
+
+@app.get("/sim", response_class=HTMLResponse)
+def sim_dashboard():
+    """Tiny demo dashboard: orders, statuses and webhook deliveries."""
+    e = lambda v: html.escape(str(v))
+    by_order: dict[str, list] = {}
+    for eid, rec in list(EVENTS.items()):
+        by_order.setdefault(rec["event"]["resource"]["supplementary_data"]["related_ids"]["order_id"], []).append((eid, rec))
+    rows = []
+    for o in list(ORDERS.values())[::-1]:
+        flags = " (payer cancelled)" if o.get("payer_cancelled") and o["status"] == "CREATED" else ""
+        flags += " (declined)" if o.get("declined") and o["status"] != "COMPLETED" else ""
+        hooks = "<br>".join(f"{e(eid)}: " + (", ".join(f"{e(d['status'])}" for d in rec["deliveries"]) or "pending")
+                            for eid, rec in by_order.get(o["id"], [])) or "-"
+        amt = o["purchase_units"][0]["amount"]
+        rows.append(f"<tr><td><a href='/checkoutnow?token={e(o['id'])}'>{e(o['id'])}</a></td><td>{e(o['create_time'])}</td>"
+                    f"<td>{e(amt['value'])} {e(amt['currency_code'])}</td><td>{e(o['status'])}{flags}</td><td>{hooks}</td></tr>")
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="refresh" content="3">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>PayPal Simulator</title>
+<style>body{{font:14px system-ui;margin:16px}}table{{border-collapse:collapse;width:100%}}
+td,th{{border-bottom:1px solid #ddd;padding:6px;text-align:left}}</style></head><body>
+<h2>PayPal simulator dashboard</h2><p>Webhook URL: <code>{e(WEBHOOK_URL)}</code> · decline above:
+{e(DECLINE_ABOVE if DECLINE_ABOVE is not None else "off")} · auto-refresh 3s</p>
+<table><tr><th>Order</th><th>Created</th><th>Amount</th><th>Status</th><th>Webhook deliveries (HTTP status)</th></tr>
+{"".join(rows) or "<tr><td colspan=5>No orders yet.</td></tr>"}</table></body></html>"""
 
 
 @app.post("/sim/orders/{oid}/approve")
