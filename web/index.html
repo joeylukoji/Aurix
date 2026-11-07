@@ -8,7 +8,9 @@
 <link rel="stylesheet" href="vendor/ag-theme-quartz.min.css">
 <link rel="stylesheet" href="styles.css">
 <script src="vendor/noble.min.js"></script>
+<script src="vendor/bip39-english.js"></script>
 <script src="cosmos-tx.js"></script>
+<script src="keys.js"></script>
 <script src="chain.js"></script>
 <script src="vendor/ag-grid-community.min.js"></script>
 </head>
@@ -31,16 +33,43 @@
     <div class="card">
       <h2>My wallet</h2>
       <p class="muted">Your key is generated and kept in this browser only. Testnet: AUR has no monetary value.</p>
-      <div id="noWallet"><button id="createWallet" class="primary">Create demo wallet</button>
-        <details><summary>Import a seed</summary><input id="importSeed" placeholder="64 hex chars"><button id="doImport">Import</button></details></div>
+      <div id="noWallet" hidden>
+        <button id="newMnemonic" class="primary">Create wallet (recovery phrase)</button>
+        <details><summary>Import a recovery phrase (12 or 24 words)</summary>
+          <label>Recovery phrase<textarea id="importMnemonic" rows="3" autocomplete="off" spellcheck="false" placeholder="word1 word2 … word12"></textarea></label>
+          <label>Password (encrypts it in this browser)<input id="importPw" type="password" autocomplete="new-password"></label>
+          <label>Repeat password<input id="importPw2" type="password" autocomplete="new-password"></label>
+          <button id="doImportMnemonic">Import</button></details>
+        <div class="demo">
+          <p class="muted">Testnet demo: a throwaway dev key (sha256 of a random seed, kept unencrypted in this browser). Never use it on a public network.</p>
+          <button id="createWallet">Demo account</button>
+          <details><summary>Import a demo seed</summary><input id="importSeed" placeholder="64 hex chars"><button id="doImport">Import</button></details>
+        </div>
+      </div>
+      <div id="backup" hidden>
+        <h3>Write down your recovery phrase</h3>
+        <p class="muted">These 12 words are shown once. Anyone who has them controls the funds; without them a lost password means lost funds. Path m/44'/118'/0'/0/0 (same as <code>aurixd keys add --recover</code>).</p>
+        <ol id="backupWords" class="words"></ol>
+        <label class="check"><input id="backupAck" type="checkbox"> I wrote the 12 words down, in order, offline</label>
+        <label>Password (encrypts the phrase in this browser)<input id="backupPw" type="password" autocomplete="new-password"></label>
+        <label>Repeat password<input id="backupPw2" type="password" autocomplete="new-password"></label>
+        <button id="backupDone" class="primary">Save wallet</button><button id="backupCancel">Cancel</button>
+      </div>
+      <div id="unlock" hidden>
+        <h3>Unlock wallet</h3>
+        <div class="kv"><span>Address</span><code id="unlockAddr"></code></div>
+        <label>Password<input id="unlockPw" type="password" autocomplete="current-password"></label>
+        <button id="unlockGo" class="primary">Unlock</button><button id="forgetVault" class="danger">Remove wallet</button>
+      </div>
       <div id="hasWallet" hidden>
-        <div class="kv"><span>Address</span><code id="addr"></code><button id="copyAddr" class="small">Copy</button></div>
+        <div class="kv"><span>Address</span><code id="addr"></code><button id="copyAddr" class="small">Copy</button><span id="walletKind" class="pill"></span><span id="trustBadge" class="pill" hidden></span></div>
+        <div id="nodeWarn" class="warnbox" hidden></div>
         <div class="balances">
           <div class="bal aur"><label>AUR balance (on-chain)</label><strong id="balAur">–</strong></div>
           <div class="bal usd"><label>USD (PayPal Sandbox)</label><strong>separate rail</strong></div>
         </div>
         <div class="row"><button id="faucet" class="primary">Get 100 test AUR</button><button id="refresh">Refresh</button>
-          <button id="showSeed">Show seed</button><button id="forget" class="danger">Forget wallet</button></div>
+          <button id="showSeed">Show seed</button><button id="lock">Lock</button><button id="forget" class="danger">Forget wallet</button></div>
         <h3>History</h3><div id="historyGrid" class="grid ag-theme-quartz-auto-dark"></div>
       </div>
     </div>

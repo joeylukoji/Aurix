@@ -145,6 +145,21 @@
     throw lastErr;
   }
 
+  // One endpoint, no failover: {label, rest, height, balance, sequence} (used to compare nodes).
+  const MAX_HEIGHT_SKEW = 5;
+  async function readNode(ep, addr) {
+    const get = async (p) => { const r = await timedFetch(ep.rest + p, {}, 4000); const b = await r.json().catch(() => ({}));
+      if (!r.ok) { const e = new ChainError(r.status, b.message || r.statusText); throw e; } return b; };
+    const height = normalizeBlock(await get("/cosmos/base/tendermint/v1beta1/blocks/latest")).height;
+    let balance = 0, sequence = 0;
+    if (addr) {
+      try { sequence = Number(((await get(`/cosmos/auth/v1beta1/account_info/${addr}`)).info || {}).sequence || 0); }
+      catch (e) { if (e.status === 0 || (e.status >= 500 && !/not found/i.test(e.message))) throw e; }
+      balance = Number(((await get(`/cosmos/bank/v1beta1/balances/${addr}/by_denom?denom=uaur`)).balance || {}).amount || 0);
+    }
+    return { label: ep.label, rest: ep.rest, height, balance, sequence };
+  }
+
   // Gateway JSON API (PayPal, Guardian, faucet, and last-resort chain fallback).
   async function gw(path, opts = {}) {
     if (!state.gatewayOk) throw new ChainError(0, "gateway not available");
@@ -281,12 +296,52 @@
           try {
             const t = normalizeTx((await rest(`/cosmos/tx/v1beta1/txs/${res.txhash}`)).tx_response);
             if (t.code !== 0) throw new ChainError(400, t.log);
-            return ok(t);
+            return ok({ ...t, seen_ep: state.endpoints[state.active] });
           } catch (e) { if (e.status !== 404) throw e; }
           await new Promise((r) => setTimeout(r, 400));
         }
         throw new ChainError(408, `tx ${res.txhash} not included within ${waitMs / 1000}s`);
       }, () => gw("/api/txs", { method: "POST", body: { tx_bytes: txB64 } }));
+    },
+
+    // ---------- cross-verification (H4) ----------
+    // Reads height, balance and sequence of `addr` from up to `want` distinct endpoints (the active
+    // one first) and compares them. Result: {nodes, trust: "agree"|"disagree"|"single"|"none", issues}.
+    async crossCheck(addr, want = 2) {
+      const order = state.endpoints.map((_, i) => state.endpoints[(state.active + i) % state.endpoints.length]);
+      const nodes = [];
+      for (const ep of order) {
+        if (nodes.length >= want) break;
+        try { nodes.push(await readNode(ep, addr)); } catch { /* unreachable: try the next endpoint */ }
+      }
+      const issues = [];
+      if (nodes.length >= 2) {
+        const [a, b] = nodes;
+        if (Math.abs(a.height - b.height) > MAX_HEIGHT_SKEW) issues.push(`latest height ${a.rest} #${a.height} vs ${b.rest} #${b.height} (more than ${MAX_HEIGHT_SKEW} blocks apart)`);
+        if (addr && a.balance !== b.balance) issues.push(`balance ${a.rest} ${a.balance} uaur vs ${b.rest} ${b.balance} uaur`);
+        if (addr && a.sequence !== b.sequence) issues.push(`account sequence ${a.rest} ${a.sequence} vs ${b.rest} ${b.sequence}`);
+      }
+      const trust = !nodes.length ? "none" : nodes.length < 2 ? "single" : issues.length ? "disagree" : "agree";
+      return (state.trust = { nodes, trust, issues, configured: state.endpoints.length, at: Date.now() });
+    },
+    // A tx is final for the wallet only once `need` distinct nodes return it. Polls the other
+    // endpoints until one more sees it, or until none of them is reachable / the deadline passes.
+    async confirmTx(hash, firstEp, need = 2, waitMs = 10000) {
+      const seen = new Set(firstEp ? [firstEp.rest] : []);
+      let others = state.endpoints.filter((e) => !seen.has(e.rest));
+      const deadline = Date.now() + waitMs;
+      while (seen.size < need && others.length && Date.now() < deadline) {
+        await Promise.all(others.map(async (ep) => {
+          try {
+            const r = await timedFetch(`${ep.rest}/cosmos/tx/v1beta1/txs/${String(hash).toUpperCase()}`, {}, 3000);
+            if (r.ok) seen.add(ep.rest);
+            else if (r.status !== 404 && r.status < 500) others = others.filter((x) => x !== ep);
+          } catch { others = others.filter((x) => x !== ep); }
+        }));
+        others = others.filter((e) => !seen.has(e.rest));
+        if (seen.size < need && others.length) await new Promise((r) => setTimeout(r, 500));
+      }
+      return { seen_by: seen.size, need, final: seen.size >= need };
     },
 
     // ---------- optional services ----------
