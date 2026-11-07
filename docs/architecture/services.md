@@ -1,14 +1,14 @@
-# Modélisation des services
+# Service Modelling
 
-AURIX est découpé en **6 services** déployables indépendamment.
+AURIX is split into **6 independently deployable services**.
 
-| Service | Langage | Port [Proposition] | Couche | Dépend de |
+| Service | Language | Port [Proposal] | Layer | Depends on |
 | --- | --- | --- | --- | --- |
-| `chain` — Noeud AURIX | Go, Cosmos SDK, CometBFT | 26657 (RPC), 9090 (gRPC) | 1-2 | — |
-| `gateway` — API Gateway | Java 21 / Spring Boot (ou FastAPI) | 8080 | 4 | chain, guardian, PayPal, postgres, redis |
+| `chain` — AURIX node | Go, Cosmos SDK, CometBFT | 26657 (RPC), 9090 (gRPC) | 1-2 | — |
+| `gateway` — API Gateway | Java 21 / Spring Boot (or FastAPI) | 8080 | 4 | chain, guardian, PayPal, postgres, redis |
 | `guardian` — Neural Guardian | Python, FastAPI | 8000 | 3 | — |
-| `indexer` — Indexeur | Go ou Python | — | — | chain, postgres |
-| `web` — Wallet & explorateur | TypeScript, AG Grid | 3000 | — | gateway |
+| `indexer` — Indexer | Go or Python | — | — | chain, postgres |
+| `web` — Wallet & explorer | TypeScript, AG Grid | 3000 | — | gateway |
 | `postgres` / `redis` | — | 5432 / 6379 | — | — |
 
 ```mermaid
@@ -17,30 +17,30 @@ flowchart TB
     gateway -->|gRPC / broadcast Tx| chain
     gateway -->|POST /v1/risk/score| guardian
     gateway -->|Orders API| paypal[(PayPal Sandbox)]
-    paypal -->|webhook signé| gateway
-    chain -->|événements| indexer
+    paypal -->|signed webhook| gateway
+    chain -->|events| indexer
     indexer --> postgres[(PostgreSQL)]
-    gateway -->|lecture| postgres
+    gateway -->|read| postgres
     gateway --> redis[(Redis)]
 ```
 
 ---
 
-## 1. Service `chain` — Noeud AURIX
+## 1. `chain` service — AURIX node
 
-**Responsabilité** : source de vérité unique des soldes et des séquestres.
+**Responsibility**: single source of truth for balances and escrows.
 
-### Modules et messages
+### Modules and messages
 
-| Module | Message | Préconditions | Effet |
+| Module | Message | Preconditions | Effect |
 | --- | --- | --- | --- |
-| `x/aurixbank` | `MsgSend` | signature valide, nonce attendu, solde ≥ montant + frais | Débit/crédit, frais prélevés, nonce +1 |
-| `x/smartmoney` | `MsgCreateEscrow` | solde suffisant, échéance > hauteur actuelle | Fonds verrouillés, état `LOCKED` |
-| `x/smartmoney` | `MsgReleaseEscrow` | état `LOCKED`, signataire = émetteur ou arbitre | Fonds → bénéficiaire, état `RELEASED` |
-| `x/smartmoney` | `MsgRefundEscrow` | état `LOCKED`, hauteur ≥ échéance (ou annulation autorisée) | Fonds → émetteur, état `REFUNDED` |
-| `x/smartmoney` | `MsgAnchorProof` | signataire = gateway autorisée, hash unique | Preuve enregistrée, **aucun AUR créé** |
+| `x/aurixbank` | `MsgSend` | valid signature, expected nonce, balance ≥ amount + fees | Debit/credit, fees charged, nonce +1 |
+| `x/smartmoney` | `MsgCreateEscrow` | sufficient balance, deadline > current height | Funds locked, `LOCKED` state |
+| `x/smartmoney` | `MsgReleaseEscrow` | `LOCKED` state, signer = sender or arbiter | Funds → recipient, `RELEASED` state |
+| `x/smartmoney` | `MsgRefundEscrow` | `LOCKED` state, height ≥ deadline (or authorised cancellation) | Funds → sender, `REFUNDED` state |
+| `x/smartmoney` | `MsgAnchorProof` | signer = authorised gateway, unique hash | Proof recorded, **no AUR created** |
 
-### Modèle d'état
+### State model
 
 ```mermaid
 classDiagram
@@ -70,22 +70,22 @@ classDiagram
         +int64 height
         +string submitter
     }
-    Account "1" --> "*" Escrow : émet
+    Account "1" --> "*" Escrow : creates
     Escrow --> EscrowStatus
 ```
 
 ---
 
-## 2. Service `gateway` — API Gateway / orchestration
+## 2. `gateway` service — API Gateway / orchestration
 
-**Responsabilité** : point d'entrée unique ; orchestre IA, PayPal et chaîne. Ne détient **aucune** autorité sur les soldes.
+**Responsibility**: single entry point; orchestrates AI, PayPal and chain. Holds **no** authority over balances.
 
-### Composants internes
+### Internal components
 
 ```mermaid
 flowchart LR
     subgraph gateway
-        C[Controllers REST] --> WS[WalletService]
+        C[REST Controllers] --> WS[WalletService]
         C --> TS[TransferService]
         C --> ES[EscrowService]
         C --> PS[PaymentService]
@@ -105,7 +105,7 @@ flowchart LR
 
 ### Endpoints
 
-| Méthode | Chemin | Service interne | Story |
+| Method | Path | Internal service | Story |
 | --- | --- | --- | --- |
 | POST | `/api/wallets` | WalletService | US-02 |
 | GET | `/api/wallets/{addr}` | WalletService | US-03 |
@@ -118,64 +118,64 @@ flowchart LR
 | POST | `/api/paypal/webhook` | WebhookHandler | US-13, US-14 |
 | GET | `/api/explorer/blocks`, `/api/explorer/txs` | ReadRepository | US-15 |
 
-### Cycle de vie d'une commande PayPal
+### PayPal order lifecycle
 
 ```mermaid
 stateDiagram-v2
     [*] --> CREATED: POST /orders
-    CREATED --> SCORED: score Guardian reçu
-    CREATED --> SCORED: Guardian indisponible (score null)
-    SCORED --> APPROVED: approbation humaine
-    SCORED --> CANCELLED: annulation
-    APPROVED --> CAPTURED: capture PayPal
-    CAPTURED --> CONFIRMED: webhook signé vérifié
-    CONFIRMED --> ANCHORED: MsgAnchorProof inclus dans un bloc
+    CREATED --> SCORED: Guardian score received
+    CREATED --> SCORED: Guardian unavailable (null score)
+    SCORED --> APPROVED: human approval
+    SCORED --> CANCELLED: cancellation
+    APPROVED --> CAPTURED: PayPal capture
+    CAPTURED --> CONFIRMED: signed webhook verified
+    CONFIRMED --> ANCHORED: MsgAnchorProof included in a block
     ANCHORED --> [*]
     CANCELLED --> [*]
 ```
 
 ---
 
-## 3. Service `guardian` — Neural Guardian
+## 3. `guardian` service — Neural Guardian
 
-**Responsabilité** : renvoyer un score de risque **consultatif** et ses motifs. Aucun chemin d'écriture vers la chaîne.
+**Responsibility**: return an **advisory** risk score and its reasons. No write path to the chain.
 
 ```mermaid
 flowchart LR
-    REQ[Requête JSON] --> FE[Feature engineering<br/>montant vs historique,<br/>nouveau destinataire,<br/>fréquence, heure]
-    FE --> M[Modèle LightGBM]
+    REQ[JSON request] --> FE[Feature engineering<br/>amount vs history,<br/>new recipient,<br/>frequency, time of day]
+    FE --> M[LightGBM model]
     M --> S[Score 0..1]
     M --> X[SHAP]
-    X --> R[Motifs lisibles]
-    S --> L[Niveau low/medium/high]
-    L --> RESP[Réponse<br/>advisory_only = true]
+    X --> R[Readable reasons]
+    S --> L[Level low/medium/high]
+    L --> RESP[Response<br/>advisory_only = true]
     R --> RESP
 ```
 
-| Élément | Valeur |
+| Item | Value |
 | --- | --- |
-| Endpoint | `POST /v1/risk/score`, `GET /health` |
-| Modèle V1 | LightGBM + SHAP |
-| Seuils [Proposition] | low < 0,4 ≤ medium < 0,7 ≤ high |
-| Données d'entraînement | Jeu synthétique généré (à documenter) |
-| Indisponibilité | La gateway affiche « analyse indisponible » et n'empêche rien |
+| Endpoints | `POST /v1/risk/score`, `GET /health` |
+| V1 model | LightGBM + SHAP |
+| Thresholds [Proposal] | low < 0.4 ≤ medium < 0.7 ≤ high |
+| Training data | Generated synthetic dataset (to be documented) |
+| Unavailability | The gateway shows "analysis unavailable" and blocks nothing |
 
 ---
 
-## 4. Service `indexer`
+## 4. `indexer` service
 
-**Responsabilité** : s'abonner aux événements de blocs et alimenter PostgreSQL (lecture seule pour les soldes).
+**Responsibility**: subscribe to block events and feed PostgreSQL (read-only for balances).
 
-### Modèle de données
+### Data model
 
 ```mermaid
 erDiagram
-    BLOCKS ||--o{ TXS : contient
-    TXS ||--o| ESCROWS : "crée / modifie"
-    PAYPAL_ORDERS ||--o{ WEBHOOK_EVENTS : reçoit
-    PAYPAL_ORDERS ||--o| RISK_SCORES : évaluée
-    TXS ||--o| RISK_SCORES : évaluée
-    PAYPAL_ORDERS ||--o| TXS : "ancrée par"
+    BLOCKS ||--o{ TXS : contains
+    TXS ||--o| ESCROWS : "creates / updates"
+    PAYPAL_ORDERS ||--o{ WEBHOOK_EVENTS : receives
+    PAYPAL_ORDERS ||--o| RISK_SCORES : "scored by"
+    TXS ||--o| RISK_SCORES : "scored by"
+    PAYPAL_ORDERS ||--o| TXS : "anchored by"
 
     BLOCKS { bigint height PK; text hash; timestamp time }
     TXS { text hash PK; bigint height FK; text type; text sender; text recipient; numeric amount; text status }
@@ -187,15 +187,15 @@ erDiagram
 
 ---
 
-## 5. Service `web`
+## 5. `web` service
 
-| Écran | Données | Source |
+| Screen | Data | Source |
 | --- | --- | --- |
-| Wallet | Adresse, solde AUR, solde USD Sandbox (séparés) | gateway → chain |
-| Transfert | Formulaire + alerte Guardian + confirmation | gateway |
-| Smart Money | Liste et actions sur séquestres | gateway |
-| Paiement PayPal | Commande, score, bouton d'approbation | gateway |
-| Explorateur | Blocs, transactions (AG Grid) | gateway → postgres |
+| Wallet | Address, AUR balance, Sandbox USD balance (kept separate) | gateway → chain |
+| Transfer | Form + Guardian alert + confirmation | gateway |
+| Smart Money | Escrow list and actions | gateway |
+| PayPal payment | Order, score, approve button | gateway |
+| Explorer | Blocks, transactions (AG Grid) | gateway → postgres |
 
 ---
 
@@ -203,13 +203,13 @@ erDiagram
 
 | # | Invariant | Service | Test |
 | --- | --- | --- | --- |
-| 1 | L'offre totale ne change que par l'émission prévue | chain | unitaire |
-| 2 | Σ fonds verrouillés = Σ séquestres `LOCKED` | chain | unitaire |
-| 3 | Pas de double libération ni de libération après remboursement | chain | unitaire |
-| 4 | Nonce strictement croissant ; rejeu refusé | chain | unitaire |
-| 5 | Solde jamais négatif | chain | propriété |
-| 6 | Webhook rejoué sans effet | gateway | intégration |
-| 7 | Webhook à signature invalide rejeté | gateway | intégration |
-| 8 | Aucune capture sans approbation humaine | gateway | intégration |
-| 9 | Guardian ne modifie aucune transaction | gateway + guardian | intégration |
-| 10 | Sans PayPal, transferts et séquestres fonctionnent | tous | bout en bout |
+| 1 | Total supply changes only through planned issuance | chain | unit |
+| 2 | Σ locked funds = Σ `LOCKED` escrows | chain | unit |
+| 3 | No double release, no release after refund | chain | unit |
+| 4 | Nonce strictly increasing; replay rejected | chain | unit |
+| 5 | Balance never negative | chain | property |
+| 6 | Replayed webhook has no effect | gateway | integration |
+| 7 | Webhook with invalid signature rejected | gateway | integration |
+| 8 | No capture without human approval | gateway | integration |
+| 9 | Guardian modifies no transaction | gateway + guardian | integration |
+| 10 | Without PayPal, transfers and escrows still work | all | end-to-end |

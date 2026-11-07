@@ -1,93 +1,93 @@
 # AURIX — Independent Intelligent Monetary Protocol
 
 > **Programmable Value, Verifiable Trust.**
-> Projet présenté au **PayPal AI Hackathon 2026** — V1 testnet.
+> Project submitted to the **PayPal AI Hackathon 2026** — V1 testnet.
 
-AURIX est un protocole monétaire testnet où une IA évalue un paiement **avant** sa confirmation, où les conditions de paiement sont exécutées par le protocole (séquestre), et où **PayPal Sandbox** sert de passerelle vers l'économie réelle sans jamais se substituer à la monnaie native **AUR**.
+AURIX is a testnet monetary protocol where an AI assesses a payment **before** it is confirmed, where payment conditions are enforced by the protocol (escrow), and where **PayPal Sandbox** acts as a bridge to the real economy without ever replacing the native currency **AUR**.
 
-**Principe clé : l'IA conseille, le protocole décide, l'humain approuve.**
+**Core principle: the AI advises, the protocol decides, the human approves.**
 
 ---
 
-## Sommaire
+## Table of contents
 
-- [Fonctionnalités V1](#fonctionnalités-v1)
+- [V1 features](#v1-features)
 - [Architecture](#architecture)
-- [Stack technique](#stack-technique)
-- [Structure du dépôt](#structure-du-dépôt)
-- [Démarrage rapide](#démarrage-rapide)
-- [Méthode de travail : Scrum](#méthode-de-travail--scrum)
+- [Tech stack](#tech-stack)
+- [Repository layout](#repository-layout)
+- [Quick start](#quick-start)
+- [Way of working: Scrum](#way-of-working-scrum)
 - [Documentation](#documentation)
-- [Sécurité](#sécurité)
-- [Limites et périmètre](#limites-et-périmètre)
+- [Security](#security)
+- [Limitations and scope](#limitations-and-scope)
 
 ---
 
-## Fonctionnalités V1
+## V1 features
 
 | Module | Description |
 | --- | --- |
-| **AURIX Wallet & Transfer** | Création de wallet de démo, consultation du solde, envoi/réception d'AUR (consensus CometBFT) |
-| **Smart Money** | Séquestre à états finis : verrouillage, libération sur condition, remboursement à l'échéance |
-| **Neural Guardian** | Score de risque consultatif et motifs expliqués (SHAP) avant confirmation |
-| **Connecteur PayPal** | Paiement USD en Sandbox (Orders API), webhook signé et idempotent, preuve de suivi ancrée sur AURIX |
+| **AURIX Wallet & Transfer** | Create a demo wallet, check the balance, send/receive AUR (CometBFT consensus) |
+| **Smart Money** | Finite-state escrow: lock, release on condition, refund at deadline |
+| **Neural Guardian** | Advisory risk score with explained reasons (SHAP) before confirmation |
+| **PayPal connector** | USD payment in Sandbox (Orders API), signed and idempotent webhook, tracking proof anchored on AURIX |
 
 ## Architecture
 
-Quatre couches, le noyau ne dépendant d'aucune couche supérieure :
+Four layers; the core depends on no upper layer:
 
-| Couche | Contenu | Autorité |
+| Layer | Content | Authority |
 | --- | --- | --- |
-| 4. Connectivité externe | PayPal Sandbox | Aucune sur les soldes AUR |
-| 3. Intelligence | Neural Guardian | Consultative uniquement |
-| 2. Programmable Money | `x/smartmoney` (escrow) | Exécution déterministe |
-| 1. Protocole monétaire | AUR, CometBFT, `x/aurixbank` | Source de vérité des soldes |
+| 4. External connectivity | PayPal Sandbox | None over AUR balances |
+| 3. Intelligence | Neural Guardian | Advisory only |
+| 2. Programmable Money | `x/smartmoney` (escrow) | Deterministic execution |
+| 1. Monetary protocol | AUR, CometBFT, `x/aurixbank` | Source of truth for balances |
 
 ```mermaid
 flowchart LR
-    U[Wallet web] --> GW[API Gateway]
+    U[Web wallet] --> GW[API Gateway]
     GW --> AI[Neural Guardian]
     GW --> PP[PayPal Sandbox]
-    PP -- webhook signé --> GW
-    GW --> CHAIN[Noeud AURIX<br/>Cosmos SDK + CometBFT]
-    CHAIN --> IDX[Indexeur] --> PG[(PostgreSQL)]
+    PP -- signed webhook --> GW
+    GW --> CHAIN[AURIX node<br/>Cosmos SDK + CometBFT]
+    CHAIN --> IDX[Indexer] --> PG[(PostgreSQL)]
     GW --> PG
     GW --> RD[(Redis)]
 ```
 
-Détails complets : [`docs/architecture/services.md`](docs/architecture/services.md).
+Full details: [`docs/architecture/services.md`](docs/architecture/services.md).
 
-## Stack technique
+## Tech stack
 
-| Besoin | Technologie |
+| Need | Technology |
 | --- | --- |
 | Consensus | CometBFT (PoS + BFT) |
-| Noyau blockchain | Cosmos SDK + Go |
-| Passerelle | Java 21 + Spring Boot *(variante : FastAPI)* |
-| IA | Python, FastAPI, LightGBM + SHAP (PyTorch Geometric en feuille de route) |
-| Données | PostgreSQL (index), Redis (cache) |
-| Front | Wallet web + explorateur, AG Grid |
+| Blockchain core | Cosmos SDK + Go |
+| Gateway | Java 21 + Spring Boot *(alternative: FastAPI)* |
+| AI | Python, FastAPI, LightGBM + SHAP (PyTorch Geometric on the roadmap) |
+| Data | PostgreSQL (index), Redis (cache) |
+| Front end | Web wallet + explorer, AG Grid |
 | API | OpenAPI (APIMatic) |
-| Déploiement | Docker Compose, Render (Kubernetes en cible) |
+| Deployment | Docker Compose, Render (Kubernetes as target) |
 
-## Structure du dépôt
+## Repository layout
 
 ```
 aurix/
-├── chain/        # Noeud Cosmos SDK (x/aurixbank, x/smartmoney)
+├── chain/        # Cosmos SDK node (x/aurixbank, x/smartmoney)
 ├── gateway/      # API Gateway / orchestration
 ├── guardian/     # Neural Guardian (FastAPI)
-├── indexer/      # Blocs -> PostgreSQL
-├── web/          # Wallet, explorateur, AG Grid
+├── indexer/      # Blocks -> PostgreSQL
+├── web/          # Wallet, explorer, AG Grid
 ├── api/          # openapi.yaml
 ├── deploy/       # docker-compose.yml, render.yaml
-├── docs/         # Documentation (Scrum, modélisation, diagrammes)
+├── docs/         # Documentation (Scrum, modelling, diagrams)
 └── .env.example
 ```
 
-## Démarrage rapide
+## Quick start
 
-> Les services sont en cours de développement ; commandes cibles.
+> Services are under development; these are the target commands.
 
 ```bash
 cp .env.example .env
@@ -97,46 +97,46 @@ cp .env.example .env
 docker compose -f deploy/docker-compose.yml up --build
 ```
 
-Variables requises (jamais commitées) : `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`, `PAYPAL_BASE_URL`, `CHAIN_RPC_URL`, `GUARDIAN_URL`, `DATABASE_URL`, `REDIS_URL`.
+Required variables (never committed): `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`, `PAYPAL_BASE_URL`, `CHAIN_RPC_URL`, `GUARDIAN_URL`, `DATABASE_URL`, `REDIS_URL`.
 
-## Méthode de travail : Scrum
+## Way of working: Scrum
 
-Le projet est conduit en **Scrum avec des sprints d'un jour** (du 7 au 12 novembre 2026) :
+The project runs on **Scrum with one-day sprints** (November 7–12, 2026):
 
-| Sprint | Date | Objectif |
+| Sprint | Date | Goal |
 | --- | --- | --- |
-| S0 | 7 nov | Gel du périmètre, backlog, environnement |
-| S1 | 8 nov | Paiements : PayPal Orders + transfert AUR |
-| S2 | 9 nov | Smart Money + Neural Guardian |
-| S3 | 10 nov | Interface : wallet, explorateur, AG Grid |
-| S4 | 11 nov | Stabilisation, README, vidéo |
-| S5 | 12 nov | Soumission Devpost |
+| S0 | Nov 7 | Scope freeze, backlog, environment |
+| S1 | Nov 8 | Payments: PayPal Orders + AUR transfer |
+| S2 | Nov 9 | Smart Money + Neural Guardian |
+| S3 | Nov 10 | UI: wallet, explorer, AG Grid |
+| S4 | Nov 11 | Stabilisation, README, video |
+| S5 | Nov 12 | Devpost submission |
 
-Backlog, user stories, Definition of Done et cérémonies : [`docs/scrum/`](docs/scrum/README.md).
+Backlog, user stories, Definition of Done and ceremonies: [`docs/scrum/`](docs/scrum/README.md).
 
 ## Documentation
 
-| Document | Contenu |
+| Document | Content |
 | --- | --- |
-| [docs/README.md](docs/README.md) | Index de la documentation |
-| [docs/scrum/README.md](docs/scrum/README.md) | Organisation Scrum, rôles, cérémonies, DoR/DoD |
-| [docs/scrum/product-backlog.md](docs/scrum/product-backlog.md) | Épopées, user stories, priorités, estimations |
-| [docs/scrum/sprints.md](docs/scrum/sprints.md) | Planning détaillé des sprints et burndown |
-| [docs/architecture/services.md](docs/architecture/services.md) | Modélisation des services |
-| [docs/architecture/diagrams.md](docs/architecture/diagrams.md) | Cas d'utilisation, séquences, états, classes, ER, déploiement |
-| [AURIX_ARCHITECTURE_LOGICIELLE.md](AURIX_ARCHITECTURE_LOGICIELLE.md) | Architecture logicielle de référence |
-| [AURIX_dossier_hackathon.md](AURIX_dossier_hackathon.md) | Dossier de présentation hackathon |
+| [docs/README.md](docs/README.md) | Documentation index |
+| [docs/scrum/README.md](docs/scrum/README.md) | Scrum setup, roles, ceremonies, DoR/DoD |
+| [docs/scrum/product-backlog.md](docs/scrum/product-backlog.md) | Epics, user stories, priorities, estimates |
+| [docs/scrum/sprints.md](docs/scrum/sprints.md) | Detailed sprint plan and burndown |
+| [docs/architecture/services.md](docs/architecture/services.md) | Service modelling |
+| [docs/architecture/diagrams.md](docs/architecture/diagrams.md) | Use cases, sequences, states, classes, ER, deployment |
+| [AURIX_ARCHITECTURE_LOGICIELLE.md](AURIX_ARCHITECTURE_LOGICIELLE.md) | Reference software architecture (French) |
+| [AURIX_dossier_hackathon.md](AURIX_dossier_hackathon.md) | Hackathon pitch file (French) |
 
-## Sécurité
+## Security
 
-1. Le registre on-chain est la **seule source de vérité** des soldes AUR.
-2. L'IA ne peut ni valider, ni invalider, ni modifier une transaction.
-3. Les fonds USD (PayPal) ne deviennent jamais des AUR : seule une **preuve (hash)** est ancrée.
-4. Webhooks PayPal vérifiés par signature et idempotents.
-5. Aucun secret ni clé privée dans le dépôt.
+1. The on-chain ledger is the **single source of truth** for AUR balances.
+2. The AI can neither validate, invalidate nor modify a transaction.
+3. USD funds (PayPal) never become AUR: only a **proof (hash)** is anchored.
+4. PayPal webhooks are signature-verified and idempotent.
+5. No secrets or private keys in the repository.
 
-## Limites et périmètre
+## Limitations and scope
 
-- Testnet de démonstration : **AUR n'a aucune valeur monétaire réelle**.
-- Un testnet à validateur unique n'est pas multi-opérateurs.
-- Feuille de route : multi-validateurs, passerelles réglementées supplémentaires, GNN, Kubernetes.
+- Demonstration testnet: **AUR has no real monetary value**.
+- A single-validator testnet is not multi-operator.
+- Roadmap: multiple validators, additional regulated gateways, GNN, Kubernetes.

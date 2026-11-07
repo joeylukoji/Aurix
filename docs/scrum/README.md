@@ -1,61 +1,61 @@
-# Organisation Scrum
+# Scrum Setup
 
-## Cadre
+## Framework
 
-| Paramètre | Valeur |
+| Parameter | Value |
 | --- | --- |
-| Durée du projet | 7 → 12 novembre 2026 (6 jours) |
-| Durée d'un sprint | **1 jour** (sprints courts adaptés au hackathon) |
-| Nombre de sprints | 6 (S0 à S5) |
-| Unité d'estimation | Story points (suite de Fibonacci : 1, 2, 3, 5, 8, 13) |
-| Outil | GitHub Projects (colonnes : Backlog → To Do → In Progress → Review → Done) |
+| Project duration | November 7 → 12, 2026 (6 days) |
+| Sprint length | **1 day** (short sprints suited to a hackathon) |
+| Number of sprints | 6 (S0 to S5) |
+| Estimation unit | Story points (Fibonacci: 1, 2, 3, 5, 8, 13) |
+| Tool | GitHub Projects (columns: Backlog → To Do → In Progress → Review → Done) |
 
-## Rôles
+## Roles
 
-| Rôle | Responsabilités |
+| Role | Responsibilities |
 | --- | --- |
-| **Product Owner** | Porte la vision « l'IA conseille, le protocole décide, l'humain approuve » ; priorise le backlog selon les catégories de prix (priorité 1 : *Best Use of PayPal + AI*) |
-| **Scrum Master** | Anime les cérémonies, protège le périmètre gelé, lève les blocages (accès Sandbox, déploiement Render) |
-| **Équipe de développement** | Chaîne (Go), passerelle, Neural Guardian (Python), front (wallet/explorateur) |
+| **Product Owner** | Owns the vision "the AI advises, the protocol decides, the human approves"; prioritises the backlog by prize category (priority 1: *Best Use of PayPal + AI*) |
+| **Scrum Master** | Runs the ceremonies, protects the frozen scope, removes blockers (Sandbox access, Render deployment) |
+| **Development team** | Chain (Go), gateway, Neural Guardian (Python), front end (wallet/explorer) |
 
-## Cérémonies (format compressé, sprint d'un jour)
+## Ceremonies (compressed format, one-day sprint)
 
-| Cérémonie | Moment | Durée | Sortie |
+| Ceremony | When | Duration | Output |
 | --- | --- | --- | --- |
-| Sprint Planning | Début de journée | 30 min | Objectif du sprint + sprint backlog |
-| Daily Scrum | Mi-journée | 10 min | Blocages identifiés |
-| Sprint Review | Fin de journée | 20 min | Démo de l'incrément (enregistrée pour la vidéo) |
-| Rétrospective | Après la review | 10 min | 1 amélioration appliquée le lendemain |
-| Affinage du backlog | Continu | — | Stories prêtes (DoR) |
+| Sprint Planning | Start of day | 30 min | Sprint goal + sprint backlog |
+| Daily Scrum | Midday | 10 min | Blockers identified |
+| Sprint Review | End of day | 20 min | Increment demo (recorded for the video) |
+| Retrospective | After the review | 10 min | 1 improvement applied the next day |
+| Backlog refinement | Ongoing | — | Stories ready (DoR) |
 
 ```mermaid
 flowchart LR
     PB[Product Backlog] --> SP[Sprint Planning]
     SP --> SB[Sprint Backlog]
-    SB --> DEV[Développement<br/>1 jour]
+    SB --> DEV[Development<br/>1 day]
     DEV --> DS[Daily Scrum]
     DS --> DEV
-    DEV --> INC[Incrément]
+    DEV --> INC[Increment]
     INC --> SR[Sprint Review]
-    SR --> RE[Rétrospective]
+    SR --> RE[Retrospective]
     RE --> PB
 ```
 
 ## Definition of Ready (DoR)
 
-- La story suit le format « En tant que… je veux… afin de… ».
-- Les critères d'acceptation sont testables.
-- Les dépendances (service, clé Sandbox, endpoint) sont identifiées.
-- L'estimation est ≤ 8 points (sinon découper).
+- The story follows the "As a… I want… so that…" format.
+- Acceptance criteria are testable.
+- Dependencies (service, Sandbox key, endpoint) are identified.
+- Estimate is ≤ 8 points (otherwise split it).
 
 ## Definition of Done (DoD)
 
-- Code revu (pull request) et fusionné sur la branche principale.
-- Tests unitaires passants ; invariants concernés testés (voir [architecture/services.md](../architecture/services.md#invariants)).
-- Aucun secret commité ; variables ajoutées à `.env.example` sans valeur.
-- Endpoint documenté dans `api/openapi.yaml` le cas échéant.
-- Fonctionnalité démontrable dans Docker Compose.
+- Code reviewed (pull request) and merged into the main branch.
+- Unit tests pass; relevant invariants tested (see [architecture/services.md](../architecture/services.md#invariants)).
+- No secrets committed; new variables added to `.env.example` without values.
+- Endpoint documented in `api/openapi.yaml` where applicable.
+- Feature demonstrable in Docker Compose.
 
-## Gestion des risques du périmètre
+## Scope risk management
 
-Chaque sprint définit ce qui est **abandonné en premier** en cas de retard (voir [sprints.md](sprints.md)). Le noyau Cosmos SDK et le connecteur PayPal ne sont jamais sacrifiés : ils portent la démonstration.
+Each sprint defines what is **dropped first** if it runs late (see [sprints.md](sprints.md)). The Cosmos SDK core and the PayPal connector are never sacrificed: they carry the demo.
