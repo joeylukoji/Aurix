@@ -8,19 +8,23 @@ import logging
 import os
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
 
-from . import crypto
+from . import crypto, keys
 
 log = logging.getLogger("attestor")
 
 
 @dataclass
 class Config:
-    seed: str
+    seed: str = ""
+    mnemonic: str = ""
+    key_file: str = ""
+    aurix_env: str = ""
     chain_rest: str = "http://localhost:1317"
     chain_id: str = "aurix-testnet-1"
     paypal_base_url: str = "http://localhost:8090"
@@ -31,10 +35,10 @@ class Config:
 
     @classmethod
     def from_env(cls, env=os.environ) -> "Config":
-        seed = env.get("ATTESTOR_SEED", "")
-        if not seed:
-            raise SystemExit("ATTESTOR_SEED is required")
-        return cls(seed=seed,
+        return cls(seed=env.get("ATTESTOR_SEED", ""),
+                   mnemonic=env.get("ATTESTOR_MNEMONIC", ""),
+                   key_file=env.get("ATTESTOR_KEY_FILE", ""),
+                   aurix_env=env.get("AURIX_ENV", ""),
                    chain_rest=env.get("CHAIN_REST", cls.chain_rest),
                    chain_id=env.get("CHAIN_ID", cls.chain_id),
                    paypal_base_url=env.get("PAYPAL_BASE_URL", cls.paypal_base_url),
@@ -78,6 +82,18 @@ def proof_hash(order_id: str, capture_id: str) -> str:
     return hashlib.sha256(f"{order_id}|{capture_id}".encode()).hexdigest()
 
 
+def normalize_amount(value) -> str:
+    """Decimal string normalised to 2 places ("12.5" -> "12.50"); raises Refused if not a positive
+    amount with at most 2 decimals."""
+    try:
+        d = Decimal(str(value).strip())
+    except (InvalidOperation, ValueError):
+        raise Refused(f"invalid amount {value!r}") from None
+    if not d.is_finite() or d <= 0 or d != d.quantize(Decimal("0.01")):
+        raise Refused(f"invalid amount {value!r}")
+    return str(d.quantize(Decimal("0.01")))
+
+
 def verify_capture(proof: dict, cap: dict) -> None:
     """Raises Refused unless the PayPal capture backs this proof."""
     h, order_ref, cap_ref = proof.get("hash", ""), proof.get("external_ref", ""), proof.get("capture_ref", "")
@@ -85,11 +101,21 @@ def verify_capture(proof: dict, cap: dict) -> None:
         raise Refused(f"capture id {cap.get('id')!r} != capture_ref {cap_ref!r}")
     if cap.get("status") != "COMPLETED":
         raise Refused(f"capture status {cap.get('status')!r} is not COMPLETED")
+    p_amount, p_currency = (proof.get("amount") or "").strip(), (proof.get("currency") or "").strip()
+    if not p_amount or not p_currency:
+        raise Refused("proof has no amount/currency")
     try:
-        if float(cap["amount"]["value"]) <= 0:
-            raise ValueError
-    except (KeyError, TypeError, ValueError):
+        c_value, c_currency = cap["amount"]["value"], cap["amount"]["currency_code"]
+    except (KeyError, TypeError):
         raise Refused(f"capture amount invalid: {cap.get('amount')!r}") from None
+    try:
+        c_norm = normalize_amount(c_value)
+    except Refused:
+        raise Refused(f"capture amount invalid: {cap.get('amount')!r}") from None
+    if c_norm != normalize_amount(p_amount):
+        raise Refused(f"capture amount {c_value!r} != proof amount {p_amount!r}")
+    if c_currency != p_currency:
+        raise Refused(f"capture currency {c_currency!r} != proof currency {p_currency!r}")
     order_id = ((cap.get("supplementary_data") or {}).get("related_ids") or {}).get("order_id")
     # The gateway stores external_ref as "paypal:<order_id>"; accept both forms.
     if order_id is None or order_id not in (order_ref, order_ref.removeprefix("paypal:")):
@@ -102,7 +128,7 @@ class Attestor:
     def __init__(self, cfg: Config, transport: httpx.BaseTransport | None = None,
                  paypal_transport: httpx.BaseTransport | None = None):
         self.cfg = cfg
-        self.key = crypto.Key(cfg.seed)
+        self.key = keys.load_key(cfg.mnemonic, cfg.key_file, cfg.seed, cfg.aurix_env)
         self.address = self.key.address
         self.chain = httpx.Client(base_url=cfg.chain_rest, timeout=20, transport=transport)
         self.paypal = PayPal(cfg.paypal_base_url, cfg.paypal_client_id, cfg.paypal_secret,
@@ -136,7 +162,8 @@ class Attestor:
         if self._seq is None:
             self._seq = self.account()
         num, seq = self._seq
-        msg = crypto.msg_anchor_proof(self.address, proof["hash"], proof["external_ref"], proof["capture_ref"])
+        msg = crypto.msg_anchor_proof(self.address, proof["hash"], proof["external_ref"], proof["capture_ref"],
+                                     proof.get("amount", ""), proof.get("currency", ""))
         tx = crypto.build_tx(self.key, [msg], self.cfg.chain_id, num, seq)
         r = self.chain.post("/cosmos/tx/v1beta1/txs", json={"tx_bytes": base64.b64encode(tx).decode(),
                                                           "mode": "BROADCAST_MODE_SYNC"})

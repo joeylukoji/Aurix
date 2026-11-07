@@ -150,6 +150,23 @@ def test_get_capture_details(delivered):
     assert b["supplementary_data"]["related_ids"]["order_id"] == o["id"]
 
 
+def test_capture_amount_consistent_and_normalised(delivered):
+    h = token()
+    o = create(h, "12.5").json()
+    assert o["purchase_units"][0]["amount"] == {"currency_code": "USD", "value": "12.50"}
+    c.post(f"/sim/orders/{o['id']}/approve")
+    cap = c.post(f"/v2/checkout/orders/{o['id']}/capture", headers=h).json()["purchase_units"][0]
+    cap = cap["payments"]["captures"][0]
+    got = c.get(f"/v2/payments/captures/{cap['id']}", headers=h).json()
+    order = c.get(f"/v2/checkout/orders/{o['id']}", headers=h).json()
+    assert cap["amount"] == got["amount"] == order["purchase_units"][0]["amount"] == \
+        {"currency_code": "USD", "value": "12.50"}
+    assert wait_for(lambda: delivered)
+    assert delivered[0][0]["resource"]["amount"] == got["amount"]
+    for bad in ("1.005", "abc", "NaN"):
+        assert create(h, bad).status_code == 400
+
+
 def test_get_capture_requires_auth_and_404():
     h = token()
     assert c.get("/v2/payments/captures/NOPE", headers=h).status_code == 404

@@ -23,6 +23,7 @@ import html
 import hmac
 import json
 import os
+from decimal import Decimal, InvalidOperation
 import secrets
 import threading
 import time
@@ -121,9 +122,15 @@ async def create_order(request: Request, _: str = Depends(bearer),
         units = body.get("purchase_units") or []
         try:
             amount = units[0]["amount"]
-            if amount["currency_code"] != "USD" or float(amount["value"]) <= 0:
+            value = Decimal(str(amount["value"]))
+            if amount["currency_code"] != "USD" or not value.is_finite() or value <= 0 \
+                    or value != value.quantize(Decimal("0.01")):
                 raise ValueError
-        except (KeyError, IndexError, ValueError):
+            # PayPal echoes amounts with the currency's 2 decimals ("12.5" -> "12.50"); the capture and
+            # GET /v2/payments/captures return exactly this stored value (what attestors compare).
+            units = [dict(units[0], amount={"currency_code": amount["currency_code"],
+                                            "value": str(value.quantize(Decimal("0.01")))})]
+        except (KeyError, IndexError, ValueError, TypeError, InvalidOperation):
             paypal_error(400, "INVALID_REQUEST", "Invalid purchase_units amount", "INVALID_PARAMETER_VALUE")
         ctx = body.get("application_context") or {}
         ctx = ctx | ((body.get("payment_source") or {}).get("paypal") or {}).get("experience_context", {})
@@ -219,7 +226,7 @@ def capture(oid: str, _: str = Depends(bearer)):
             paypal_error(422, "UNPROCESSABLE_ENTITY",
                          "The instrument presented was either declined by the processor or bank, or it can't be "
                          "used for this payment.", "INSTRUMENT_DECLINED")
-        cap = {"id": secrets.token_hex(9).upper()[:17], "status": "COMPLETED", "amount": amount,
+        cap = {"id": secrets.token_hex(9).upper()[:17], "status": "COMPLETED", "amount": dict(amount),
                "final_capture": True, "create_time": now(),
                "supplementary_data": {"related_ids": {"order_id": oid}}}
         o["status"] = "COMPLETED"

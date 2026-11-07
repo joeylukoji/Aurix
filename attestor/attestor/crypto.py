@@ -1,6 +1,7 @@
 """secp256k1 keys + SIGN_MODE_DIRECT tx building (copied from gateway/app/crypto.py, trimmed).
 
-Private key = sha256(seed string); address = bech32("aur", ripemd160(sha256(compressed pubkey))).
+Keys: BIP39 mnemonic -> BIP32 m/44'/118'/0'/0/0 (cosmos standard), raw 32-byte hex key file, or the dev-only
+seed derivation sha256(seed string). Address = bech32("aur", ripemd160(sha256(compressed pubkey))).
 """
 from __future__ import annotations
 
@@ -59,8 +60,14 @@ def bech32_encode(hrp: str, data: bytes) -> str:
 
 
 class Key:
-    def __init__(self, seed: str):
-        d = int.from_bytes(hashlib.sha256(seed.encode()).digest(), "big")
+    def __init__(self, seed: str | None = None, *, private_key: bytes | None = None):
+        if private_key is None:
+            if seed is None:
+                raise ValueError("seed or private_key required")
+            private_key = hashlib.sha256(seed.encode()).digest()
+        d = int.from_bytes(private_key, "big")
+        if not 0 < d < _N:
+            raise ValueError("private key out of range")
         self._sk = ec.derive_private_key(d, ec.SECP256K1())
         self.pubkey = self._sk.public_key().public_bytes(Encoding.X962, PublicFormat.CompressedPoint)
         self.address = bech32_encode(PREFIX, RIPEMD160.new(hashlib.sha256(self.pubkey).digest()).digest())
@@ -84,10 +91,12 @@ class Key:
             return False
 
 
-def msg_anchor_proof(signer: str, hash_hex: str, external_ref: str, capture_ref: str) -> bytes:
-    """Any-wrapped MsgAnchorProof {signer=1, hash=2, external_ref=3, capture_ref=4}."""
+def msg_anchor_proof(signer: str, hash_hex: str, external_ref: str, capture_ref: str,
+                     amount: str = "", currency: str = "") -> bytes:
+    """Any-wrapped MsgAnchorProof {signer=1, hash=2, external_ref=3, capture_ref=4, amount=5, currency=6}."""
     return proto.any_(ANCHOR_TYPE_URL, proto.string(1, signer) + proto.string(2, hash_hex)
-                      + proto.string(3, external_ref) + proto.string(4, capture_ref))
+                      + proto.string(3, external_ref) + proto.string(4, capture_ref)
+                      + proto.string(5, amount) + proto.string(6, currency))
 
 
 def sign_doc(body: bytes, auth_info: bytes, chain_id: str, account_number: int) -> bytes:
