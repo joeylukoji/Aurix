@@ -165,7 +165,51 @@ async function refreshExplorer() {
   const [blocks, txs] = await Promise.all([api("/api/explorer/blocks?limit=200"), api("/api/explorer/txs?limit=100")]);
   set("blocksGrid", blocks);
   set("txsGrid", txs);
+  $("kTxs").textContent = txs.length.toLocaleString();
+  refreshKpis();
 }
+async function refreshKpis() {
+  const [st, escs, orders] = await Promise.all([api("/api/chain/status").catch(() => null),
+    api("/api/escrows").catch(() => null), api("/api/paypal/orders").catch(() => null)]);
+  if (st) $("kHeight").textContent = "#" + st.height.toLocaleString();
+  if (escs) { const l = escs.filter((e) => e.status === "LOCKED");
+    $("kEsc").textContent = l.length; $("kEscAur").textContent = fmt(l.reduce((a, e) => a + Number(e.amount || 0), 0)) + " AUR locked"; }
+  if (orders) $("kProofs").textContent = orders.filter((o) => o.status === "ANCHORED").length;
+}
+const lnk = (q, label) => q == null || q === "" ? "–" : `<a class="lnk" data-q="${esc(q)}" title="${esc(q)}">${esc(label ?? q)}</a>`;
+const dl = (pairs) => `<dl>${pairs.filter(([, v]) => v != null && v !== "").map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`;
+const txLine = (t) => `<li>${lnk(t.hash, short(t.hash))} · ${esc(t.type)}${t.amount ? " · " + fmt(t.amount) + " AUR" : ""} · block ${lnk(t.height)}</li>`;
+const txList = (rows) => rows?.length ? `<ul>${rows.slice(0, 25).map(txLine).join("")}</ul>` : `<p class="muted">No transactions.</p>`;
+function renderDetail(r) {
+  const card = (title, body) => `<div class="detail"><h3><span>${title}</span><button class="small" id="detailClose">Close</button></h3>${body}</div>`;
+  if (r.kind === "tx") { const t = r.tx; return card("Transaction", dl([["Hash", `<code>${esc(t.hash)}</code>`], ["Block", lnk(t.height)], ["Type", esc(t.type)],
+    ["From", lnk(t.from)], ["To", lnk(t.to)], ["Amount", t.amount ? fmt(t.amount) + " AUR" : ""], ["Escrow", t.escrow_id != null ? lnk(t.escrow_id, "#" + t.escrow_id) : ""],
+    ["Result", t.code ? "failed: " + esc(t.log) : "ok"]])); }
+  if (r.kind === "address") return card("Address", dl([["Address", `<code>${esc(r.address)}</code>`], ["Balance", fmt(r.balance) + " AUR"],
+    ["Transactions", (r.history || []).length]]) + txList(r.history));
+  if (r.kind === "block") { const b = r.block; return card(`Block #${esc(b.height)}`, dl([["Time", esc(new Date(b.time).toLocaleString())],
+    ["Hash", `<code>${esc(b.hash)}</code>`], ["Validator", `<code>${esc(b.proposer)}</code>`], ["Txs", esc(b.num_txs)]]) + txList(b.txs)); }
+  if (r.kind === "escrow") { const e = r.escrow; return card(`Escrow #${esc(e.id)}`, dl(Object.entries(e).map(([k, v]) =>
+    [esc(k), k === "amount" ? fmt(v) + " AUR" : /^aur1/.test(String(v)) ? lnk(v) : esc(v)]))); }
+  if (r.kind === "proof") { const p = r.proof; return card("PayPal proof", dl([["Proof hash", `<code>${esc(p.hash)}</code>`], ["PayPal ref", esc(p.external_ref)],
+    ["Block", lnk(p.height)], ["Submitter", lnk(p.submitter)]]) + `<p class="muted">Only this hash is on-chain; USD stays on PayPal.</p>`); }
+  return card("Result", `<pre>${esc(JSON.stringify(r, null, 2))}</pre>`);
+}
+async function search(q) {
+  q = String(q).trim(); if (!q) return;
+  $("searchQ").value = q;
+  const d = $("detail");
+  d.innerHTML = `<p class="muted">Searching…</p>`;
+  try {
+    const r = await fetch(`/api/explorer/search?q=${encodeURIComponent(q)}`);
+    if (r.status === 404) { d.innerHTML = `<div class="detail"><p class="muted" style="margin:0">Nothing found for <code>${esc(q)}</code>.</p></div>`; return; }
+    if (!r.ok) throw new Error(r.statusText);
+    d.innerHTML = renderDetail(await r.json());
+  } catch (e) { d.innerHTML = `<div class="detail"><p class="muted" style="margin:0">Search unavailable: ${esc(e.message)}</p></div>`; }
+  $("detailClose")?.addEventListener("click", () => (d.innerHTML = ""));
+  d.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+window.explorerSearch = search;
 
 async function refreshStatus() {
   try {
@@ -186,12 +230,18 @@ function init() {
   grid("ordersGrid", [{ field: "order_id" }, { field: "amount_usd", headerName: "USD" }, { field: "status" },
     { field: "risk_level", headerName: "Risk" }, { field: "anchor_height", headerName: "Proof block" },
     { field: "proof_hash", valueFormatter: (p) => short(p.value) }, { field: "simulated", headerName: "Rail", valueFormatter: (p) => (p.value ? "simulator" : "sandbox") }]);
-  grid("blocksGrid", [{ field: "height", maxWidth: 110 }, { field: "time", valueFormatter: (p) => new Date(p.value).toLocaleTimeString() },
+  const clickQ = (field) => ({ cellClass: "lnk-cell", onCellClicked: (p) => p.value != null && search(p.value),
+    cellRenderer: (p) => p.value == null ? "" : `<a class="lnk">${esc(field === "height" ? p.value : short(p.value))}</a>` });
+  grid("blocksGrid", [{ field: "height", maxWidth: 110, ...clickQ("height") }, { field: "time", valueFormatter: (p) => new Date(p.value).toLocaleTimeString() },
     { field: "num_txs", headerName: "Txs", maxWidth: 90 }, { field: "hash", valueFormatter: (p) => short(p.value) },
     { field: "proposer", headerName: "Validator", valueFormatter: (p) => short(p.value) }]);
-  grid("txsGrid", [{ field: "height", headerName: "Block", maxWidth: 100 }, { field: "type" },
-    { field: "from", valueFormatter: (p) => short(p.value) }, { field: "to", valueFormatter: (p) => short(p.value) }, amountCol,
-    { field: "escrow_id", headerName: "Escrow", maxWidth: 100 }, statusCol, { field: "hash", valueFormatter: (p) => short(p.value) }]);
+  grid("txsGrid", [{ field: "height", headerName: "Block", maxWidth: 100, ...clickQ("height") }, { field: "type" },
+    { field: "from", ...clickQ() }, { field: "to", ...clickQ() }, amountCol,
+    { field: "escrow_id", headerName: "Escrow", maxWidth: 100 }, statusCol, { field: "hash", ...clickQ() }]);
+  $("searchForm").onsubmit = (e) => { e.preventDefault(); search($("searchQ").value); };
+  $("detail").addEventListener("click", (e) => { const a = e.target.closest("a[data-q]"); if (a) search(a.dataset.q); });
+  $("copyAddr").onclick = async () => { try { await navigator.clipboard.writeText(wallet.address); toast("Address copied"); }
+    catch { prompt("Copy your address:", wallet.address); } };
 
   document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => {
     document.querySelectorAll("nav button, .tab").forEach((x) => x.classList.remove("active"));

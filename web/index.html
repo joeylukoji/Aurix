@@ -32,7 +32,7 @@
       <div id="noWallet"><button id="createWallet" class="primary">Create demo wallet</button>
         <details><summary>Import a seed</summary><input id="importSeed" placeholder="64 hex chars"><button id="doImport">Import</button></details></div>
       <div id="hasWallet" hidden>
-        <div class="kv"><span>Address</span><code id="addr"></code></div>
+        <div class="kv"><span>Address</span><code id="addr"></code><button id="copyAddr" class="small">Copy</button></div>
         <div class="balances">
           <div class="bal aur"><label>AUR balance (on-chain)</label><strong id="balAur">–</strong></div>
           <div class="bal usd"><label>USD (PayPal Sandbox)</label><strong>separate rail</strong></div>
@@ -82,6 +82,16 @@
   </section>
 
   <section id="explorer" class="tab">
+    <div class="kpis">
+      <div class="kpi"><label>Block height</label><strong id="kHeight">–</strong></div>
+      <div class="kpi"><label>Txs shown</label><strong id="kTxs">–</strong></div>
+      <div class="kpi"><label>Locked escrows</label><strong id="kEsc">–</strong><small id="kEscAur"></small></div>
+      <div class="kpi"><label>PayPal proofs anchored</label><strong id="kProofs">–</strong></div>
+    </div>
+    <div class="card">
+      <form id="searchForm" class="search"><input id="searchQ" placeholder="Search tx hash, aur1… address, block height, escrow id or proof hash"><button class="primary">Search</button></form>
+      <div id="detail"></div>
+    </div>
     <div class="card"><h2>Blocks</h2><div id="blocksGrid" class="grid ag-theme-quartz-auto-dark"></div></div>
     <div class="card"><h2>Transactions</h2><div id="txsGrid" class="grid tall ag-theme-quartz-auto-dark"></div></div>
   </section>

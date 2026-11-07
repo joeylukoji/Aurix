@@ -33,3 +33,16 @@ code{word-break:break-all;font-size:13px}
 #toast.err{border-color:var(--red)}
 details{margin-top:8px;color:var(--muted)}
 .steps{margin:12px 0;padding-left:20px}.steps a{color:var(--blue)}
+
+button.small{padding:2px 10px;font-size:12px;margin:0}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;min-width:0}
+.kpi label{margin:0;font-size:12px}.kpi strong{display:block;font-size:24px;font-variant-numeric:tabular-nums;line-height:1.2}.kpi small{color:var(--muted);font-size:12px}
+.search{display:flex;gap:8px}.search input{margin:0;flex:1;min-width:0}.search button{margin:0}
+.detail{border:1px solid var(--line);border-left:4px solid var(--blue);border-radius:8px;padding:12px;margin-top:12px;overflow-wrap:anywhere}
+.detail h3{margin:0 0 8px;display:flex;justify-content:space-between;gap:8px}.detail h3 button{margin:0}
+.detail dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:0}.detail dt{color:var(--muted)}.detail dd{margin:0;min-width:0}
+.detail ul{padding-left:18px;margin:6px 0}
+a.lnk{color:var(--blue);cursor:pointer;text-decoration:none}a.lnk:hover{text-decoration:underline}
+body{overflow-x:hidden}main{min-width:0}
+@media (max-width:480px){.detail dl{grid-template-columns:1fr}.detail dt{margin-top:6px}header .tag{display:none}.grid{height:320px}}
