@@ -44,7 +44,7 @@
     }
   }
 
-  // Builds and signs a TxRaw from the gateway's /api/txs/prepare response.
+  // Builds and signs a TxRaw from {chain_id, account_number, sequence, fee, msg} (read from the chain by chain.js).
   function signTx(key, prep) {
     const body = concat(msg(1, encodeMsg(prep.msg, key.address)));
     const pubAny = any("/cosmos.crypto.secp256k1.PubKey", bytes(1, key.pub));

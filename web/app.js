@@ -1,5 +1,5 @@
 // AURIX web wallet. Keys live in this browser only; every AUR movement is signed here.
-const API = "";
+const C = window.AurixChain;
 const MICRO = 1_000_000;
 const $ = (id) => document.getElementById(id);
 const hex = (u8) => [...u8].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -7,13 +7,8 @@ const fmt = (u) => (u / MICRO).toLocaleString(undefined, { maximumFractionDigits
 const short = (a) => (a && a.length > 16 ? a.slice(0, 10) + "…" + a.slice(-6) : a || "");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-async function api(path, opts = {}) {
-  const r = await fetch(API + path, { headers: { "Content-Type": "application/json" }, ...opts,
-    body: opts.body ? JSON.stringify(opts.body) : undefined });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.detail || data.error || data.log || r.statusText);
-  return data;
-}
+// Gateway API (optional: PayPal and Guardian). Chain reads/writes go through AurixChain (chain.js).
+const api = (path, opts) => C.gw(path, opts);
 
 function toast(msg, err = false) {
   const t = $("toast");
@@ -42,8 +37,8 @@ async function setWallet(seed) {
 let txQueue = Promise.resolve();
 function signAndSend(msg) {
   const run = txQueue.then(async () => {
-    const p = await api("/api/txs/prepare", { method: "POST", body: { from: wallet.address, msg } });
-    return api("/api/txs", { method: "POST", body: { tx_bytes: AurixTx.signTx(wallet, p) } });
+    const p = await C.prepare(wallet.address, msg); // account number, sequence, chain id from the chain
+    return C.broadcast(AurixTx.signTx(wallet, p));
   });
   txQueue = run.catch(() => {});
   return run;
@@ -51,7 +46,7 @@ function signAndSend(msg) {
 
 function riskHtml(risk, status) {
   if (!risk) return `<div class="risk unavailable"><div class="score">Analysis unavailable</div>
-    <p class="muted">Neural Guardian could not be reached. You can still decide.</p></div>`;
+    <p class="muted">${C.gatewayOk ? "Neural Guardian could not be reached." : "No gateway configured, so Neural Guardian scoring is off."} You can still decide.</p></div>`;
   const reasons = risk.reasons.map((r) => `<li>${esc(r.text)} <span class="muted">(+${r.impact})</span></li>`).join("");
   return `<div class="risk ${risk.level}"><div class="score">Risk ${Math.round(risk.risk_score * 100)}% · ${risk.level}</div>
     ${reasons ? `<ul>${reasons}</ul>` : `<p class="muted">No risk factor stands out.</p>`}
@@ -71,9 +66,11 @@ const statusCol = { field: "code", headerName: "Result", valueFormatter: (p) => 
 // ---------- wallet ----------
 async function refreshWallet() {
   if (!wallet) return;
-  const w = await api(`/api/wallets/${wallet.address}`);
+  const addr = wallet.address;
+  const w = await C.account(addr);
+  if (addr !== wallet?.address) return;
   $("balAur").textContent = fmt(w.balance) + " AUR";
-  set("historyGrid", w.history);
+  set("historyGrid", await C.history(addr));
 }
 
 // ---------- send ----------
@@ -82,8 +79,8 @@ async function checkSend() {
   if (!wallet) throw new Error("Create a wallet first");
   if (!AurixTx.validAddress(to) || !(amt > 0)) throw new Error("Enter a valid aur1… recipient and amount");
   const msg = { type: "MsgSend", to, amount: amt };
-  const p = await api("/api/txs/prepare", { method: "POST", body: { from: wallet.address, msg } });
-  $("sendRisk").innerHTML = riskHtml(p.risk, p.risk_status) +
+  const p = await C.prepare(wallet.address, msg);
+  $("sendRisk").innerHTML = riskHtml(await C.risk(wallet.address, msg, p.balance)) +
     `<button id="sendGo" class="primary">I approve: send ${fmt(amt)} AUR</button><button id="sendCancel">Cancel</button>`;
   $("sendCancel").onclick = () => ($("sendRisk").innerHTML = "");
   $("sendGo").onclick = (e) => busy(e.target, async () => {
@@ -94,7 +91,7 @@ async function checkSend() {
 
 // ---------- escrow ----------
 async function refreshEscrows() {
-  const list = await api("/api/escrows");
+  const list = await C.escrows();
   set("escrowGrid", list.reverse());
 }
 async function checkEscrow() {
@@ -102,10 +99,10 @@ async function checkEscrow() {
   const to = $("escTo").value.trim(), arb = $("escArb").value.trim();
   const amt = Math.round(parseFloat($("escAmt").value) * MICRO), blocks = parseInt($("escBlocks").value, 10);
   if (!AurixTx.validAddress(to) || (arb && !AurixTx.validAddress(arb)) || !(amt > 0) || !(blocks > 0)) throw new Error("Check addresses, amount and deadline");
-  const { height } = await api("/api/chain/status");
+  const { height } = await C.status();
   const msg = { type: "MsgCreateEscrow", to, amount: amt, deadline_height: height + blocks, ...(arb ? { arbiter: arb } : {}) };
-  const p = await api("/api/txs/prepare", { method: "POST", body: { from: wallet.address, msg } });
-  $("escRisk").innerHTML = riskHtml(p.risk, p.risk_status) +
+  const p = await C.prepare(wallet.address, msg);
+  $("escRisk").innerHTML = riskHtml(await C.risk(wallet.address, msg, p.balance)) +
     `<button id="escGo" class="primary">I approve: lock ${fmt(amt)} AUR until block ${msg.deadline_height}</button>`;
   $("escGo").onclick = (e) => busy(e.target, async () => {
     const r = await signAndSend(msg);
@@ -121,11 +118,24 @@ async function doEscrowAction(type, id) {
 window.escrowAction = (type, id, btn) => busy(btn, () => doEscrowAction(type, id));
 
 // ---------- PayPal ----------
-async function refreshOrders() { set("ordersGrid", await api("/api/paypal/orders")); }
-async function waitAnchored(oid, tries = 40) {
+async function refreshOrders() { if (C.gatewayOk) set("ordersGrid", await api("/api/paypal/orders")); }
+// Attestation progress {count, threshold, signers}: from the gateway's order, else from the chain proof.
+async function attestationsOf(o) {
+  if (o.attestations && typeof o.attestations === "object") return o.attestations;
+  if (!o.proof_hash) return null;
+  try { const p = await C.proof(o.proof_hash); return { count: p.attestations.length, threshold: p.threshold, signers: p.attestations, status: p.status }; }
+  catch { return null; }
+}
+const attText = (a) => a ? `attestations ${a.count}/${a.threshold}` : "";
+async function waitAnchored(oid, tries = 120) {
   for (let i = 0; i < tries; i++) {
     const o = await api(`/api/paypal/orders/${oid}`);
     if (o.status === "ANCHORED") return o;
+    const a = await attestationsOf(o);
+    const m = $("ppWait");
+    if (m) m.textContent = o.status === "ATTESTING" || a
+      ? `Captured. Proof waiting for independent attestors: ${attText(a) || "attestations 0/?"}…`
+      : "Captured. Waiting for PayPal's signed webhook…";
     await new Promise((r) => setTimeout(r, 500));
   }
   return api(`/api/paypal/orders/${oid}`);
@@ -147,11 +157,12 @@ async function createOrder() {
       $("ppMsg").innerHTML = `<p class="muted">${esc(err.message)}</p>`;
       return;
     }
-    $("ppResult").innerHTML = `<p>Captured. Waiting for PayPal's signed webhook…</p>`;
+    $("ppResult").innerHTML = `<p id="ppWait">Captured. Waiting for PayPal's signed webhook…</p>`;
     r = await waitAnchored(o.order_id);
+    const a = await attestationsOf(r);
     $("ppResult").innerHTML = r.status === "ANCHORED"
-      ? `<div class="risk low"><div class="score">Captured &amp; anchored</div><p>Proof <code>${esc(r.proof_hash)}</code> in block ${r.anchor_height}. No AUR was created.</p></div>`
-      : `<p>Status: ${esc(r.status)} — the webhook has not arrived yet. Refresh the orders list later.</p>`;
+      ? `<div class="risk low"><div class="score">Captured &amp; anchored</div><p>Proof <code>${esc(r.proof_hash)}</code> in block ${r.anchor_height}${a ? ` · confirmed by ${a.count}/${a.threshold} attestations` : ""}. No AUR was created.</p></div>`
+      : `<p>Status: ${esc(r.status)}${a ? " · " + attText(a) : ""} — the proof is not confirmed yet. Refresh the orders list later.</p>`;
     refreshOrders();
   });
   $("ppNo").onclick = (e) => busy(e.target, async () => {
@@ -162,19 +173,20 @@ async function createOrder() {
 
 // ---------- explorer ----------
 async function refreshExplorer() {
-  const [blocks, txs] = await Promise.all([api("/api/explorer/blocks?limit=200"), api("/api/explorer/txs?limit=100")]);
+  const [blocks, txs] = await Promise.all([C.blocks(20), C.searchTxs("tx.height>0", 100)]);
   set("blocksGrid", blocks);
   set("txsGrid", txs);
   $("kTxs").textContent = txs.length.toLocaleString();
   refreshKpis();
 }
 async function refreshKpis() {
-  const [st, escs, orders] = await Promise.all([api("/api/chain/status").catch(() => null),
-    api("/api/escrows").catch(() => null), api("/api/paypal/orders").catch(() => null)]);
+  const [st, escs, orders] = await Promise.all([C.status().catch(() => null),
+    C.escrows().catch(() => null), C.gatewayOk ? api("/api/paypal/orders").catch(() => null) : null]);
   if (st) $("kHeight").textContent = "#" + st.height.toLocaleString();
   if (escs) { const l = escs.filter((e) => e.status === "LOCKED");
     $("kEsc").textContent = l.length; $("kEscAur").textContent = fmt(l.reduce((a, e) => a + Number(e.amount || 0), 0)) + " AUR locked"; }
-  if (orders) $("kProofs").textContent = orders.filter((o) => o.status === "ANCHORED").length;
+  $("kProofs").textContent = orders ? orders.filter((o) => o.status === "ANCHORED").length : "–";
+  $("kProofs").title = orders ? "" : "Needs the gateway (PayPal orders)";
 }
 const lnk = (q, label) => q == null || q === "" ? "–" : `<a class="lnk" data-q="${esc(q)}" title="${esc(q)}">${esc(label ?? q)}</a>`;
 const dl = (pairs) => `<dl>${pairs.filter(([, v]) => v != null && v !== "").map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`;
@@ -192,8 +204,34 @@ function renderDetail(r) {
   if (r.kind === "escrow") { const e = r.escrow; return card(`Escrow #${esc(e.id)}`, dl(Object.entries(e).map(([k, v]) =>
     [esc(k), k === "amount" ? fmt(v) + " AUR" : /^aur1/.test(String(v)) ? lnk(v) : esc(v)]))); }
   if (r.kind === "proof") { const p = r.proof; return card("PayPal proof", dl([["Proof hash", `<code>${esc(p.hash)}</code>`], ["PayPal ref", esc(p.external_ref)],
-    ["Block", lnk(p.height)], ["Submitter", lnk(p.submitter)]]) + `<p class="muted">Only this hash is on-chain; USD stays on PayPal.</p>`); }
+    ["Capture ref", esc(p.capture_ref)], ["Status", `<span class="pill att ${p.status === "CONFIRMED" ? "ok" : ""}">${esc(p.status)} · attestations ${p.attestations.length}/${p.threshold}</span>`],
+    ["First seen", lnk(p.height)], ["Confirmed", p.confirmed_height ? lnk(p.confirmed_height) : ""],
+    ["Attestors", p.attestations.map((a) => lnk(a, short(a))).join("<br>")]]) +
+    `<p class="muted">Only this hash is on-chain; USD stays on PayPal. A proof is final once ${p.threshold} independent attestor(s) checked the capture with PayPal.</p>`); }
   return card("Result", `<pre>${esc(JSON.stringify(r, null, 2))}</pre>`);
+}
+// Same resolution order as the gateway's /api/explorer/search, straight from the chain. null = not found.
+async function lookup(q) {
+  const low = q.toLowerCase(), miss = (e) => { if (e.status !== 404 && e.status !== 400) throw e; return null; };
+  if (low.startsWith("aur1")) {
+    if (!AurixTx.validAddress(low)) return null;
+    const [a, history] = await Promise.all([C.account(low), C.history(low)]);
+    return { kind: "address", address: low, balance: a.balance, history };
+  }
+  const m = low.match(/^(?:escrow:\s*|#)(\d+)$/);
+  if (m) return C.escrow(Number(m[1])).then((escrow) => ({ kind: "escrow", escrow }), miss);
+  if (/^\d+$/.test(q)) {
+    const h = Number(q), st = await C.status();
+    if (h < 1 || h > st.height) return null;
+    const [block, txs] = await Promise.all([C.block(h), C.searchTxs(`tx.height=${h}`, 100)]);
+    return { kind: "block", block: { ...block, txs } };
+  }
+  if (/^[0-9a-fA-F]{64}$/.test(q)) {
+    const t = await C.tx(q).catch(miss);
+    if (t) return { kind: "tx", tx: t };
+    return C.proof(low).then((proof) => ({ kind: "proof", proof }), miss);
+  }
+  return null;
 }
 async function search(q) {
   q = String(q).trim(); if (!q) return;
@@ -201,10 +239,9 @@ async function search(q) {
   const d = $("detail");
   d.innerHTML = `<p class="muted">Searching…</p>`;
   try {
-    const r = await fetch(`/api/explorer/search?q=${encodeURIComponent(q)}`);
-    if (r.status === 404) { d.innerHTML = `<div class="detail"><p class="muted" style="margin:0">Nothing found for <code>${esc(q)}</code>.</p></div>`; return; }
-    if (!r.ok) throw new Error(r.statusText);
-    d.innerHTML = renderDetail(await r.json());
+    const r = await lookup(q);
+    if (!r) { d.innerHTML = `<div class="detail"><p class="muted" style="margin:0">Nothing found for <code>${esc(q)}</code>.</p></div>`; return; }
+    d.innerHTML = renderDetail(r);
   } catch (e) { d.innerHTML = `<div class="detail"><p class="muted" style="margin:0">Search unavailable: ${esc(e.message)}</p></div>`; }
   $("detailClose")?.addEventListener("click", () => (d.innerHTML = ""));
   d.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -213,9 +250,13 @@ window.explorerSearch = search;
 
 async function refreshStatus() {
   try {
-    const s = await api("/api/chain/status");
+    const s = await C.status();
+    const ep = C.activeEndpoint;
     $("chainStatus").textContent = `${s.chain_id} · block #${s.height}`;
-  } catch { $("chainStatus").textContent = "chain offline"; }
+    $("chainStatus").title = ep ? `via ${ep.label}` : "via gateway (no direct node reachable)";
+  } catch { $("chainStatus").textContent = "chain offline"; $("chainStatus").title = ""; }
+  $("gwStatus").textContent = C.gatewayOk ? "" : "gateway off: PayPal & risk scoring disabled";
+  $("gwStatus").hidden = C.gatewayOk;
 }
 
 // ---------- init ----------
@@ -229,6 +270,7 @@ function init() {
       `<button onclick="escrowAction('MsgReleaseEscrow',${p.data.id},this)">Release</button><button onclick="escrowAction('MsgRefundEscrow',${p.data.id},this)">Refund</button>` }]);
   grid("ordersGrid", [{ field: "order_id" }, { field: "amount_usd", headerName: "USD" }, { field: "status" },
     { field: "risk_level", headerName: "Risk" }, { field: "anchor_height", headerName: "Proof block" },
+    { headerName: "Attestations", valueGetter: (p) => { const a = p.data.attestations; return a && typeof a === "object" ? `${a.count}/${a.threshold}` : p.data.status === "ANCHORED" ? "confirmed" : ""; } },
     { field: "proof_hash", valueFormatter: (p) => short(p.value) }, { field: "simulated", headerName: "Rail", valueFormatter: (p) => (p.value ? "simulator" : "sandbox") }]);
   const clickQ = (field) => ({ cellClass: "lnk-cell", onCellClicked: (p) => p.value != null && search(p.value),
     cellRenderer: (p) => p.value == null ? "" : `<a class="lnk">${esc(field === "height" ? p.value : short(p.value))}</a>` });
@@ -246,25 +288,60 @@ function init() {
   document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => {
     document.querySelectorAll("nav button, .tab").forEach((x) => x.classList.remove("active"));
     b.classList.add("active"); $(b.dataset.tab).classList.add("active");
-    ({ wallet: refreshWallet, escrow: refreshEscrows, paypal: refreshOrders, explorer: refreshExplorer })[b.dataset.tab]?.().catch((e) => toast(e.message, true));
+    ({ wallet: refreshWallet, escrow: refreshEscrows, paypal: refreshOrders, explorer: refreshExplorer, settings: renderSettings })[b.dataset.tab]?.().catch((e) => toast(e.message, true));
   }));
   $("createWallet").onclick = () => setWallet(hex(crypto.getRandomValues(new Uint8Array(32))));
   $("doImport").onclick = () => { const s = $("importSeed").value.trim(); if (s) setWallet(s); };
   $("forget").onclick = () => confirm("Forget this wallet? Without the seed, funds are lost.") && setWallet(null);
   $("showSeed").onclick = () => prompt("Your seed (keep it private):", wallet.seed);
   $("refresh").onclick = (e) => busy(e.target, refreshWallet);
-  $("faucet").onclick = (e) => busy(e.target, async () => { const r = await api(`/api/wallets/${wallet.address}/faucet`, { method: "POST" });
-    toast(`+100 AUR in block ${r.height}`); refreshWallet(); });
+  $("faucet").onclick = (e) => busy(e.target, async () => { const r = await C.faucet(wallet.address);
+    toast(`+100 AUR in block ${r.height}`); await refreshWallet().catch(() => {});
+    // a read node may lag the faucet's node by a block: refresh again shortly
+    setTimeout(() => refreshWallet().catch(() => {}), 1500); });
   $("sendCheck").onclick = (e) => busy(e.target, checkSend);
   $("escCheck").onclick = (e) => busy(e.target, checkEscrow);
   $("ppCreate").onclick = (e) => busy(e.target, createOrder);
-  api("/api/health").then((h) => {
-    $("ppMode").textContent = { simulator: "Local PayPal simulator (tests only — no real PayPal)",
-      sandbox: "PayPal Sandbox", disabled: "PayPal not configured" }[h.paypal_mode] || h.paypal_mode;
-    $("ppCreate").disabled = h.paypal_mode === "disabled";
-  }).catch(() => {});
+  $("addNode").onclick = (e) => busy(e.target, async () => { C.addNode($("nodeRest").value, $("nodeRpc").value);
+    $("nodeRest").value = $("nodeRpc").value = ""; toast("Node added: it is tried first"); renderSettings(); refreshStatus(); });
+  $("saveGw").onclick = (e) => busy(e.target, async () => { const v = $("gwUrl").value.trim();
+    await C.setGateway(v === "" ? null : v); applyGateway(); renderSettings(); refreshStatus();
+    toast(C.gatewayOk ? "Gateway connected" : "No gateway: PayPal and risk scoring are off"); });
 
+  applyGateway();
   setWallet(stored());
   refreshStatus(); setInterval(refreshStatus, 3000);
 }
-init();
+
+// Enables or disables what needs optional services (gateway: PayPal + Guardian; faucet).
+function applyGateway() {
+  const h = C.health;
+  $("ppMode").textContent = !C.gatewayOk ? "PayPal unavailable: no gateway configured (see Settings)" :
+    ({ simulator: "Local PayPal simulator (tests only — no real PayPal)", sandbox: "PayPal Sandbox", disabled: "PayPal not configured" }[h.paypal_mode] || h.paypal_mode);
+  $("ppCreate").disabled = !C.gatewayOk || h.paypal_mode === "disabled";
+  $("faucet").hidden = !C.faucetUrl();
+  $("sendCheck").textContent = C.gatewayOk || C.config.guardian ? "Check with Neural Guardian" : "Review payment";
+}
+
+// ---------- settings ----------
+async function renderSettings() {
+  const cfg = C.config, eps = C.state.endpoints, act = C.activeEndpoint;
+  $("setChain").textContent = cfg.chain_id || "(any: taken from the node)";
+  $("setGw").textContent = C.gatewayOk ? C.gateway : "none (PayPal and risk scoring disabled)";
+  $("setFaucet").textContent = C.faucetUrl() || "none";
+  const ov = C.gatewayOverride();
+  $("gwUrl").value = ov == null ? "" : ov;
+  $("nodeList").innerHTML = eps.length ? eps.map((e, i) => `<li data-i="${i}"><code>${esc(e.rest)}</code> <span class="muted">${esc(e.source)}${act === e ? " · active" : ""}</span>
+    <span class="probe muted">…</span>${e.source === "custom" ? ` <button class="small" data-rm="${esc(e.rest)}">Remove</button>` : ""}</li>`).join("")
+    : `<li class="muted">No endpoint configured.</li>`;
+  $("nodeList").querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { C.removeNode(b.dataset.rm); renderSettings(); refreshStatus(); }));
+  eps.forEach(async (e, i) => {
+    const r = await C.probe(e), el = $("nodeList").querySelector(`li[data-i="${i}"] .probe`);
+    if (!el) return;
+    const wrong = r.ok && cfg.chain_id && r.chain_id !== cfg.chain_id;
+    el.textContent = !r.ok ? `· ${r.error}` : wrong ? `· WRONG CHAIN ${r.chain_id}` : `· ${r.chain_id} #${r.height}`;
+    el.className = "probe " + (r.ok && !wrong ? "ok" : "bad");
+  });
+}
+
+C.init().then(init, (e) => { console.error(e); init(); });
