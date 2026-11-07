@@ -78,6 +78,8 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
 
     @app.exception_handler(PayPalError)
     def _paypal_err(_: Request, e: PayPalError):
+        if e.issue in ("CAPTURE_FULLY_REFUNDED", "INVALID_STATE"):
+            return JSONResponse(status_code=409, content={"detail": f"PayPal: {e.message}", "issue": e.issue})
         if e.issue == "ORDER_NOT_APPROVED":
             return JSONResponse(status_code=409, content={"detail": "The buyer has not approved this order on PayPal yet.",
                                                           "issue": e.issue})
@@ -198,17 +200,45 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
             except Exception:  # never let the poller die
                 log.exception("attestation poller error")
 
+    def order_id_of(resource: dict) -> str | None:
+        """Order id of a capture resource, or of a refund resource (via its capture link)."""
+        oid = resource.get("supplementary_data", {}).get("related_ids", {}).get("order_id")
+        if oid:
+            return oid
+        for link in resource.get("links") or []:
+            if link.get("rel") == "up" and "/captures/" in link.get("href", ""):
+                cid = link["href"].rstrip("/").rsplit("/", 1)[-1]
+                o = db.one("SELECT order_id FROM paypal_orders WHERE capture_id=?", cid)
+                return o and o["order_id"]
+        o = db.one("SELECT order_id FROM paypal_orders WHERE capture_id=?", resource.get("id"))
+        return o and o["order_id"]
+
     def handle_event(event: dict) -> str:
-        """Processes a verified PayPal webhook event. Idempotent by event id."""
+        """Processes a verified PayPal webhook event. Idempotent by event id.
+
+        CAPTURE.COMPLETED -> anchor the proof; CAPTURE.PENDING -> CAPTURE_PENDING; CAPTURE.DENIED -> DENIED
+        (before anchoring); CAPTURE.REFUNDED / REVERSED -> REFUNDED (the on-chain proof of the original
+        capture stays: it records that the capture happened; the refund is recorded off-chain here)."""
         etype = event.get("event_type")
         resource = event.get("resource", {})
-        order_id = resource.get("supplementary_data", {}).get("related_ids", {}).get("order_id")
+        order_id = order_id_of(resource)
         if not db.record_event_once(event["id"], etype, order_id):
             return "duplicate"
-        if etype != "PAYMENT.CAPTURE.COMPLETED" or not order_id:
+        order = order_id and db.one("SELECT * FROM paypal_orders WHERE order_id=?", order_id)
+        if not order:
             return "ignored"
-        order = db.one("SELECT * FROM paypal_orders WHERE order_id=?", order_id)
-        if not order or order["status"] in ("ATTESTING", "ANCHORED"):
+        settled = order["status"] in ("ATTESTING", "ANCHORED")
+        if etype == "PAYMENT.CAPTURE.PENDING" and order["status"] == "CAPTURED":
+            db.update_order(order_id, status="CAPTURE_PENDING")
+            return "pending"
+        if etype == "PAYMENT.CAPTURE.DENIED" and not settled and order["status"] != "REFUNDED":
+            db.update_order(order_id, status="DENIED", last_error="capture denied by PayPal")
+            return "denied"
+        if etype in ("PAYMENT.CAPTURE.REFUNDED", "PAYMENT.CAPTURE.REVERSED"):
+            db.update_order(order_id, status="REFUNDED", refund_id=resource.get("id"),
+                            last_error=None if etype.endswith("REFUNDED") else "capture reversed")
+            return "refunded"
+        if etype != "PAYMENT.CAPTURE.COMPLETED" or settled or order["status"] in ("DENIED", "REFUNDED"):
             return "ignored"
         amount, currency = capture_amount(resource)
         db.update_order(order_id, status="CONFIRMED", capture_id=resource.get("id"),
@@ -267,13 +297,37 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
             raise HTTPException(400, "explicit approval required (confirm=true)")
         if o["status"] != "SCORED":
             raise HTTPException(409, f"order is {o['status']}")
-        cap = paypal.capture(order_id)
+        try:
+            cap = paypal.capture(order_id)
+        except PayPalError as e:
+            if e.issue == "INSTRUMENT_DECLINED":  # the buyer may pay again with another funding source
+                db.update_order(order_id, last_error="payment method declined")
+                return JSONResponse(status_code=402, content={
+                    "detail": "PayPal declined the buyer's payment method; ask the buyer to approve again "
+                              "with another funding source.", "issue": e.issue, "order": get_order(order_id)})
+            raise
         capture = cap["purchase_units"][0]["payments"]["captures"][0]
-        # The order is ANCHORED only once PayPal's signed webhook arrives (see /api/paypal/webhook).
         amount, currency = capture_amount(capture)
-        db.update_order(order_id, status="CAPTURED", capture_id=capture["id"],
-                        capture_amount=amount or None, capture_currency=currency or None)
+        # COMPLETED: ANCHORED once PayPal's signed webhook arrives; PENDING: waits for the COMPLETED webhook.
+        status = {"COMPLETED": "CAPTURED", "PENDING": "CAPTURE_PENDING"}.get(capture.get("status"), "DENIED")
+        db.update_order(order_id, status=status, capture_id=capture["id"], capture_amount=amount or None,
+                        capture_currency=currency or None,
+                        last_error=None if status != "DENIED" else f"capture {capture.get('status')}")
         return get_order(order_id)
+
+    @app.post("/api/paypal/orders/{order_id}/refund")
+    def refund(order_id: str, req: ApproveReq):
+        """Merchant-initiated full refund (explicit confirmation required). The order becomes REFUNDED
+        when PayPal's signed PAYMENT.CAPTURE.REFUNDED webhook arrives."""
+        require_paypal()
+        o = get_order(order_id)
+        if not req.confirm:
+            raise HTTPException(400, "explicit confirmation required (confirm=true)")
+        if o["status"] not in ("CAPTURED", "CONFIRMED", "ATTESTING", "ANCHORED") or not o.get("capture_id"):
+            raise HTTPException(409, f"order is {o['status']}: nothing to refund")
+        r = paypal.refund(o["capture_id"])
+        return {"order_id": order_id, "refund_id": r.get("id"), "refund_status": r.get("status"),
+                "note": "the order becomes REFUNDED when PayPal's webhook arrives"}
 
     @app.post("/api/paypal/orders/{order_id}/cancel")
     def cancel(order_id: str):

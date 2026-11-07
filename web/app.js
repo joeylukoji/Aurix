@@ -247,7 +247,7 @@ const attText = (a) => a ? `attestations ${a.count}/${a.threshold}` : "";
 async function waitAnchored(oid, tries = 120) {
   for (let i = 0; i < tries; i++) {
     const o = await api(`/api/paypal/orders/${oid}`);
-    if (o.status === "ANCHORED") return o;
+    if (["ANCHORED", "DENIED", "REFUNDED", "CANCELLED"].includes(o.status)) return o;  // final states
     const a = await attestationsOf(o);
     const m = $("ppWait");
     if (m) m.textContent = o.status === "ATTESTING" || a
@@ -279,6 +279,10 @@ async function createOrder() {
     const a = await attestationsOf(r);
     $("ppResult").innerHTML = r.status === "ANCHORED"
       ? `<div class="risk low"><div class="score">Captured &amp; anchored</div><p>Proof <code>${esc(r.proof_hash)}</code> in block ${r.anchor_height}${a ? ` · confirmed by ${a.count}/${a.threshold} attestations` : ""}. No AUR was created.</p></div>`
+      : r.status === "DENIED"
+      ? `<div class="risk high"><div class="score">Payment denied by PayPal</div><p>${esc(r.last_error || "The capture was denied.")} Nothing was anchored on AURIX.</p></div>`
+      : r.status === "REFUNDED"
+      ? `<div class="risk medium"><div class="score">Payment refunded</div><p>Refund <code>${esc(r.refund_id || "")}</code>. The proof of the original capture stays on AURIX; the refund is recorded by the payments service.</p></div>`
       : `<p>Status: ${esc(r.status)}${a ? " · " + attText(a) : ""} — the proof is not confirmed yet. Refresh the orders list later.</p>`;
     refreshOrders();
   });

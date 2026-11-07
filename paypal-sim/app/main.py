@@ -18,6 +18,7 @@ webhook, list events) to test idempotency and signature checks.
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import html
 import hmac
@@ -234,7 +235,8 @@ def capture(oid: str, _: str = Depends(bearer)):
         CAPTURES[cap["id"]] = cap
     event = {"id": "WH-" + uuid.uuid4().hex[:20].upper(), "event_version": "1.0", "create_time": now(),
              "resource_type": "capture", "event_type": "PAYMENT.CAPTURE.COMPLETED",
-             "summary": f"Payment completed for $ {amount['value']} {amount['currency_code']}", "resource": cap}
+             "summary": f"Payment completed for $ {amount['value']} {amount['currency_code']}",
+             "resource": copy.deepcopy(cap)}  # snapshot: later status changes must not alter a signed event
     threading.Thread(target=_deliver_later, args=(event,), daemon=True).start()
     return order_view(o)
 
@@ -248,6 +250,44 @@ def get_capture(cid: str, _: str = Depends(bearer)):
     oid = cap["supplementary_data"]["related_ids"]["order_id"]
     return cap | {"links": [{"href": f"{PUBLIC_URL}/v2/payments/captures/{cid}", "rel": "self", "method": "GET"},
                             {"href": f"{PUBLIC_URL}/v2/checkout/orders/{oid}", "rel": "up", "method": "GET"}]}
+
+
+def _emit(event_type: str, resource: dict, summary: str) -> dict:
+    event = {"id": "WH-" + uuid.uuid4().hex[:20].upper(), "event_version": "1.0", "create_time": now(),
+             "resource_type": "refund" if "REFUNDED" in event_type else "capture", "event_type": event_type,
+             "summary": summary, "resource": copy.deepcopy(resource)}
+    threading.Thread(target=_deliver_later, args=(event,), daemon=True).start()
+    return event
+
+
+@app.post("/v2/payments/captures/{cid}/refund", status_code=201)
+def refund_capture(cid: str, _: str = Depends(bearer)):
+    """Payments v2 full refund of a COMPLETED capture; sends PAYMENT.CAPTURE.REFUNDED."""
+    with lock:
+        cap = CAPTURES.get(cid)
+        if not cap:
+            paypal_error(404, "RESOURCE_NOT_FOUND", "The specified resource does not exist.", "INVALID_RESOURCE_ID")
+        if cap["status"] != "COMPLETED":
+            paypal_error(422, "UNPROCESSABLE_ENTITY", "Capture cannot be refunded.", "CAPTURE_FULLY_REFUNDED"
+                         if cap["status"] == "REFUNDED" else "INVALID_STATE")
+        cap["status"] = "REFUNDED"
+        refund = {"id": secrets.token_hex(9).upper()[:17], "status": "COMPLETED", "amount": dict(cap["amount"]),
+                  "create_time": now(),
+                  "links": [{"href": f"{PUBLIC_URL}/v2/payments/refunds/REFUND", "rel": "self", "method": "GET"},
+                            {"href": f"{PUBLIC_URL}/v2/payments/captures/{cid}", "rel": "up", "method": "GET"}]}
+        refund["links"][0]["href"] = refund["links"][0]["href"].replace("REFUND", refund["id"])
+    _emit("PAYMENT.CAPTURE.REFUNDED", refund, f"A $ {refund['amount']['value']} refund was issued")
+    return refund
+
+
+@app.post("/sim/captures/{cid}/deny")
+def sim_deny(cid: str):
+    """Simulator-only: the processor denies a capture afterwards (PAYMENT.CAPTURE.DENIED)."""
+    cap = CAPTURES.get(cid)
+    if not cap:
+        raise HTTPException(404, "unknown capture")
+    cap["status"] = "DECLINED"
+    return _emit("PAYMENT.CAPTURE.DENIED", dict(cap), "Payment denied")
 
 
 # ---------------- Webhooks ----------------

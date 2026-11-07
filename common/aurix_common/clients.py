@@ -235,6 +235,11 @@ class PayPalClient:
     def capture(self, order_id: str) -> dict:
         return self._json(self.http.post(f"/v2/checkout/orders/{order_id}/capture", headers=self._headers()))
 
+    def refund(self, capture_id: str) -> dict:
+        """Full refund of a capture (Payments v2). The order becomes REFUNDED on the webhook."""
+        return self._json(self.http.post(f"/v2/payments/captures/{capture_id}/refund", json={},
+                                         headers=self._headers() | {"PayPal-Request-Id": f"refund-{capture_id}"}))
+
     @staticmethod
     def _json(r: httpx.Response) -> dict:
         if r.status_code >= 400:
