@@ -134,3 +134,23 @@ def test_dashboard(delivered):
     assert wait_for(lambda: delivered)
     page = c.get("/sim")
     assert page.status_code == 200 and o["id"] in page.text and "COMPLETED" in page.text
+
+
+def test_get_capture_details(delivered):
+    h = token()
+    o = create(h, "7.25").json()
+    c.post(f"/sim/orders/{o['id']}/approve")
+    r = c.post(f"/v2/checkout/orders/{o['id']}/capture", headers=h)
+    cap = r.json()["purchase_units"][0]["payments"]["captures"][0]
+    r = c.get(f"/v2/payments/captures/{cap['id']}", headers=h)
+    assert r.status_code == 200
+    b = r.json()
+    assert b["id"] == cap["id"] and b["status"] == "COMPLETED"
+    assert b["amount"] == {"currency_code": "USD", "value": "7.25"}
+    assert b["supplementary_data"]["related_ids"]["order_id"] == o["id"]
+
+
+def test_get_capture_requires_auth_and_404():
+    h = token()
+    assert c.get("/v2/payments/captures/NOPE", headers=h).status_code == 404
+    assert c.get("/v2/payments/captures/NOPE").status_code == 401
