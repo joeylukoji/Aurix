@@ -2,28 +2,41 @@
 
 > Status legend: **built** = in the repository and tested; **temporary** = used until the real PayPal Sandbox is connected; **planned** = designed, not built.
 
-The MVP runs **4 services** (plus the static web app served by the gateway):
+The MVP runs **7 service types** (plus the static web app served by the gateway):
 
 | Service | Language / stack | Ports | Layer | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
 | `chain` — `aurixd` node | Go, Cosmos SDK v0.50, CometBFT v0.38 | 26657 (CometBFT RPC), 1317 (REST/LCD), 9090 (gRPC) | 1-2 | — | built (4 validators by default) |
-| `gateway` — API Gateway | Python, FastAPI, SQLite | 8080 (also serves `web/`) | 4 | chain, guardian, PayPal (simulator) | built |
-| `guardian` — Neural Guardian | Python, FastAPI, LightGBM + SHAP | 8000 | 3 | — | built (trained on PaySim) |
+| `gateway` — API Gateway (edge) | Python, FastAPI, SQLite (risk log) | 8080 (also serves `web/`) | 4 | chain, guardian, indexer, payments | built |
+| `payments` — PayPal connector | Python, FastAPI, SQLite (orders, webhook events) | 8085 | 4 | chain, guardian, PayPal (simulator) | built |
+| `indexer` — explorer read model | Python, FastAPI, **PostgreSQL** | 8086 | — | chain, PostgreSQL | built |
+| `guardian` — Neural Guardian (×N) | Python, FastAPI, LightGBM + SHAP | 8000 | 3 | — | built (trained on PaySim) |
+| `attestor` — independent PayPal attestor (×N) | Python | 8095 (health) | 2/4 | chain, PayPal | built |
 | `paypal-sim` — PayPal API simulator | Python, FastAPI | 8090 | 4 (external stand-in) | gateway (webhook target) | temporary |
-| `web` — Wallet & explorer | Vanilla JS, `@noble` secp256k1, AG Grid | served on 8080 | — | gateway | built |
-| `indexer`, PostgreSQL, Redis | — | — | — | — | **planned** (the gateway reads the chain directly and keeps its own index in SQLite) |
+| `web` — Wallet & explorer | Vanilla JS, `@noble` secp256k1, AG Grid | served on 8080 | — | chain nodes (direct), gateway (optional) | built |
+| Redis | — | — | — | — | **planned** (not needed by the MVP) |
+
+`gateway`, `payments` and `indexer` share the library `common/aurix_common` (keys and BIP39, Cosmos tx
+signing, chain and PayPal clients, Guardian quorum); each service has its own process, data store,
+Dockerfile, health check, tests and CI job.
 
 ```mermaid
 flowchart TB
     web["web (browser)<br/>keys + signing"] -->|REST /api/*| gateway
-    gateway -->|"broadcast_tx_sync / tx_search (RPC 26657)"| chain
-    gateway -->|"REST 1317 (balances, escrows, proofs)"| chain
+    web -. "direct REST, failover" .-> chain
+    gateway -->|"REST 1317 / RPC 26657"| chain
     gateway -->|POST /v1/risk/score| guardian
-    gateway -->|"OAuth2 + Orders v2"| paypal["paypal-sim :8090<br/>(PayPal Sandbox later)"]
-    paypal -->|"signed webhook PAYMENT.CAPTURE.COMPLETED"| gateway
-    gateway --> sqlite[("SQLite<br/>orders, events, risk")]
-    indexer["indexer + PostgreSQL + Redis<br/>(planned)"]:::planned
-    classDef planned stroke-dasharray: 5 5
+    gateway -->|"/api/explorer/*"| indexer
+    gateway -->|"/api/paypal/* (incl. webhooks)"| payments
+    indexer -->|"follows blocks (RPC /blockchain + tx search)"| chain
+    indexer --> pg[("PostgreSQL<br/>blocks, txs, address index")]
+    payments -->|"OAuth2 + Orders v2"| paypal["paypal-sim :8090<br/>(PayPal Sandbox later)"]
+    paypal -->|"signed webhook (via gateway)"| payments
+    payments -->|MsgAnchorProof| chain
+    payments --> sqlite[("SQLite<br/>orders, events")]
+    payments -->|score orders| guardian
+    attestor -->|"re-check capture"| paypal
+    attestor -->|MsgAnchorProof| chain
 ```
 
 ---
@@ -42,23 +55,37 @@ Single source of truth for balances, escrows and proofs. Details: [`chain/README
 
 `x/staking` runs 4 validators by default (`chain/scripts/init-localnet.sh`): each has its own key and equal stake, and the nodes are persistent peers. The chain keeps finalising blocks with 3/4 validators and halts (no fork) with 2/4. Independent operators on separate machines are **planned**.
 
-## 2. `gateway` — API Gateway (FastAPI)
+## 2. `gateway` — API Gateway (edge)
 
-Orchestrates the chain, Guardian and PayPal; never holds user private keys. It holds only its own gateway key (used for faucet and `MsgAnchorProof`).
+The single public entry point; never holds user private keys. It holds only the dev faucet key.
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/health`, `GET /api/chain/status` | Health and chain height |
-| `POST /api/wallets`, `GET /api/wallets/{addr}`, `POST /api/wallets/{addr}/faucet` | Register address, balance (read from chain), testnet faucet |
-| `POST /api/txs/prepare` | Returns account number, sequence, chain-id and a Guardian risk score for the unsigned tx |
-| `POST /api/txs` | Broadcasts a tx signed in the browser |
-| `GET /api/escrows`, `GET /api/escrows/{id}` | Escrow state from the chain |
-| `GET /api/explorer/blocks`, `/txs`, `/proofs/{hash}` | Explorer data |
-| `POST /api/paypal/orders`, `GET /api/paypal/orders[/{id}]` | Create (and score) / list USD orders |
-| `POST /api/paypal/orders/{id}/approve` (`confirm=true`), `/cancel` | Human approval → capture; cancel |
-| `POST /api/paypal/webhook` | Signature-verified, idempotent webhook → anchor proof |
+| `GET /api/health`, `GET /api/chain/status` | Health (incl. the PayPal rail reported by payments) and chain height |
+| `POST /api/wallets`, `GET /api/wallets/{addr}`, `POST /api/wallets/{addr}/faucet` | Demo key, balance (chain) + history (indexer, chain fallback), testnet faucet |
+| `POST /api/txs/prepare` | Account number, sequence, chain-id and the signed Guardian quorum score for the unsigned tx |
+| `POST /api/txs`, `POST /api/txs/observed` | Broadcasts a tx signed in the browser / records a tx the wallet broadcast directly |
+| `GET /api/escrows[/{id}]`, `GET /api/proofs/{hash}` | Escrow state and normalised proof (k-of-n status) from the chain |
+| `GET /api/explorer/*` | **Proxied to the indexer** |
+| `/api/paypal/*` | **Proxied to payments** (orders, approve, cancel, webhook) |
 
-The explorer search API is being added in parallel; see the gateway code and [`api/openapi.json`](../../api/openapi.json).
+If the indexer is down, `/api/explorer/*` answers 503 and wallet history falls back to the chain tx
+search; if payments is down, `/api/paypal/*` answers 503. Wallet sends and escrows keep working.
+
+## 2b. `payments` — PayPal connector
+
+Owns PayPal orders and webhook events (SQLite) and the anchor key (`GATEWAY_*` names, the address
+listed in `anchor_signers`). Endpoints `/api/paypal/orders`, `/orders/{id}`, `/orders/{id}/approve`,
+`/orders/{id}/cancel`, `/webhook`, `/health`. A background poller refreshes `ATTESTING` orders and
+retries failed anchors.
+
+## 2c. `indexer` — explorer read model (PostgreSQL)
+
+Follows the chain block by block (CometBFT finality: no re-orgs) and stores blocks, txs (normalised rows
++ raw JSON) and an address index. Serves `/api/explorer/blocks`, `/txs`, `/txs/{hash}`,
+`/addresses/{addr}/history`, `/search`, `/stats`, `/proofs/{hash}`; `/health` reports `indexed_height`,
+`chain_height` and `lag`. It is a cache: dropping the database and re-syncing rebuilds it. Balances,
+escrows and proofs are always read live from the chain.
 
 ### PayPal order lifecycle
 

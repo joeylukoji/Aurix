@@ -1,0 +1,16 @@
+**/.venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+*.db
+.env
+.git
+chain/
+guardian/
+gateway/
+indexer/
+attestor/
+paypal-sim/
+web/
+deploy/
+.github/

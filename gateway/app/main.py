@@ -1,32 +1,31 @@
-"""AURIX API Gateway: orchestrates the wallet, Neural Guardian, PayPal and the chain.
+"""AURIX API Gateway: the single public edge of the AURIX services.
 
-It holds no authority over AUR balances: balances are always read from the chain,
+It serves the wallet API (account reads, tx preparation with the advisory Neural Guardian score,
+broadcast, dev faucet) and routes /api/explorer/* to the indexer service and /api/paypal/* to the
+payments service. It holds no authority over AUR balances: balances are always read from the chain,
 and every AUR movement is a transaction signed by the user's own key.
 """
 from __future__ import annotations
 
 import base64
 import binascii
-import hashlib
-import json
 import logging
 import re
 import os
 import secrets
 import threading
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import crypto
-from .clients import ChainClient, ChainError, GuardianClient, PayPalClient, PayPalError, normalize_proof
+from .clients import ChainClient, ChainError, GuardianClient, normalize_proof
 from .config import Settings
 from .db import DB
 from .keys import load_key
@@ -71,27 +70,16 @@ class ObservedTx(BaseModel):
     txhash: str = Field(description="hash of a tx the wallet broadcast directly to a chain node")
 
 
-class OrderReq(BaseModel):
-    amount_usd: str
-    payer: str | None = None
-    description: str = "AURIX demo purchase"
-
-
-class ApproveReq(BaseModel):
-    confirm: bool = False
-
-
 def create_app(settings: Settings | None = None, chain: ChainClient | None = None,
-               guardian: GuardianClient | None = None, paypal=None) -> FastAPI:
+               guardian: GuardianClient | None = None, indexer: httpx.Client | None = None,
+               payments: httpx.Client | None = None) -> FastAPI:
     s = settings or Settings()
     chain = chain or ChainClient(s.chain_url, s.chain_rest_url)
     guardian = guardian or GuardianClient(s.guardian_urls, quorum=s.guardian_quorum, pubkeys=s.guardian_pubkeys)
-    if paypal is None and s.paypal_configured:
-        paypal = PayPalClient(s.paypal_base_url, s.paypal_client_id, s.paypal_client_secret, s.paypal_webhook_id)
-    paypal_mode = s.paypal_env if paypal is not None else "disabled"
+    indexer = indexer or httpx.Client(base_url=s.indexer_url)
+    payments = payments or httpx.Client(base_url=s.payments_url)
     db = DB(s.database_path)
     faucet_key = load_key("FAUCET", default_seed=s.faucet_seed)
-    gateway_key = load_key("GATEWAY", default_seed=s.gateway_seed)
     signer_lock = threading.Lock()
 
     app = FastAPI(title="AURIX API Gateway", version="0.1.0")
@@ -99,17 +87,6 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
     if s.cors_origins:  # a statically deployed wallet (other origin) may call the gateway/faucet
         app.add_middleware(CORSMiddleware, allow_origins=s.cors_origins, allow_methods=["*"],
                            allow_headers=["*"], allow_credentials=False)
-
-    @app.exception_handler(PayPalError)
-    def _paypal_err(_: Request, e: PayPalError):
-        if e.issue == "ORDER_NOT_APPROVED":
-            return JSONResponse(status_code=409, content={"detail": "The buyer has not approved this order on PayPal yet.",
-                                                          "issue": e.issue})
-        return JSONResponse(status_code=502, content={"detail": f"PayPal error: {e.message}", "issue": e.issue})
-
-    def require_paypal():
-        if paypal is None:
-            raise HTTPException(503, "PayPal is not configured (set PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET)")
 
     @app.exception_handler(ChainError)
     def _chain_err(_: Request, e: ChainError):
@@ -132,6 +109,10 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
     # ---------------- health & wallets ----------------
     @app.get("/api/health")
     def health():
+        try:  # the web wallet shows the PayPal rail of the payments service
+            paypal_mode = payments.get("/health", timeout=3).json().get("paypal_mode", "unknown")
+        except (httpx.HTTPError, ValueError):
+            paypal_mode = "unavailable"
         return {"status": "ok", "paypal_mode": paypal_mode,
                 "guardians": len(guardian.urls) if hasattr(guardian, "urls") else 1,
                 "guardian_quorum": getattr(guardian, "quorum", 1)}
@@ -156,14 +137,28 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
     def wallet(addr: str):
         check_addr(addr)
         acct = chain.account(addr)  # balance from the chain = source of truth
+        return {**acct, "balance_aur": acct["balance"] / crypto.MICRO, "history": address_history(addr)}
+
+    def address_history(addr: str) -> list:
+        """History from the indexer (PostgreSQL); falls back to the chain tx search when it is unavailable,
+        and merges txs the indexer has not reached yet."""
         seen, history = set(), []
-        for q in (f"message.sender='{addr}'", f"transfer.recipient='{addr}'"):
+        try:
+            r = indexer.get(f"/api/explorer/addresses/{addr}/history", timeout=5)
+            r.raise_for_status()
+            history = r.json()
+            seen = {t["hash"] for t in history}
+            top = max((t["height"] for t in history), default=0)
+            queries = [f"message.sender='{addr}' AND tx.height>{top}", f"transfer.recipient='{addr}' AND tx.height>{top}"]
+        except (httpx.HTTPError, ValueError):
+            queries = [f"message.sender='{addr}'", f"transfer.recipient='{addr}'"]
+        for q in queries:
             for t in chain.search_txs(q, 100):
                 if t["hash"] not in seen:
                     seen.add(t["hash"])
                     history.append(t)
         history.sort(key=lambda t: t["height"], reverse=True)
-        return {**acct, "balance_aur": acct["balance"] / crypto.MICRO, "history": history}
+        return history
 
     @app.post("/api/wallets/{addr}/faucet")
     def faucet(addr: str):
@@ -240,274 +235,40 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
     def escrow(eid: int):
         return chain.escrow(eid)
 
-    # ---------------- explorer ----------------
-    @app.get("/api/explorer/blocks")
-    def blocks(limit: int = 50):
-        return chain.blocks(min(limit, 200))
+    # ---------------- explorer (indexer service) and PayPal (payments service) ----------------
+    def forward(client: httpx.Client, name: str, request: Request, path: str, body: bytes | None) -> Response:
+        """Thin reverse proxy: the gateway is the single public edge; the services own the logic."""
+        headers = {k: v for k, v in request.headers.items()
+                   if k.lower() in ("content-type", "accept") or k.lower().startswith("paypal-")}
+        try:
+            r = client.request(request.method, path, params=dict(request.query_params), content=body,
+                               headers=headers, timeout=30)
+        except httpx.HTTPError as e:
+            return JSONResponse(status_code=503, content={"detail": f"{name} service unavailable: {type(e).__name__}"})
+        return Response(content=r.content, status_code=r.status_code,
+                        media_type=r.headers.get("content-type", "application/json"))
 
-    @app.get("/api/explorer/txs")
-    def txs(limit: int = 100):
-        return chain.search_txs("tx.height>0", min(limit, 100))
+    # Proxied routes are documented in api/indexer.openapi.json and api/payments.openapi.json.
+    @app.api_route("/api/explorer/{path:path}", methods=["GET"], include_in_schema=False)
+    async def explorer(path: str, request: Request):
+        return await run_in_threadpool(forward, indexer, "indexer", request, f"/api/explorer/{path}", None)
 
-    @app.get("/api/explorer/proofs/{h}")
-    def proof(h: str):
-        return chain.proof(h)
+    @app.api_route("/api/paypal/{path:path}", methods=["GET", "POST"], include_in_schema=False)
+    async def paypal_proxy(path: str, request: Request):
+        body = await request.body()
+        return await run_in_threadpool(forward, payments, "payments", request, f"/api/paypal/{path}", body)
 
     @app.get("/api/proofs/{h}")
     def proof_normalised(h: str):
         """Normalised chain proof: {hash, external_ref, capture_ref, status, attestations, threshold}."""
         if not re.fullmatch(r"[0-9a-fA-F]{64}", h):
             raise HTTPException(400, "proof hash must be 64 hex characters")
-        return normalize_proof(chain.proof_raw(h.lower()), threshold())
-
-    @app.get("/api/explorer/txs/{h}")
-    def tx_by_hash(h: str):
         try:
-            return chain.tx(h.upper())
-        except ChainError as e:
-            if e.status >= 500 and e.status != 404:
-                raise
-            raise HTTPException(404, "not found")
-
-    def address_history(addr: str) -> list:
-        seen, history = set(), []
-        for q in (f"message.sender='{addr}'", f"transfer.recipient='{addr}'"):
-            for t in chain.search_txs(q, 100):
-                if t["hash"] not in seen:
-                    seen.add(t["hash"])
-                    history.append(t)
-        history.sort(key=lambda t: t["height"], reverse=True)
-        return history
-
-    def _missing(e: ChainError) -> bool:
-        return e.status < 500 or "not found" in e.detail.lower()
-
-    @app.get("/api/explorer/search")
-    def search(q: str = ""):
-        q = q.strip()
-        if not q:
-            raise HTTPException(400, "empty query")
-        low = q.lower()
-        try:
-            if low.startswith("aur1"):
-                if not crypto.valid_address(low):
-                    raise HTTPException(404, "not found")
-                return {"kind": "address", "address": low, "balance": chain.account(low)["balance"],
-                        "history": address_history(low)}
-            m = re.fullmatch(r"(?:escrow:\s*|#)(\d+)", low)
-            if m:
-                return {"kind": "escrow", "escrow": chain.escrow(int(m.group(1)))}
-            if q.isdigit():
-                h = int(q)
-                if h < 1 or h > chain.status()["height"]:
-                    raise HTTPException(404, "not found")
-                return {"kind": "block", "block": chain.block(h) | {"txs": chain.search_txs(f"tx.height={h}", 100)}}
-            if re.fullmatch(r"[0-9a-fA-F]{64}", q):
-                try:
-                    return {"kind": "tx", "tx": chain.tx(q.upper())}
-                except ChainError as e:
-                    if not _missing(e):
-                        raise
-                return {"kind": "proof", "proof": chain.proof(low)}
-        except ChainError as e:
-            if not _missing(e):
-                raise
-        raise HTTPException(404, "not found")
-
-    # ---------------- PayPal ----------------
-    def threshold() -> int:
-        try:
-            return chain.anchor_threshold()
+            thr = chain.anchor_threshold()
         except ChainError:
-            return 1
+            thr = 1
+        return normalize_proof(chain.proof_raw(h.lower()), thr)
 
-    def capture_amount(capture: dict) -> tuple[str, str]:
-        """(value, currency_code) of a PayPal capture, as PayPal returned them."""
-        amt = capture.get("amount") or {}
-        return str(amt.get("value") or ""), str(amt.get("currency_code") or "")
-
-    def anchor(order_id: str, capture_id: str, amount: str = "", currency: str = "") -> dict:
-        """Submits the gateway's attestation (it is the first attestor, not the authority).
-        The order stays ATTESTING until the chain proof is CONFIRMED by k-of-n attestors."""
-        h = hashlib.sha256(f"{order_id}|{capture_id}".encode()).hexdigest()
-        ref = f"paypal:{order_id}"
-        try:  # a retry after a lost broadcast result: our attestation may already be on chain
-            existing = chain.proof_raw(h)
-        except (ChainError, httpx.HTTPError):
-            existing = None
-        if existing and gateway_key.address in (existing.get("attestations") or [existing.get("submitter")]):
-            res = {"hash": None, "height": int(existing.get("first_seen_height") or existing.get("height") or 0)}
-        else:
-            if not amount or not currency:  # fall back to what was captured / ordered
-                o = db.one("SELECT amount_usd, capture_amount, capture_currency FROM paypal_orders WHERE order_id=?",
-                           order_id) or {}
-                amount = amount or o.get("capture_amount") or o.get("amount_usd") or ""
-                currency = currency or o.get("capture_currency") or ("USD" if o.get("amount_usd") else "")
-            # Newest MsgAnchorProof first; older chains reject unknown fields: amount/currency (5/6), then
-            # capture_ref (4, chain predating k-of-n attestation).
-            variants = [(capture_id, amount, currency), (capture_id, "", ""), ("", "", "")]
-            for i, (cap, amt, cur) in enumerate(variants):
-                try:
-                    res = sign_and_send(gateway_key, crypto.msg_anchor_proof(gateway_key.address, h, ref, cap, amt, cur))
-                    break
-                except ChainError as e:
-                    if i == len(variants) - 1 or "unknownfield" not in e.detail.lower().replace(" ", ""):
-                        raise
-                    log.warning("chain rejected MsgAnchorProof fields, retrying with fewer: %s", e.detail)
-        db.update_order(order_id, status="ATTESTING", capture_id=capture_id, proof_hash=h,
-                        capture_amount=amount or None, capture_currency=currency or None,
-                        anchor_tx=res["hash"], anchor_height=res["height"])
-        refresh_attestation(order_id)
-        return res
-
-    def refresh_attestation(order_id: str) -> None:
-        """Reads the chain proof of an ATTESTING order; ANCHORED once the proof is CONFIRMED."""
-        o = db.one("SELECT order_id, status, proof_hash FROM paypal_orders WHERE order_id=?", order_id)
-        if not o or o["status"] != "ATTESTING" or not o["proof_hash"]:
-            return
-        try:
-            p = normalize_proof(chain.proof_raw(o["proof_hash"]), threshold())
-        except (ChainError, httpx.HTTPError) as e:
-            log.warning("attestation refresh for %s failed: %s", order_id, e)
-            return
-        fields = {"attestations": json.dumps(p["attestations"]), "attest_threshold": p["threshold"]}
-        if p["status"] == "CONFIRMED":
-            fields["status"] = "ANCHORED"
-        db.update_order(order_id, **fields)
-
-    def retry_unanchored() -> None:
-        """CONFIRMED orders (PayPal capture webhook verified) whose anchoring failed: try again."""
-        for o in db.all("SELECT order_id, capture_id FROM paypal_orders WHERE status='CONFIRMED'"
-                        " AND capture_id IS NOT NULL AND proof_hash IS NULL"):
-            try:
-                anchor(o["order_id"], o["capture_id"])
-                log.info("anchored %s on retry", o["order_id"])
-            except (ChainError, httpx.HTTPError) as e:
-                log.warning("anchor retry for %s failed: %s", o["order_id"], e)
-
-    def refresh_pending() -> None:
-        retry_unanchored()
-        for o in db.all("SELECT order_id FROM paypal_orders WHERE status='ATTESTING'"):
-            refresh_attestation(o["order_id"])
-
-    def present(o: dict) -> dict:
-        signers = json.loads(o.pop("attestations", None) or "[]")
-        thr = o.pop("attest_threshold", None)
-        o["attestations"] = {"count": len(signers), "threshold": thr or 1, "signers": signers}
-        return o
-
-    stop = threading.Event()
-
-    def poller():
-        while not stop.wait(s.attest_poll_interval):
-            try:
-                refresh_pending()
-            except Exception:  # never let the poller die
-                log.exception("attestation poller error")
-
-    @app.on_event("startup")
-    def _start_poller():
-        if s.attest_poll_interval > 0:
-            threading.Thread(target=poller, name="attest-poller", daemon=True).start()
-
-    @app.on_event("shutdown")
-    def _stop_poller():
-        stop.set()
-
-    def handle_event(event: dict) -> str:
-        """Processes a verified PayPal webhook event. Idempotent by event id."""
-        etype = event.get("event_type")
-        resource = event.get("resource", {})
-        order_id = resource.get("supplementary_data", {}).get("related_ids", {}).get("order_id")
-        if not db.record_event_once(event["id"], etype, order_id):
-            return "duplicate"
-        if etype != "PAYMENT.CAPTURE.COMPLETED" or not order_id:
-            return "ignored"
-        order = db.one("SELECT * FROM paypal_orders WHERE order_id=?", order_id)
-        if not order or order["status"] in ("ATTESTING", "ANCHORED"):
-            return "ignored"
-        amount, currency = capture_amount(resource)
-        db.update_order(order_id, status="CONFIRMED", capture_id=resource.get("id"),
-                        capture_amount=amount or None, capture_currency=currency or None)
-        try:
-            anchor(order_id, resource["id"], amount, currency)
-        except Exception:
-            # Forget the event so PayPal's redelivery is processed again (the poller also retries
-            # CONFIRMED orders without a proof); the webhook answers 5xx, which makes PayPal retry.
-            db.forget_event(event["id"])
-            raise
-        return "anchored" if get_order(order_id)["status"] == "ANCHORED" else "attesting"
-
-    @app.post("/api/paypal/orders")
-    def create_order(req: OrderReq):
-        require_paypal()
-        try:
-            amount = Decimal(req.amount_usd)
-            if amount <= 0 or amount.as_tuple().exponent < -2:
-                raise InvalidOperation
-        except InvalidOperation:
-            raise HTTPException(422, "amount_usd must be a positive amount with at most 2 decimals")
-        value = f"{amount:.2f}"
-        order = paypal.create_order(value, req.description)
-        risk = guardian.score(context="paypal_order", sender=req.payer or "anonymous", recipient="merchant",
-                              amount=float(amount), currency="USD")
-        db.exec("INSERT INTO paypal_orders(order_id, amount_usd, payer, description, status, risk_score, risk_level, simulated)"
-                " VALUES (?,?,?,?,?,?,?,?)", order["id"], value, req.payer, req.description, "SCORED",
-                risk and risk["risk_score"], risk and risk["level"], int(paypal_mode == "simulator"))
-        db.save_risk("paypal_order", order["id"], risk)
-        approve = next((l["href"] for l in order.get("links", []) if l["rel"] in ("approve", "payer-action")), None)
-        return {"order_id": order["id"], "status": "SCORED", "amount_usd": value, "approve_url": approve,
-                "risk": risk, "risk_status": risk_state(risk), "advisory_only": True,
-                "paypal_mode": paypal_mode}
-
-    @app.get("/api/paypal/orders")
-    def list_orders():
-        refresh_pending()
-        return [present(o) for o in db.all("SELECT * FROM paypal_orders ORDER BY created_at DESC")]
-
-    @app.get("/api/paypal/orders/{order_id}")
-    def get_order(order_id: str):
-        o = db.one("SELECT * FROM paypal_orders WHERE order_id=?", order_id)
-        if not o:
-            raise HTTPException(404, "order not found")
-        if o["status"] == "ATTESTING":  # lazy refresh on read
-            refresh_attestation(order_id)
-            o = db.one("SELECT * FROM paypal_orders WHERE order_id=?", order_id)
-        return present(o)
-
-    @app.post("/api/paypal/orders/{order_id}/approve")
-    def approve(order_id: str, req: ApproveReq):
-        require_paypal()
-        o = get_order(order_id)
-        if not req.confirm:  # invariant 8: no capture without explicit human approval
-            raise HTTPException(400, "explicit approval required (confirm=true)")
-        if o["status"] != "SCORED":
-            raise HTTPException(409, f"order is {o['status']}")
-        cap = paypal.capture(order_id)
-        capture = cap["purchase_units"][0]["payments"]["captures"][0]
-        # The order is ANCHORED only once PayPal's signed webhook arrives (see /api/paypal/webhook).
-        amount, currency = capture_amount(capture)
-        db.update_order(order_id, status="CAPTURED", capture_id=capture["id"],
-                        capture_amount=amount or None, capture_currency=currency or None)
-        return get_order(order_id)
-
-    @app.post("/api/paypal/orders/{order_id}/cancel")
-    def cancel(order_id: str):
-        o = get_order(order_id)
-        if o["status"] != "SCORED":
-            raise HTTPException(409, f"order is {o['status']}")
-        db.update_order(order_id, status="CANCELLED")
-        return get_order(order_id)
-
-    @app.post("/api/paypal/webhook")
-    async def webhook(request: Request):
-        require_paypal()
-        event = await request.json()
-        if not await run_in_threadpool(paypal.verify_webhook, dict(request.headers), event):  # invariant 7
-            raise HTTPException(400, "invalid webhook signature")
-        return {"result": await run_in_threadpool(handle_event, event)}  # invariant 6: duplicates are a 200 no-op
-
-    app.state.refresh_pending = refresh_pending
     web_dir = Path(os.environ.get("WEB_DIR", Path(__file__).resolve().parents[2] / "web"))
     if web_dir.is_dir():
         app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")

@@ -1,0 +1,16 @@
+# Build context: repository root (needs common/ and payments/).
+FROM python:3.12-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+COPY common /srv/common
+WORKDIR /srv/payments
+COPY payments/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt \
+    && useradd -m -u 10001 aurix && mkdir -p /data && chown aurix:aurix /data
+COPY payments/aurix_payments ./aurix_payments
+ENV PORT=8085 PAYMENTS_DATABASE_URL=sqlite:////data/payments.db
+VOLUME /data
+USER aurix
+EXPOSE 8085
+HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=6 \
+  CMD python -c "import os,urllib.request;urllib.request.urlopen('http://localhost:%s/health'%os.environ.get('PORT','8085'),timeout=4)"
+CMD ["sh", "-c", "exec uvicorn aurix_payments.main:app --host 0.0.0.0 --port ${PORT:-8085}"]

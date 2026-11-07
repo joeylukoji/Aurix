@@ -1,8 +1,5 @@
-import json
 import os
-import socket
-import subprocess
-import time
+import sys
 from pathlib import Path
 
 import httpx
@@ -10,83 +7,25 @@ import pytest
 
 os.environ["AURIX_NO_AUTOAPP"] = "1"
 ROOT = Path(__file__).resolve().parents[2]
+# The gateway's integration tests run the payments and indexer services in-process.
+sys.path[:0] = [str(ROOT / "payments"), str(ROOT / "indexer")]
 
 
-def _free_port() -> int:
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
+from aurix_common.testing import guardian_transport, running_chain, running_postgres, sign_attestation  # noqa: E402,F401
+
+PG = {}
 
 
 @pytest.fixture(scope="session")
 def chain_urls(tmp_path_factory):
-    """Builds and runs a real single-validator Cosmos SDK aurixd node (200 ms blocks)."""
-    tmp = tmp_path_factory.mktemp("chain")
-    binary, home = tmp / "aurixd", tmp / "home"
-    subprocess.run(["go", "build", "-o", str(binary), "./cmd/aurixd"], cwd=ROOT / "chain", check=True)
-    env = os.environ | {"AURIXD": str(binary), "AURIX_HOME": str(home), "RESET": "1"}
-    subprocess.run([str(ROOT / "chain/scripts/init-local.sh")], env=env, check=True, stdout=subprocess.DEVNULL)
-    cfg = home / "config/config.toml"
-    cfg.write_text(cfg.read_text().replace('timeout_commit = "1s"', 'timeout_commit = "200ms"'))
-    rpc, api, grpc, p2p = (_free_port() for _ in range(4))
-    proc = subprocess.Popen([str(binary), "start", "--home", str(home),
-                             "--rpc.laddr", f"tcp://127.0.0.1:{rpc}", "--api.enable", "--api.address", f"tcp://127.0.0.1:{api}",
-                             "--grpc.address", f"127.0.0.1:{grpc}", "--p2p.laddr", f"tcp://127.0.0.1:{p2p}",
-                             "--rpc.pprof_laddr", ""],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    urls = (f"http://127.0.0.1:{rpc}", f"http://127.0.0.1:{api}")
-    for _ in range(150):
-        try:
-            if int(httpx.get(urls[0] + "/status").json()["result"]["sync_info"]["latest_block_height"]) >= 2:
-                httpx.get(urls[1] + "/aurix/smartmoney/v1/params").raise_for_status()
-                break
-        except (httpx.HTTPError, KeyError, ValueError):
-            pass
-        time.sleep(0.2)
-    else:
-        proc.terminate()
-        raise RuntimeError("aurixd did not start")
-    yield urls
-    proc.terminate()
+    """A real single-validator Cosmos SDK aurixd node (200 ms blocks)."""
+    with running_chain(tmp_path_factory.mktemp("chain")) as urls:
+        yield urls
 
 
-def sign_attestation(seed: str, body: dict, score: float, level: str, **override) -> dict:
-    """A Guardian attestation (contract H3) signed with the dev key sha256(seed)."""
-    import hashlib
-    import json
-
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
-
-    from app.guardians import N, address_from_pubkey
-    from app.crypto import Key
-
-    k = Key(seed)
-    payload = {"chain_id": "aurix-test", "from": body.get("sender"), "to": body.get("recipient"),
-               "amount": str(body.get("amount")), "denom": body.get("currency"), "score": score,
-               "decision": level, "model_version": "test", "issued_at": int(time.time())} | override
-    payload = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    r, s = decode_dss_signature(k._sk.sign(payload.encode(), ec.ECDSA(hashes.SHA256())))
-    s = min(s, N - s)
-    return {"guardian": address_from_pubkey(k.pubkey), "pubkey": k.pubkey.hex(), "payload": payload,
-            "signature": (r.to_bytes(32, "big") + s.to_bytes(32, "big")).hex()}
-
-
-def guardian_transport(level="high", score=0.82, fail=False, seed="test-guardian"):
-    calls = []
-
-    def handler(req: httpx.Request):
-        calls.append(req)
-        if fail:
-            return httpx.Response(503)
-        body = json.loads(req.content)
-        return httpx.Response(200, json={"risk_score": score, "level": level, "advisory_only": True,
-                                         "model_version": "test", "reasons": [
-                                             {"feature": "new_recipient", "impact": 0.3, "text": "First payment"}],
-                                         "attestation": sign_attestation(seed, body, score, level)})
-    t = httpx.MockTransport(handler)
-    t.calls = calls
-    return t
+@pytest.fixture(scope="session", autouse=True)
+def pg_url():
+    """PostgreSQL for the in-process indexer service (TEST_DATABASE_URL or a throwaway cluster)."""
+    with running_postgres() as url:
+        PG["url"] = url
+        yield url

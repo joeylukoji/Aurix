@@ -99,6 +99,78 @@ services:
       retries: 6
       start_period: 10s
     restart: unless-stopped
+  # PostgreSQL for the indexer (explorer read model; rebuildable from the chain at any time).
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aurix
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aurix-dev}
+      POSTGRES_DB: aurix
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aurix -d aurix"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+  # Indexer: follows chain0 block by block into PostgreSQL and serves /api/explorer/* (via the gateway).
+  indexer:
+    build:
+      context: ..
+      dockerfile: indexer/Dockerfile
+    environment:
+      CHAIN_RPC_URL: http://chain0:26657
+      CHAIN_REST_URL: http://chain0:1317
+      INDEXER_DATABASE_URL: postgresql://aurix:${POSTGRES_PASSWORD:-aurix-dev}@postgres:5432/aurix
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8086/health',timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped
+    depends_on:
+      chain0: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+  # Payments: the PayPal connector (orders, capture, webhooks) and the first PayPal-proof attestor.
+  # It holds the anchor key (GATEWAY_* names: the genesis lists that address in anchor_signers).
+  payments:
+    build:
+      context: ..
+      dockerfile: payments/Dockerfile
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      CHAIN_RPC_URL: http://chain0:26657
+      CHAIN_REST_URL: http://chain0:1317
+      GUARDIAN_URLS: ${GUARDIAN_URLS:-http://guardian:8000,http://guardian2:8000}
+      GUARDIAN_QUORUM: ${GUARDIAN_QUORUM:-2}
+      GUARDIAN_PUBKEYS: ${GUARDIAN_PUBKEYS:-}
+      AURIX_ENV: ${AURIX_ENV:-}
+      GATEWAY_MNEMONIC: ${GATEWAY_MNEMONIC:-}
+      AURIX_GATEWAY_SEED: ${AURIX_GATEWAY_SEED:-aurix-dev-gateway}
+      PAYPAL_ENV: ${PAYPAL_ENV:-simulator}
+      PAYPAL_BASE_URL: ${PAYPAL_BASE_URL:-http://paypal-sim:8090}
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-sim-client-id}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-sim-client-secret}
+      PAYPAL_WEBHOOK_ID: ${PAYPAL_WEBHOOK_ID:-SIM-WEBHOOK-ID}
+    volumes: ["payments-data:/data"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8085/health',timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped
+    depends_on:
+      chain0: { condition: service_healthy }
+      guardian: { condition: service_healthy }
+      guardian2: { condition: service_healthy }
+      # Simulator only; remove together with the paypal-sim service for real Sandbox.
+      paypal-sim: { condition: service_healthy }
+  # Gateway: the single public edge (wallet API, dev faucet); routes /api/explorer/* to the indexer and
+  # /api/paypal/* (incl. PayPal webhooks) to payments, and serves the web wallet.
   gateway:
     build:
       context: ..
@@ -109,22 +181,16 @@ services:
     environment:
       CHAIN_RPC_URL: http://chain0:26657
       CHAIN_REST_URL: http://chain0:1317
-      # H3 quorum: comma separated guardians, valid signed scores required, optional pubkey allowlist.
+      INDEXER_URL: http://indexer:8086
+      PAYMENTS_URL: http://payments:8085
+      # H3 quorum for the advisory risk score of AUR transfers/escrows.
       GUARDIAN_URLS: ${GUARDIAN_URLS:-http://guardian:8000,http://guardian2:8000}
       GUARDIAN_QUORUM: ${GUARDIAN_QUORUM:-2}
       GUARDIAN_PUBKEYS: ${GUARDIAN_PUBKEYS:-}
-      # Keys (H2), in priority order: *_MNEMONIC, *_KEY_FILE, then the dev seeds below (refused with
-      # AURIX_ENV=production). Put real mnemonics in ../.env (from keygen.sh's gateway.env), never here.
+      # Faucet key (dev): *_MNEMONIC / *_KEY_FILE first, seed refused with AURIX_ENV=production.
       AURIX_ENV: ${AURIX_ENV:-}
-      GATEWAY_MNEMONIC: ${GATEWAY_MNEMONIC:-}
       FAUCET_MNEMONIC: ${FAUCET_MNEMONIC:-}
       AURIX_FAUCET_SEED: ${AURIX_FAUCET_SEED:-aurix-dev-faucet}
-      AURIX_GATEWAY_SEED: ${AURIX_GATEWAY_SEED:-aurix-dev-gateway}
-      PAYPAL_ENV: ${PAYPAL_ENV:-simulator}
-      PAYPAL_BASE_URL: ${PAYPAL_BASE_URL:-http://paypal-sim:8090}
-      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-sim-client-id}
-      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-sim-client-secret}
-      PAYPAL_WEBHOOK_ID: ${PAYPAL_WEBHOOK_ID:-SIM-WEBHOOK-ID}
     volumes: ["gateway-data:/data"]
     ports: ["8080:8080"]
     healthcheck:
@@ -138,8 +204,8 @@ services:
       chain0: { condition: service_healthy }
       guardian: { condition: service_healthy }
       guardian2: { condition: service_healthy }
-      # Simulator only; remove together with the paypal-sim service for real Sandbox.
-      paypal-sim: { condition: service_healthy }
+      indexer: { condition: service_healthy }
+      payments: { condition: service_healthy }
   # Independent PayPal attestors (k-of-n anchoring): each re-checks the capture at PayPal with its own
   # key and read-only credentials, through a different chain node. Real keys: ATTESTORn_MNEMONIC.
   attestor1: &attestor
@@ -175,4 +241,6 @@ services:
       paypal-sim: { condition: service_healthy }
 volumes:
   chain-data:
+  postgres-data:
+  payments-data:
   gateway-data:

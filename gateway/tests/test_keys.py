@@ -91,8 +91,7 @@ def test_app_refuses_seed_in_production(tmp_path, monkeypatch):
     monkeypatch.setenv("GATEWAY_MNEMONIC", MNEMONIC)
     for v in ("FAUCET_MNEMONIC", "FAUCET_KEY_FILE"):
         monkeypatch.delenv(v, raising=False)
-    s = Settings(chain_url="http://x", chain_rest_url="http://x", database_path=str(tmp_path / "a.db"),
-                 attest_poll_interval=0)
+    s = Settings(chain_url="http://x", chain_rest_url="http://x", database_path=str(tmp_path / "a.db"))
     with pytest.raises(KeyConfigError, match="FAUCET"):
         create_app(s)
     monkeypatch.setenv("FAUCET_KEY_FILE", _keyfile(tmp_path))

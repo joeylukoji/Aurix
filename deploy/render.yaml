@@ -56,6 +56,45 @@ services:
       - { key: SIM_CLIENT_SECRET, value: sim-client-secret }
       - { key: SIM_WEBHOOK_ID, value: SIM-WEBHOOK-ID }
 
+  # PayPal connector + first PayPal-proof attestor (holds the anchor key, GATEWAY_* names).
+  - type: pserv
+    name: aurix-payments
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./payments/Dockerfile
+    dockerContext: .
+    envVars:
+      - { key: PORT, value: "8085" }
+      - { key: CHAIN_RPC_URL, value: "http://aurix-chain:26657" }
+      - { key: CHAIN_REST_URL, value: "http://aurix-chain:1317" }
+      - { key: GUARDIAN_URL, value: "http://aurix-guardian:8000" }
+      - { key: PAYMENTS_DATABASE_URL, value: "sqlite:////tmp/payments.db" }
+      - { key: AURIX_GATEWAY_SEED, sync: false }
+      - { key: GATEWAY_MNEMONIC, sync: false }
+      # Simulator wiring. For the real Sandbox set PAYPAL_ENV=sandbox,
+      # PAYPAL_BASE_URL=https://api-m.sandbox.paypal.com and real credentials.
+      - { key: PAYPAL_ENV, value: simulator }
+      - { key: PAYPAL_BASE_URL, value: "http://aurix-paypal-sim:8090" }
+      - { key: PAYPAL_CLIENT_ID, value: sim-client-id }
+      - { key: PAYPAL_CLIENT_SECRET, value: sim-client-secret }
+      - { key: PAYPAL_WEBHOOK_ID, value: SIM-WEBHOOK-ID }
+
+  # Explorer read model: follows the chain into the managed PostgreSQL below.
+  - type: pserv
+    name: aurix-indexer
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./indexer/Dockerfile
+    dockerContext: .
+    envVars:
+      - { key: PORT, value: "8086" }
+      - { key: CHAIN_RPC_URL, value: "http://aurix-chain:26657" }
+      - { key: CHAIN_REST_URL, value: "http://aurix-chain:1317" }
+      - key: INDEXER_DATABASE_URL
+        fromDatabase: { name: aurix-indexer-db, property: connectionString }
+
+  # Public edge: wallet API + web wallet; routes /api/explorer/* to the indexer and /api/paypal/*
+  # (incl. PayPal webhooks) to payments over the private network.
   - type: web
     name: aurix-gateway
     runtime: docker
@@ -68,16 +107,10 @@ services:
       - { key: CHAIN_RPC_URL, value: "http://aurix-chain:26657" }
       - { key: CHAIN_REST_URL, value: "http://aurix-chain:1317" }
       - { key: GUARDIAN_URL, value: "http://aurix-guardian:8000" }
+      - { key: INDEXER_URL, value: "http://aurix-indexer:8086" }
+      - { key: PAYMENTS_URL, value: "http://aurix-payments:8085" }
       - { key: DATABASE_URL, value: "sqlite:////tmp/aurix.db" }
       - { key: AURIX_FAUCET_SEED, sync: false }
-      - { key: AURIX_GATEWAY_SEED, sync: false }
-      # Simulator wiring. For the real Sandbox set PAYPAL_ENV=sandbox,
-      # PAYPAL_BASE_URL=https://api-m.sandbox.paypal.com and real credentials.
-      - { key: PAYPAL_ENV, value: simulator }
-      - { key: PAYPAL_BASE_URL, value: "http://aurix-paypal-sim:8090" }
-      - { key: PAYPAL_CLIENT_ID, value: sim-client-id }
-      - { key: PAYPAL_CLIENT_SECRET, value: sim-client-secret }
-      - { key: PAYPAL_WEBHOOK_ID, value: SIM-WEBHOOK-ID }
 
   # Independent PayPal attestor (k-of-n anchoring). Not an HTTP service for users: private.
   # For a real deployment set ATTESTOR_MNEMONIC (and ATTESTOR_ADDRS on the chain) instead of the seed.
@@ -95,3 +128,9 @@ services:
       - { key: PAYPAL_BASE_URL, value: "http://aurix-paypal-sim:8090" }
       - { key: PAYPAL_CLIENT_ID, value: sim-client-id }
       - { key: PAYPAL_CLIENT_SECRET, value: sim-client-secret }
+
+databases:
+  - name: aurix-indexer-db
+    plan: basic-256mb
+    databaseName: aurix
+    user: aurix

@@ -5,3 +5,5 @@ cryptography==44.0.0
 pydantic==2.10.4
 pytest==8.3.4
 pycryptodome==3.21.0
+# Shared AURIX library (path relative to this service directory; see common/).
+-e ../common

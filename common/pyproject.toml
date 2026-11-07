@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aurix-common"
+version = "0.1.0"
+description = "Shared library of the AURIX Python services"
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.28", "cryptography>=43", "pycryptodome>=3.21"]
+
+[tool.setuptools]
+packages = ["aurix_common"]
+
+[tool.setuptools.package-data]
+aurix_common = ["bip39-english.txt"]

@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Starts the full AURIX stack without Docker: aurixd chain, guardian, paypal-sim, gateway.
+# Starts the full AURIX stack without Docker: aurixd chain, guardian, paypal-sim, payments, indexer
+# (PostgreSQL), gateway.
 # Ports: set PORT_OFFSET (added to defaults) or each port explicitly:
 #   RPC_PORT(26657) REST_PORT(1317) GRPC_PORT(9090) P2P_PORT(26656) PROM_PORT(26660, metrics)
-#   GUARDIAN_PORT(8000) SIM_PORT(8090) GATEWAY_PORT(8080)
+#   GUARDIAN_PORT(8000) SIM_PORT(8090) GATEWAY_PORT(8080) PAYMENTS_PORT(8085) INDEXER_PORT(8086) PG_PORT(5432)
+# INDEXER_DATABASE_URL: an existing PostgreSQL for the indexer; otherwise a throwaway cluster is started
+# in $RUN_DIR/pg (scripts/pg-up.sh) and stopped by dev-down.
 # VALIDATORS (default 4): number of validator nodes; node i uses the ports above + i*VALIDATOR_PORT_STEP
 # (default 1000). The gateway talks to node0. AURIX_NET_HOME (default $RUN_DIR/chain-net),
 # RUN_DIR (pids+logs, default $ROOT/.run).
@@ -21,6 +24,7 @@ RPC_PORT=${RPC_PORT:-$((26657+OFF))}; REST_PORT=${REST_PORT:-$((1317+OFF))}
 GRPC_PORT=${GRPC_PORT:-$((9090+OFF))}; P2P_PORT=${P2P_PORT:-$((26656+OFF))}; PROM_PORT=${PROM_PORT:-$((26660+OFF))}
 GUARDIAN_PORT=${GUARDIAN_PORT:-$((8000+OFF))}; SIM_PORT=${SIM_PORT:-$((8090+OFF))}
 GATEWAY_PORT=${GATEWAY_PORT:-$((8080+OFF))}
+PAYMENTS_PORT=${PAYMENTS_PORT:-$((8085+OFF))}; INDEXER_PORT=${INDEXER_PORT:-$((8086+OFF))}; PG_PORT=${PG_PORT:-$((5432+OFF))}
 ATTESTORS=${ATTESTORS:-0}; ATTESTOR_PORT=${ATTESTOR_PORT:-$((8095+OFF))}
 ATTESTOR_SEED_PREFIX=${ATTESTOR_SEED_PREFIX:-aurix-dev-attestor-}
 GUARDIANS=${GUARDIANS:-1}; GUARDIAN_SEED_PREFIX=${GUARDIAN_SEED_PREFIX:-aurix-dev-guardian-}
@@ -32,7 +36,8 @@ BIN=$ROOT/chain/build/aurixd
 
 log() { echo "[dev-up] $*"; }
 port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
-PORTS=($SIM_PORT $GATEWAY_PORT)
+PORTS=($SIM_PORT $GATEWAY_PORT $PAYMENTS_PORT $INDEXER_PORT)
+[[ -z "${INDEXER_DATABASE_URL:-}" ]] && PORTS+=($PG_PORT)
 for ((i = 0; i < GUARDIANS; i++)); do PORTS+=($((GUARDIAN_PORT + i))); done
 for ((i = 0; i < ATTESTORS; i++)); do PORTS+=($((ATTESTOR_PORT + i))); done
 for ((i = 0; i < VALIDATORS; i++)); do
@@ -59,7 +64,7 @@ wait_for() { # name url [jq-filter]
 venv() { # dir — (re)installs requirements when requirements.txt changed since the last install
   if [[ ! -x "$1/.venv/bin/uvicorn" ]]; then log "creating venv in $1"; python3 -m venv "$1/.venv"; fi
   if [[ ! -f "$1/.venv/.req-stamp" || "$1/requirements.txt" -nt "$1/.venv/.req-stamp" ]]; then
-    "$1/.venv/bin/pip" install -q -r "$1/requirements.txt" && touch "$1/.venv/.req-stamp"
+    (cd "$1" && .venv/bin/pip install -q -r requirements.txt) && touch "$1/.venv/.req-stamp"  # -e ../common
   fi
 }
 
@@ -71,7 +76,10 @@ if [[ -n "${ANCHOR_THRESHOLD:-}" ]]; then INIT_ENV+=(ANCHOR_THRESHOLD="$ANCHOR_T
 if [[ -n "${PENDING_TTL_BLOCKS:-}" ]]; then INIT_ENV+=(PENDING_TTL_BLOCKS="$PENDING_TTL_BLOCKS"); fi
 env "${INIT_ENV[@]}" AURIXD=$BIN VALIDATORS=$VALIDATORS PORT_STEP=$STEP RPC_PORT=$RPC_PORT REST_PORT=$REST_PORT \
   GRPC_PORT=$GRPC_PORT P2P_PORT=$P2P_PORT PROM_PORT=$PROM_PORT "$ROOT/chain/scripts/init-localnet.sh"
-for d in guardian paypal-sim gateway; do venv "$ROOT/$d"; done
+for d in guardian paypal-sim gateway payments indexer; do venv "$ROOT/$d"; done
+if [[ -z "${INDEXER_DATABASE_URL:-}" ]]; then
+  INDEXER_DATABASE_URL=$(RUN_DIR=$RUN_DIR PG_PORT=$PG_PORT "$ROOT/scripts/pg-up.sh"); log "PostgreSQL up: $INDEXER_DATABASE_URL"
+fi
 if ((ATTESTORS > 0)) && ! "$ROOT/attestor/.venv/bin/python" -c "import httpx, cryptography, Crypto" 2>/dev/null; then
   log "creating venv in $ROOT/attestor"; python3 -m venv "$ROOT/attestor/.venv"
   "$ROOT/attestor/.venv/bin/pip" install -q -r "$ROOT/attestor/requirements.txt"
@@ -107,10 +115,19 @@ done
 wait_for paypal-sim "http://127.0.0.1:$SIM_PORT/sim/health"
 
 CHAIN_RPC_URL="http://127.0.0.1:$RPC_PORT" CHAIN_REST_URL="http://127.0.0.1:$REST_PORT" \
-GUARDIAN_URLS="$GUARDIAN_URLS" GUARDIAN_QUORUM=$GUARDIAN_QUORUM DATABASE_URL="sqlite:///$RUN_DIR/gateway.db" \
+INDEXER_DATABASE_URL="$INDEXER_DATABASE_URL" \
+  start indexer "$ROOT/indexer" .venv/bin/uvicorn aurix_indexer.main:app --host 127.0.0.1 --port "$INDEXER_PORT"
+# payments = PayPal connector + first proof attestor (holds the GATEWAY_ anchor key)
+CHAIN_RPC_URL="http://127.0.0.1:$RPC_PORT" CHAIN_REST_URL="http://127.0.0.1:$REST_PORT" \
+GUARDIAN_URLS="$GUARDIAN_URLS" GUARDIAN_QUORUM=$GUARDIAN_QUORUM PAYMENTS_DATABASE_URL="sqlite:///$RUN_DIR/payments.db" \
 PAYPAL_ENV=simulator PAYPAL_BASE_URL="http://127.0.0.1:$SIM_PORT" PAYPAL_CLIENT_ID=sim-client-id \
 PAYPAL_CLIENT_SECRET=sim-client-secret PAYPAL_WEBHOOK_ID=SIM-WEBHOOK-ID \
-SIM_WEBHOOK_URL="http://127.0.0.1:$GATEWAY_PORT/api/paypal/webhook" SIM_PUBLIC_URL="http://localhost:$SIM_PORT" \
+  start payments "$ROOT/payments" .venv/bin/uvicorn aurix_payments.main:app --host 127.0.0.1 --port "$PAYMENTS_PORT"
+wait_for indexer "http://127.0.0.1:$INDEXER_PORT/health"
+wait_for payments "http://127.0.0.1:$PAYMENTS_PORT/health"
+CHAIN_RPC_URL="http://127.0.0.1:$RPC_PORT" CHAIN_REST_URL="http://127.0.0.1:$REST_PORT" \
+GUARDIAN_URLS="$GUARDIAN_URLS" GUARDIAN_QUORUM=$GUARDIAN_QUORUM DATABASE_URL="sqlite:///$RUN_DIR/gateway.db" \
+INDEXER_URL="http://127.0.0.1:$INDEXER_PORT" PAYMENTS_URL="http://127.0.0.1:$PAYMENTS_PORT" \
   start gateway "$ROOT/gateway" .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port "$GATEWAY_PORT"
 wait_for gateway "http://127.0.0.1:$GATEWAY_PORT/api/health"
 CHAIN_ID=$(curl -fsS "http://127.0.0.1:$RPC_PORT/status" | jq -r .result.node_info.network)

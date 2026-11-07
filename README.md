@@ -47,18 +47,22 @@ Four layers; the core depends on no upper layer:
 ```mermaid
 flowchart LR
     U[Web wallet<br/>browser signing] -- direct REST, failover --> CHAIN[AURIX nodes aurixd<br/>Cosmos SDK + CometBFT<br/>RPC :26657, REST :1317]
-    U -. optional .-> GW[API Gateway :8080<br/>FastAPI + SQLite<br/>attestor #1]
+    U -. optional .-> GW[API Gateway :8080<br/>wallet API, faucet, edge router]
     GW --> AI[Neural Guardian :8000]
-    GW --> PP[PayPal simulator :8090<br/>Sandbox later]
-    PP -- signed webhook --> GW
-    GW -- MsgAnchorProof --> CHAIN
+    GW -- /api/explorer --> IDX[Indexer :8086<br/>PostgreSQL read model]
+    GW -- /api/paypal --> PAY[Payments :8085<br/>PayPal connector, attestor #1]
+    IDX -- follows blocks --> CHAIN
+    PAY --> AI
+    PAY --> PP[PayPal simulator :8090<br/>Sandbox later]
+    PP -- signed webhook via gateway --> PAY
+    PAY -- MsgAnchorProof --> CHAIN
     AT[Attestors attestor/<br/>independent operators] -- read capture --> PP
     AT -- MsgAnchorProof --> CHAIN
 ```
 
-The wallet reads and broadcasts **directly** against chain nodes (`web/config.json`, `?nodes=` URL override, Settings panel), so it keeps working when the gateway is down; the gateway is only needed for PayPal, Neural Guardian scoring and the dev faucet. A PayPal proof is `PENDING` on chain until `anchor_threshold` of the `anchor_signers` (gateway + independent attestors, governed by `x/gov`) have each verified the capture at PayPal; then it becomes `CONFIRMED` and the order `ANCHORED`.
+The wallet reads and broadcasts **directly** against chain nodes (`web/config.json`, `?nodes=` URL override, Settings panel), so it keeps working when the gateway is down; the gateway is only needed for PayPal, Neural Guardian scoring, the explorer API and the dev faucet. The gateway is a thin edge: `/api/explorer/*` is served by the **indexer** (blocks, txs and per-address history in PostgreSQL, rebuilt from the chain at any time) and `/api/paypal/*` by the **payments** service (orders, capture, webhooks, proof anchoring); all three share `common/aurix_common` (keys, Cosmos tx signing, chain and PayPal clients). A PayPal proof is `PENDING` on chain until `anchor_threshold` of the `anchor_signers` (payments + independent attestors, governed by `x/gov`) have each verified the capture at PayPal; then it becomes `CONFIRMED` and the order `ANCHORED`.
 
-Indexer, PostgreSQL and Redis are planned, not built. Full details: [`docs/architecture/services.md`](docs/architecture/services.md).
+Redis is planned, not built. Full details: [`docs/architecture/services.md`](docs/architecture/services.md).
 
 ## Tech stack
 
@@ -68,7 +72,7 @@ Indexer, PostgreSQL and Redis are planned, not built. Full details: [`docs/archi
 | Blockchain core | Cosmos SDK v0.50 + Go (`x/auth`, `x/bank`, `x/staking`, `x/slashing`, `x/distribution`, `x/evidence`, custom `x/smartmoney`) |
 | Gateway | FastAPI *(Spring Boot in the original target)* |
 | AI | Python, FastAPI, LightGBM + SHAP (PyTorch Geometric on the roadmap) |
-| Data | SQLite (V1 index), PostgreSQL + Redis planned |
+| Data | PostgreSQL (indexer read model), SQLite (payments orders, gateway risk log); Redis planned |
 | Front end | Web wallet + explorer, AG Grid |
 | API | OpenAPI (APIMatic) |
 | Deployment | Docker Compose, Render (Kubernetes as target) |
@@ -78,7 +82,10 @@ Indexer, PostgreSQL and Redis are planned, not built. Full details: [`docs/archi
 ```
 aurix/
 ├── chain/        # Cosmos SDK node: app/, x/smartmoney, proto/, cmd/aurixd
-├── gateway/      # API Gateway / orchestration (first attestor)
+├── common/       # Shared Python library (aurix_common): keys, Cosmos txs, chain/PayPal clients
+├── gateway/      # API Gateway: wallet API, faucet, routes to indexer and payments
+├── payments/     # PayPal connector + first proof attestor (own SQLite)
+├── indexer/      # Explorer read model in PostgreSQL (follows the chain)
 ├── attestor/     # Independent PayPal attestor daemon (k-of-n anchoring)
 ├── guardian/     # Neural Guardian (FastAPI)
 ├── paypal-sim/   # Temporary local PayPal simulator (tests only)
@@ -96,7 +103,7 @@ aurix/
 ### With the dev scripts
 
 ```bash
-scripts/dev-up.sh     # start chain, guardian, paypal-sim, gateway
+scripts/dev-up.sh     # start chain, guardian, paypal-sim, PostgreSQL, indexer, payments, gateway
 scripts/test-all.sh   # run all test suites
 scripts/dev-down.sh   # stop everything
 ```
@@ -127,8 +134,18 @@ cd guardian && python -m venv .venv && .venv/bin/pip install -r requirements.txt
 cd paypal-sim && python -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/uvicorn app.main:app --port 8090
 ```
 
+The simplest is `scripts/dev-up.sh` (starts everything, including a throwaway PostgreSQL). By hand, from each service directory (the requirements install `../common` in editable mode):
+
 ```bash
-cd gateway && python -m venv .venv && .venv/bin/pip install -r requirements.txt && PAYPAL_ENV=simulator PAYPAL_BASE_URL=http://localhost:8090 PAYPAL_CLIENT_ID=sim-client-id PAYPAL_CLIENT_SECRET=sim-client-secret PAYPAL_WEBHOOK_ID=SIM-WEBHOOK-ID .venv/bin/uvicorn app.main:app --port 8080
+cd payments && python -m venv .venv && .venv/bin/pip install -r requirements.txt && PAYPAL_ENV=simulator PAYPAL_BASE_URL=http://localhost:8090 PAYPAL_CLIENT_ID=sim-client-id PAYPAL_CLIENT_SECRET=sim-client-secret PAYPAL_WEBHOOK_ID=SIM-WEBHOOK-ID .venv/bin/uvicorn aurix_payments.main:app --port 8085
+```
+
+```bash
+cd indexer && python -m venv .venv && .venv/bin/pip install -r requirements.txt && INDEXER_DATABASE_URL=postgresql://aurix@localhost:5432/aurix .venv/bin/uvicorn aurix_indexer.main:app --port 8086
+```
+
+```bash
+cd gateway && python -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/uvicorn app.main:app --port 8080
 ```
 
 ### Tests
@@ -149,14 +166,14 @@ cd paypal-sim && .venv/bin/python -m pytest -q
 cd gateway && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/python -m pytest -q
 ```
 
-The gateway tests build, initialise and start a real `aurixd` node (needs Go and `jq`). The browser journey (wallet → send → escrow → PayPal → explorer) runs with Playwright against a running stack:
+The gateway tests build, initialise and start a real `aurixd` node (needs Go and `jq`) and run the payments and indexer services in-process against a throwaway PostgreSQL (needs the PostgreSQL binaries, or set `TEST_DATABASE_URL`). The browser journey (wallet → send → escrow → PayPal → explorer) runs with Playwright against a running stack:
 
 ```bash
 NODES=http://localhost:1317,http://localhost:2317 node tests/e2e/demo-journey.js   # direct-to-chain path
 node tests/e2e/gateway-off.js   # static wallet; stops the gateway, then node0 (destructive: run last)
 ```
 
-`scripts/test-all.sh` runs everything: chain Go tests, slashing, guardian, paypal-sim, gateway and attestor pytest, `attest-test.sh`, `harden-test.sh`, `gov-test.sh`, `upgrade-drill.sh`, then both browser journeys on a fresh 4-validator stack.
+`scripts/test-all.sh` runs everything: chain Go tests, slashing, guardian, paypal-sim, gateway, payments, indexer and attestor pytest, `attest-test.sh`, `harden-test.sh`, `gov-test.sh`, `upgrade-drill.sh`, then both browser journeys on a fresh 4-validator stack.
 
 ## Implementation status
 
@@ -164,14 +181,18 @@ node tests/e2e/gateway-off.js   # static wallet; stops the gateway, then node0 (
 | --- | --- | --- |
 | `chain/` | ✅ V1 | **Cosmos SDK v0.50 + CometBFT v0.38**, **4 validators** by default (BFT: survives 1 faulty node, verified with `scripts/bft-demo.sh`). `x/aurixbank` = `x/auth` + `x/bank` (`uaur`, fixed supply, sequences as nonces, fees); custom `x/smartmoney` module (escrow, k-of-n proof attestation); `x/gov` + `x/upgrade` (params and anchor signers changed by proposal). See [`chain/README.md`](chain/README.md). |
 | `guardian/` | ✅ V1 | FastAPI + LightGBM, SHAP reasons via native TreeSHAP. **Trained on PaySim** (Kaggle, 6.3 M transactions), out-of-time ROC-AUC 0.978 / PR-AUC 0.939. See [`guardian/MODEL_CARD.md`](guardian/MODEL_CARD.md). |
-| `gateway/` | ✅ V1 | FastAPI (variant recommended in the architecture doc). PayPal Orders v2, webhook signature verification, idempotency; first attestor (order `ATTESTING` until the proof is `CONFIRMED`), failed anchors retried; CORS; optional for the wallet. SQLite index (PostgreSQL planned). |
+| `gateway/` | ✅ V1 | FastAPI edge (variant recommended in the architecture doc): wallet API, tx preparation with the signed Guardian quorum, broadcast, dev faucet, CORS; reverse proxy for the indexer and payments services; optional for the wallet. |
+| `payments/` | ✅ V1 | PayPal connector: Orders v2, explicit approval, webhook signature verification, idempotency; first attestor (order `ATTESTING` until the proof is `CONFIRMED`), failed anchors retried. Own SQLite. |
+| `indexer/` | ✅ V1 | Follows the chain block by block into **PostgreSQL** (blocks, txs, address index); serves the explorer and search; balances, escrows and proofs stay live reads from the chain. |
+| `common/` | ✅ | Shared library `aurix_common` used by gateway, payments and indexer. |
 | `attestor/` | ✅ V1 | Independent daemon: polls pending proofs, re-checks each capture at PayPal (status, order id, hash) and attests or refuses. `/health` with attested/refused counts. See [`attestor/README.md`](attestor/README.md). |
 | `paypal-sim/` | 🧪 temporary | Local PayPal API simulator used until the real Sandbox is connected. |
 | `web/` | ✅ V1 | secp256k1 keys generated in the browser; Cosmos txs (`SIGN_MODE_DIRECT`) signed locally and broadcast **directly** to chain nodes with failover (gateway optional). AG Grid explorer. |
 | `api/openapi.json` | ✅ | Generated from the gateway (`create_app().openapi()`). |
 | `deploy/` | ⚠️ | Compose and Render blueprint written; not yet deployed online. See [`deploy/README.md`](deploy/README.md). |
 | `scripts/` | ✅ | `dev-up.sh` (`ATTESTORS=N`, `GUARDIANS=N`), `dev-down.sh`, `test-all.sh`, `attest-test.sh`, `harden-test.sh`, `slashing-test.sh`, `bft-demo.sh`, `gov-test.sh`, `upgrade-drill.sh`. |
-| Indexer, PostgreSQL, Redis | ❌ planned | The gateway reads the chain directly and keeps a SQLite index. |
+| Redis | ❌ planned | Not needed by the MVP. |
+| Research programme | 📝 planned | [`research/PLAN.md`](research/PLAN.md): step-by-step plan to make AURIX's scientific claims measured and reproducible. |
 | Real PayPal Sandbox | ❌ pending | Needs Sandbox credentials; config-only switch. |
 | Demo video, Devpost | 📝 drafted | [`docs/submission/`](docs/submission/devpost.md) |
 

@@ -13,14 +13,38 @@ from app import crypto
 from app.clients import ChainClient, GuardianClient, PayPalClient
 from app.config import Settings
 from app.main import create_app
+from aurix_indexer.config import Settings as IndexerSettings
+from aurix_indexer.main import create_app as indexer_app
+from aurix_payments.config import Settings as PaymentsSettings
+from aurix_payments.main import create_app as payments_app
 
-from .conftest import guardian_transport
+from .conftest import PG, guardian_transport
 
 
-def make(urls, tmp_path, paypal=None, guardian_fail=False):
-    s = Settings(chain_url=urls[0], chain_rest_url=urls[1], database_path=str(tmp_path / "t.db"))
+class SyncingIndexer(TestClient):
+    """The indexer service in-process; it syncs the chain into PostgreSQL before each request so that
+    reads see the latest blocks (the deployed service syncs in a background thread)."""
+
+    def request(self, *args, **kwargs):
+        try:
+            self.app.state.sync()
+        except httpx.HTTPError:
+            pass  # chain down: the index keeps serving what it already has
+        return super().request(*args, **kwargs)
+
+
+def make(urls, tmp_path, paypal=None, guardian_fail=False, indexer_up=True):
+    """The public edge as deployed: gateway + payments service + indexer service (PostgreSQL)."""
     g = GuardianClient("http://guardian", transport=guardian_transport(fail=guardian_fail))
-    return TestClient(create_app(s, chain=ChainClient(*urls), guardian=g, paypal=paypal))
+    chain = ChainClient(*urls)
+    pay = payments_app(PaymentsSettings(chain_url=urls[0], chain_rest_url=urls[1],
+                                        database_path=str(tmp_path / "payments.db")),
+                       chain=chain, guardian=g, paypal=paypal)
+    idx = indexer_app(IndexerSettings(chain_rpc_url=urls[0], chain_rest_url=urls[1], database_url=PG["url"],
+                                      poll_interval=0), chain=chain)
+    s = Settings(chain_url=urls[0], chain_rest_url=urls[1], database_path=str(tmp_path / "t.db"))
+    indexer = SyncingIndexer(idx) if indexer_up else httpx.Client(base_url="http://127.0.0.1:1")
+    return TestClient(create_app(s, chain=chain, guardian=g, indexer=indexer, payments=TestClient(pay)))
 
 
 def funded(c):
@@ -152,10 +176,20 @@ def test_escrow_search(chain_urls, tmp_path):
 def test_chain_down_is_502(tmp_path):
     dead = ("http://127.0.0.1:1", "http://127.0.0.1:1")
     c = make(dead, tmp_path)
-    for path in ("/api/chain/status", "/api/explorer/txs", "/api/explorer/search?q=5",
-                 "/api/explorer/txs/" + "A" * 64, f"/api/wallets/{crypto.Key('ab').address}"):
+    for path in ("/api/chain/status", "/api/explorer/proofs/" + "ab" * 32, f"/api/wallets/{crypto.Key('ab').address}"):
         r = c.get(path)
         assert r.status_code == 502 and "unreachable" in r.json()["detail"], path
+    # the indexer keeps serving the explorer from PostgreSQL while the chain is down
+    assert c.get("/api/explorer/txs").status_code == 200
+
+
+def test_indexer_down_wallet_still_works(chain_urls, tmp_path):
+    c = make(chain_urls, tmp_path, indexer_up=False)
+    k = funded(c)
+    r = c.get("/api/explorer/txs")
+    assert r.status_code == 503 and "indexer service unavailable" in r.json()["detail"]
+    w = c.get(f"/api/wallets/{k.address}").json()  # history falls back to the chain tx search
+    assert w["balance"] == 100 * crypto.MICRO and w["history"][0]["to"] == k.address
 
 
 def test_bad_inputs(chain_urls, tmp_path):

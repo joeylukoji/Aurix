@@ -1,0 +1,8 @@
+fastapi==0.115.6
+uvicorn==0.34.0
+httpx==0.28.1
+cryptography==44.0.0
+pydantic==2.10.4
+pycryptodome==3.21.0
+# Shared AURIX library (path relative to this service directory; see common/).
+-e ../common

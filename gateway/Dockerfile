@@ -1,6 +1,7 @@
-# Build context: repository root (needs gateway/ and web/).
+# Build context: repository root (needs common/, gateway/ and web/).
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+COPY common /srv/common
 WORKDIR /srv/gateway
 COPY gateway/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \

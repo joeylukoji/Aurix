@@ -1,5 +1,5 @@
-"""k-of-n anchoring: the gateway is the first attestor; orders are ANCHORED only once the chain
-proof is CONFIRMED. Uses an in-memory fake chain so thresholds > 1 can be exercised."""
+"""k-of-n anchoring: the payments service is the first attestor; orders are ANCHORED only once the
+chain proof is CONFIRMED. Uses an in-memory fake chain so thresholds > 1 can be exercised."""
 import hashlib
 import re
 import sqlite3
@@ -7,14 +7,14 @@ import time
 
 from fastapi.testclient import TestClient
 
-from app import crypto, proto
-from app.clients import ChainError, GuardianClient, PayPalClient, normalize_proof
-from app.config import Settings
-from app.db import DB
-from app.main import create_app
+from aurix_common import crypto, proto
+from aurix_common.clients import ChainError, GuardianClient, PayPalClient, normalize_proof
+from aurix_common.testing import guardian_transport
+from aurix_payments.config import Settings
+from aurix_payments.db import DB
+from aurix_payments.main import create_app
 
-from .conftest import guardian_transport
-from .test_gateway import SIM
+from .conftest import SIM
 
 GATEWAY = crypto.Key("aurix-dev-gateway").address
 OTHER = crypto.Key("attestor-2").address
@@ -75,6 +75,12 @@ def gateway(tmp_path, monkeypatch, chain):
     return c, TestClient(SIM.app)
 
 
+def chain_proof(c, h: str) -> dict:
+    """The normalised chain proof (the gateway serves it as GET /api/proofs/{hash})."""
+    chain = c.app.state.chain
+    return normalize_proof(chain.proof_raw(h), chain.anchor_threshold())
+
+
 def pay(c, sim):
     oid = c.post("/api/paypal/orders", json={"amount_usd": "10.00"}).json()["order_id"]
     sim.post(f"/sim/orders/{oid}/approve")
@@ -105,7 +111,7 @@ def test_threshold_2_attesting_then_anchored(tmp_path, monkeypatch):
     o = c.get(f"/api/paypal/orders/{oid}").json()
     assert o["status"] == "ATTESTING"
     assert o["attestations"] == {"count": 1, "threshold": 2, "signers": [GATEWAY]}
-    p = c.get(f"/api/proofs/{o['proof_hash']}").json()
+    p = chain_proof(c, o['proof_hash'])
     assert p["status"] == "PENDING" and p["threshold"] == 2 and p["attestations"] == [GATEWAY]
     assert len(chain.txs) == 1
     chain.attest(o["proof_hash"], OTHER)
@@ -113,7 +119,7 @@ def test_threshold_2_attesting_then_anchored(tmp_path, monkeypatch):
     assert o["status"] == "ANCHORED"
     assert o["attestations"] == {"count": 2, "threshold": 2, "signers": [GATEWAY, OTHER]}
     assert c.get("/api/paypal/orders").json()[0]["attestations"]["count"] == 2
-    assert c.get(f"/api/proofs/{o['proof_hash']}").json()["status"] == "CONFIRMED"
+    assert chain_proof(c, o['proof_hash'])["status"] == "CONFIRMED"
 
 
 def test_poller_refresh(tmp_path, monkeypatch):
@@ -131,14 +137,8 @@ def test_legacy_chain_proof_without_status(tmp_path, monkeypatch):
     oid = pay(c, sim)
     o = c.get(f"/api/paypal/orders/{oid}").json()
     assert o["status"] == "ANCHORED" and o["attestations"]["count"] == 1
-    p = c.get(f"/api/proofs/{o['proof_hash']}").json()
+    p = chain_proof(c, o['proof_hash'])
     assert p["status"] == "CONFIRMED" and p["capture_ref"] == "" and p["threshold"] == 1
-
-
-def test_proof_endpoint_errors(tmp_path, monkeypatch):
-    c, _ = gateway(tmp_path, monkeypatch, FakeChain())
-    assert c.get("/api/proofs/nothex").status_code == 400
-    assert c.get("/api/proofs/" + "0" * 64).status_code == 404
 
 
 def test_normalize_proof():
@@ -307,49 +307,3 @@ def test_retry_does_not_double_attest(tmp_path, monkeypatch):
     c.app.state.refresh_pending()
     assert db.one("SELECT status FROM paypal_orders WHERE order_id=?", oid)["status"] == "ATTESTING"
     assert len(chain.txs) == 1
-
-
-class TxChain(FakeChain):
-    def __init__(self):
-        super().__init__()
-        self.known = {}
-
-    def tx(self, h):
-        if h not in self.known:
-            raise ChainError(404, "tx not found")
-        return self.known[h]
-
-
-def test_observed_tx_recorded_from_chain_data(tmp_path, monkeypatch):
-    chain = TxChain()
-    g = guardian_transport()
-    s = Settings(chain_url="http://x", chain_rest_url="http://x", database_path=str(tmp_path / "o.db"),
-                 attest_poll_interval=0)
-    c = TestClient(create_app(s, chain=chain, guardian=GuardianClient("http://g", transport=g), paypal=None))
-    h = "AB" * 32
-    assert c.post("/api/txs/observed", json={"txhash": "zz"}).status_code == 400
-    assert c.post("/api/txs/observed", json={"txhash": h}).status_code == 404
-    chain.known[h] = {"hash": h, "height": 5, "type": "MsgSend", "from": GATEWAY, "to": OTHER, "amount": 3_000_000,
-                      "code": 0}
-    r = c.post("/api/txs/observed", json={"txhash": h.lower(), "amount": 1, "from": "forged"}).json()
-    assert r["recorded"] is True and r["tx"]["from"] == GATEWAY
-    import json as _json
-    body = _json.loads(g.calls[-1].content)
-    assert body["sender"] == GATEWAY and body["amount"] == 3.0  # from chain data, not the client
-    assert c.post("/api/txs/observed", json={"txhash": h}).json()["recorded"] is False  # idempotent
-    assert len(g.calls) == 1
-
-
-def test_cors(tmp_path, monkeypatch):
-    s = Settings(chain_url="http://x", chain_rest_url="http://x", database_path=str(tmp_path / "c.db"),
-                 attest_poll_interval=0, cors_origins=["https://wallet.example"])
-    c = TestClient(create_app(s, chain=TxChain(), guardian=GuardianClient("http://g", transport=guardian_transport()),
-                              paypal=None))
-    r = c.options("/api/health", headers={"Origin": "https://wallet.example", "Access-Control-Request-Method": "POST"})
-    assert r.headers["access-control-allow-origin"] == "https://wallet.example"
-    r = c.get("/api/health", headers={"Origin": "https://evil.example"})
-    assert "access-control-allow-origin" not in r.headers
-    monkeypatch.setenv("CORS_ORIGINS", "")
-    assert Settings().cors_origins == []
-    monkeypatch.delenv("CORS_ORIGINS")
-    assert Settings().cors_origins == ["*"]
