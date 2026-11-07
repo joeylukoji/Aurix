@@ -122,7 +122,7 @@ def main(path: str, drop: list[str] | None = None) -> None:
         "thresholds": [at_threshold(y, p, t) for t in (0.05, 0.1, 0.3, 0.5, 0.7, 0.9)],
         "by_type": {k: {"test_rows": int((test.tx_type == v).sum()), "test_fraud": int(test.y[test.tx_type == v].sum())}
                     for k, v in TX_TYPES.items()},
-        "feature_importance_gain": dict(sorted(zip(feats, map(float, booster.feature_importance("gain"))),
+        "feature_importance_gain": dict(sorted(zip(feats, map(float, booster.feature_importance("gain")), strict=True),
                                                key=lambda kv: -kv[1])),
     }
     OUT.mkdir(exist_ok=True)

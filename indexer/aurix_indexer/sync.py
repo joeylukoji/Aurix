@@ -25,9 +25,10 @@ def block_metas(chain: ChainClient, low: int, high: int) -> list[dict]:
     return sorted(metas, key=lambda m: m["height"])
 
 
-def block_txs(chain: ChainClient, height: int, expected: int) -> list[dict]:
-    txs = chain.search_txs(f"tx.height={height}", TX_PAGE)
-    if len(txs) < expected:  # pagination is not implemented: never silently skip txs
+def block_txs(chain: ChainClient, height: int, expected: int, page_size: int = TX_PAGE) -> list[dict]:
+    """All txs of a block (paginated tx search); never silently skips txs."""
+    txs = chain.search_txs_all(f"tx.height={height}", page_size=page_size)
+    if len(txs) != expected:
         raise RuntimeError(f"block {height}: {len(txs)} of {expected} txs returned by the tx search")
     return txs
 

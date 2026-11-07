@@ -6,6 +6,7 @@ proof on AURIX as the first k-of-n attestor. It never creates or moves AUR.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -59,7 +60,17 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
     gateway_key = load_key("GATEWAY", default_seed=s.gateway_seed)  # anchor signer (see config.py)
     signer_lock = threading.Lock()
 
-    app = FastAPI(title="AURIX Payments (PayPal connector)", version="0.1.0")
+    stop = threading.Event()
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        if s.attest_poll_interval > 0:
+            threading.Thread(target=poller, name="attest-poller", daemon=True).start()
+        yield
+        stop.set()
+        db.close()
+
+    app = FastAPI(title="AURIX Payments (PayPal connector)", version="0.1.0", lifespan=lifespan)
     app.state.db, app.state.chain = db, chain
     if s.cors_origins:
         app.add_middleware(CORSMiddleware, allow_origins=s.cors_origins, allow_methods=["*"],
@@ -180,23 +191,12 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
         o["attestations"] = {"count": len(signers), "threshold": thr or 1, "signers": signers}
         return o
 
-    stop = threading.Event()
-
     def poller():
         while not stop.wait(s.attest_poll_interval):
             try:
                 refresh_pending()
             except Exception:  # never let the poller die
                 log.exception("attestation poller error")
-
-    @app.on_event("startup")
-    def _start_poller():
-        if s.attest_poll_interval > 0:
-            threading.Thread(target=poller, name="attest-poller", daemon=True).start()
-
-    @app.on_event("shutdown")
-    def _stop_poller():
-        stop.set()
 
     def handle_event(event: dict) -> str:
         """Processes a verified PayPal webhook event. Idempotent by event id."""

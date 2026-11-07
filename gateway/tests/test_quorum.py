@@ -77,7 +77,6 @@ def test_verifies_real_guardian_signature():
     import hashlib
     import pathlib
     import subprocess
-    import sys
     g = pathlib.Path(__file__).resolve().parents[2] / "guardian"
     py = g / ".venv/bin/python"
     if not py.exists():

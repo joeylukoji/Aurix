@@ -7,6 +7,8 @@
 # Ports: PORT_BASE (default 40000) + node*100.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=lib-net.sh
+source "$ROOT/scripts/lib-net.sh"
 BIN=${AURIXD:-$ROOT/chain/build/aurixd}
 BASE=${PORT_BASE:-40000}
 NET=$(mktemp -d /tmp/aurix-slash-XXXX)
@@ -35,7 +37,7 @@ wait_for() { # seconds description cmd...
   echo "FAIL: timed out waiting for $d" >&2; exit 1
 }
 
-wait_for 60 "first blocks" bash -c "[[ \$(curl -fsS http://127.0.0.1:$((BASE + 57))/status 2>/dev/null | jq -r .result.sync_info.latest_block_height) -ge 3 ]]"
+wait_first_blocks 3
 echo "network up at height $(height); validator 3 = $VAL3"
 [[ $(jailed) == false ]] || { echo "FAIL: validator 3 jailed at start" >&2; exit 1; }
 

@@ -2,7 +2,6 @@ import os
 import sys
 from pathlib import Path
 
-import httpx
 import pytest
 
 os.environ["AURIX_NO_AUTOAPP"] = "1"

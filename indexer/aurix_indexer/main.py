@@ -5,6 +5,7 @@ Read-only and rebuildable: balances, escrows and proofs are always read live fro
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
@@ -29,7 +30,17 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
     s = settings or Settings()
     chain = chain or ChainClient(s.chain_rpc_url, s.chain_rest_url)
     db = db or DB(s.database_url)
-    app = FastAPI(title="AURIX Indexer", version="0.1.0")
+    stop = threading.Event()
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        if s.poll_interval > 0:
+            threading.Thread(target=loop, name="indexer-sync", daemon=True).start()
+        yield
+        stop.set()
+        db.close()
+
+    app = FastAPI(title="AURIX Indexer", version="0.1.0", lifespan=lifespan)
     app.state.db, app.state.chain = db, chain
     app.state.sync = lambda: sync_once(chain, db, s.start_height)
     if s.cors_origins:
@@ -44,7 +55,6 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
     def _chain_down(_: Request, e: httpx.HTTPError):
         return JSONResponse(status_code=502, content={"detail": f"chain node unreachable: {type(e).__name__}"})
 
-    stop = threading.Event()
     state = {"last_error": None}
 
     def loop():
@@ -55,15 +65,6 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
             except Exception as e:  # keep following the chain whatever happens
                 state["last_error"] = f"{type(e).__name__}: {e}"
                 log.warning("sync failed: %s", state["last_error"])
-
-    @app.on_event("startup")
-    def _start():
-        if s.poll_interval > 0:
-            threading.Thread(target=loop, name="indexer-sync", daemon=True).start()
-
-    @app.on_event("shutdown")
-    def _stop():
-        stop.set()
 
     @app.get("/health")
     def health():

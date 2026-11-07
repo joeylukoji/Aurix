@@ -70,7 +70,8 @@ def key_from_mnemonic(mnemonic: str, path: str = COSMOS_PATH) -> Key:
 def key_from_file(path: str) -> Key:
     try:
         st = os.stat(path)
-        raw = open(path).read().strip().removeprefix("0x")
+        with open(path, encoding="utf-8") as f:
+            raw = f.read().strip().removeprefix("0x")
     except OSError as e:
         raise KeyConfigError(f"cannot read key file {path}: {e}") from None
     if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):

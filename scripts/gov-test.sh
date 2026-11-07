@@ -7,6 +7,8 @@
 # Voting period 20 s (expedited 10 s). Ports: PORT_BASE (default 42000) + node*100.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=lib-net.sh
+source "$ROOT/scripts/lib-net.sh"
 BIN=${AURIXD:-$ROOT/chain/build/aurixd}
 BASE=${PORT_BASE:-42000}
 CHAIN_ID=aurix-testnet-1
@@ -44,7 +46,7 @@ wait_for() { # seconds description cmd...
   for ((s = 0; s < t; s++)); do if "$@"; then return 0; fi; sleep 1; done
   fail "timed out waiting for $d"
 }
-wait_for 60 "first blocks" bash -c "[[ \$(curl -fsS http://127.0.0.1:$((BASE + 57))/status 2>/dev/null | jq -r .result.sync_info.latest_block_height) -ge 2 ]]"
+wait_first_blocks 2
 echo "network up at height $(height)"
 
 GOV=$(q auth module-account gov | jq -r '.account.value.address // .account.base_account.address // .account.address')

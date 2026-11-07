@@ -93,3 +93,20 @@ def test_chain_down_is_502(pg_url):
     assert c.get("/health").json()["chain_height"] is None
 
 
+
+
+def test_tx_search_pagination(env):
+    """Blocks with more txs than one search page (100) are indexed completely: same code path, page size 1."""
+    from aurix_indexer.sync import block_txs
+
+    c, chain = env
+    faucet = crypto.Key("aurix-dev-faucet")
+    sent = [send(chain, faucet, crypto.Key(f"page-{i}").address, 1) for i in range(3)]
+    found = chain.search_txs_all(f"message.sender='{faucet.address}'", page_size=1)
+    assert {t["hash"] for t in sent} <= {t["hash"] for t in found}
+    assert [t["height"] for t in found] == sorted(t["height"] for t in found)  # oldest first
+    h = sent[0]["height"]
+    n = len(chain.search_txs(f"tx.height={h}", 100))
+    assert len(block_txs(chain, h, n, page_size=1)) == n
+    with pytest.raises(RuntimeError):
+        block_txs(chain, h, n + 1, page_size=1)  # a mismatch is an error, never a silent skip

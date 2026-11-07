@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from attestor import crypto, keys
-from attestor.service import Attestor, Config, normalize_amount, proof_hash
+from attestor.service import Attestor, Config, Refused, normalize_amount, proof_hash
 
 SEED = "attestor test seed"
 ORDER, CAPTURE = "5O190127TN364715T", "3C679366HH908993F"
@@ -213,7 +213,7 @@ def test_amount_normalisation():
     assert normalize_amount("12.5") == normalize_amount("12.50") == "12.50"
     assert normalize_amount("12") == "12.00"
     for bad in ("0", "-1", "abc", "1.005", "NaN", "Infinity"):
-        with pytest.raises(Exception):
+        with pytest.raises(Refused):
             normalize_amount(bad)
     # proof "12.5" vs capture "12.50" -> attested; the tx carries the proof's own string
     att, fake = make([proof(amount="12.5")], capture())

@@ -139,6 +139,19 @@ class ChainClient:
         body = self._get("/cosmos/tx/v1beta1/txs", query=query, order_by="ORDER_BY_DESC", limit=limit)
         return [normalize_tx(t) for t in body.get("tx_responses") or []]
 
+    def search_txs_all(self, query: str, page_size: int = 100, max_pages: int = 1000) -> list:
+        """Every tx matching `query` (oldest first), following the tx search pages."""
+        out: list = []
+        for page in range(1, max_pages + 1):
+            body = self._get("/cosmos/tx/v1beta1/txs", query=query, order_by="ORDER_BY_ASC",
+                             page=page, limit=page_size)
+            batch = body.get("tx_responses") or []
+            out += [normalize_tx(t) for t in batch]
+            total = int(body.get("total") or 0)
+            if len(batch) < page_size or (total and len(out) >= total):
+                return out
+        raise ChainError(500, f"tx search for {query!r} exceeded {max_pages} pages")
+
     def block(self, height: int) -> dict:
         r = self.rpc.get("/block", params={"height": height}).json()
         if "result" not in r:

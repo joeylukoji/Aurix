@@ -33,6 +33,10 @@ class DB:
         with self.lock:
             self.conn.execute(SCHEMA)
 
+    def close(self) -> None:
+        with self.lock:
+            self.conn.close()
+
     def get_meta(self, key: str, default: str | None = None) -> str | None:
         with self.lock:
             r = self.conn.execute("SELECT value FROM meta WHERE key=%s", (key,)).fetchone()

@@ -40,6 +40,10 @@ class DB:
                 if name not in have:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {typ}")
 
+    def close(self) -> None:
+        with self.lock:
+            self.conn.close()
+
     def exec(self, sql: str, *args):
         with self.lock:
             return self.conn.execute(sql, args)
