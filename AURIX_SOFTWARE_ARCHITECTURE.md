@@ -85,7 +85,8 @@ flowchart TB
 | `MsgCreateEscrow` | smartmoney | Locks the sender's AUR until a condition or a deadline |
 | `MsgReleaseEscrow` | smartmoney | Releases funds to the recipient if the condition is met |
 | `MsgRefundEscrow` | smartmoney | Refunds the sender (deadline passed or authorised cancellation) |
-| `MsgAnchorProof` | smartmoney | Records the tracking proof of an external payment (hash only) |
+| `MsgAnchorProof` | smartmoney | One **attestation** of the tracking proof of an external payment (hash, order ref, capture ref). Only `anchor_signers` may attest; the proof is `PENDING` until `anchor_threshold` distinct signers attested, then `CONFIRMED` (events `proof_attested`, `proof_confirmed`) |
+| `MsgUpdateParams` | smartmoney | Changes `anchor_signers` / `anchor_threshold`; authority = `x/gov` module account (proposal only) |
 
 > **[Proposal]** `MsgAnchorProof` is not in document v1.1, which speaks of "attaching a tracking proof". It materialises that link. It neither creates nor moves any AUR.
 
@@ -168,7 +169,8 @@ Content-Type: application/json
 | Capture | Only after explicit human approval |
 | Webhook | Signature checked via PayPal's verification API; rejected if invalid |
 | Idempotency | The PayPal event ID is stored with a uniqueness constraint; a duplicate is ignored with an HTTP 200 success |
-| Proof | After confirmed capture, `MsgAnchorProof` with the hash of the order ID and capture ID |
+| Proof | After confirmed capture, the gateway sends its `MsgAnchorProof` (hash of order ID and capture ID, plus both refs) as the **first attestor**; the order is `ATTESTING` until independent attestors (`attestor/`, each re-reading the capture at PayPal) bring the proof to `CONFIRMED`, then `ANCHORED`. A failed anchor is retried (webhook redelivery or background poller) |
+| Wallet independence | The web wallet reads and broadcasts directly to chain nodes (failover across endpoints); the gateway is optional (PayPal, Guardian, faucet), allows CORS, and records directly-broadcast payments in Guardian history via `POST /api/txs/observed` (re-read from the chain) |
 
 PayPal client IDs and secrets are read from environment variables, never committed.
 
@@ -207,8 +209,13 @@ sequenceDiagram
     P-->>G: Signed webhook
     G->>G: Checks signature, idempotency
     G->>D: Records the event
-    G->>C: MsgAnchorProof (hash)
-    C-->>G: Block confirmed
+    G->>C: MsgAnchorProof (hash) = attestation 1/k
+    C-->>G: Proof PENDING (order ATTESTING)
+    participant A as Attestors
+    A->>C: Poll pending proofs
+    A->>P: GET capture (status, order id)
+    A->>C: MsgAnchorProof = attestation 2..k
+    C-->>G: Proof CONFIRMED (order ANCHORED)
     G-->>W: Proof visible in the explorer
 ```
 

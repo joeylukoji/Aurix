@@ -19,6 +19,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -58,6 +59,10 @@ class SignedTx(BaseModel):
     tx_bytes: str = Field(description="base64 protobuf TxRaw signed by the user's key (SIGN_MODE_DIRECT)")
 
 
+class ObservedTx(BaseModel):
+    txhash: str = Field(description="hash of a tx the wallet broadcast directly to a chain node")
+
+
 class OrderReq(BaseModel):
     amount_usd: str
     payer: str | None = None
@@ -83,6 +88,9 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
 
     app = FastAPI(title="AURIX API Gateway", version="0.1.0")
     app.state.db = db
+    if s.cors_origins:  # a statically deployed wallet (other origin) may call the gateway/faucet
+        app.add_middleware(CORSMiddleware, allow_origins=s.cors_origins, allow_methods=["*"],
+                           allow_headers=["*"], allow_credentials=False)
 
     @app.exception_handler(PayPalError)
     def _paypal_err(_: Request, e: PayPalError):
@@ -186,12 +194,34 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
         except binascii.Error:
             raise HTTPException(400, "tx_bytes must be base64")
         res = chain.broadcast(raw)
-        if res["type"] in RISKY_TYPES:
-            # record in Guardian history (advisory; ignored if unavailable)
-            r = guardian.score(context="aur_transfer", sender=res["from"], recipient=res.get("to") or "",
-                               amount=(res.get("amount") or 1) / crypto.MICRO, currency="AUR")
-            db.save_risk("aur_tx", res["hash"], r)
+        record_history(res)
         return res
+
+    def record_history(res: dict) -> bool:
+        """Records an included AUR transfer/escrow in Guardian history (advisory; ignored if unavailable).
+        Idempotent per tx hash."""
+        if res["type"] not in RISKY_TYPES or res.get("code") or \
+                db.one("SELECT id FROM risk_scores WHERE context='aur_tx' AND ref=?", res["hash"]):
+            return False
+        r = guardian.score(context="aur_transfer", sender=res["from"], recipient=res.get("to") or "",
+                           amount=(res.get("amount") or 1) / crypto.MICRO, currency="AUR")
+        db.save_risk("aur_tx", res["hash"], r)
+        return r is not None
+
+    @app.post("/api/txs/observed")
+    def observed(req: ObservedTx):
+        """Called by the wallet after it broadcast a tx directly to a node. The gateway fetches the tx
+        from the chain itself and never trusts client-supplied fields."""
+        h = req.txhash.strip().upper()
+        if not re.fullmatch(r"[0-9A-F]{64}", h):
+            raise HTTPException(400, "txhash must be 64 hex characters")
+        try:
+            res = chain.tx(h)
+        except ChainError as e:
+            if e.status >= 500 and "not found" not in e.detail.lower():
+                raise
+            raise HTTPException(404, "tx not found on chain (not yet included?)")
+        return {"tx": res, "recorded": record_history(res)}
 
     @app.get("/api/escrows")
     def escrows():
@@ -287,13 +317,20 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
         The order stays ATTESTING until the chain proof is CONFIRMED by k-of-n attestors."""
         h = hashlib.sha256(f"{order_id}|{capture_id}".encode()).hexdigest()
         ref = f"paypal:{order_id}"
-        try:
-            res = sign_and_send(gateway_key, crypto.msg_anchor_proof(gateway_key.address, h, ref, capture_id))
-        except ChainError as e:
-            if "unknownfield" not in e.detail.lower().replace(" ", ""):
-                raise
-            # chain predating k-of-n attestation: MsgAnchorProof has no capture_ref yet
-            res = sign_and_send(gateway_key, crypto.msg_anchor_proof(gateway_key.address, h, ref))
+        try:  # a retry after a lost broadcast result: our attestation may already be on chain
+            existing = chain.proof_raw(h)
+        except (ChainError, httpx.HTTPError):
+            existing = None
+        if existing and gateway_key.address in (existing.get("attestations") or [existing.get("submitter")]):
+            res = {"hash": None, "height": int(existing.get("first_seen_height") or existing.get("height") or 0)}
+        else:
+            try:
+                res = sign_and_send(gateway_key, crypto.msg_anchor_proof(gateway_key.address, h, ref, capture_id))
+            except ChainError as e:
+                if "unknownfield" not in e.detail.lower().replace(" ", ""):
+                    raise
+                # chain predating k-of-n attestation: MsgAnchorProof has no capture_ref yet
+                res = sign_and_send(gateway_key, crypto.msg_anchor_proof(gateway_key.address, h, ref))
         db.update_order(order_id, status="ATTESTING", capture_id=capture_id, proof_hash=h,
                         anchor_tx=res["hash"], anchor_height=res["height"])
         refresh_attestation(order_id)
@@ -314,7 +351,18 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
             fields["status"] = "ANCHORED"
         db.update_order(order_id, **fields)
 
+    def retry_unanchored() -> None:
+        """CONFIRMED orders (PayPal capture webhook verified) whose anchoring failed: try again."""
+        for o in db.all("SELECT order_id, capture_id FROM paypal_orders WHERE status='CONFIRMED'"
+                        " AND capture_id IS NOT NULL AND proof_hash IS NULL"):
+            try:
+                anchor(o["order_id"], o["capture_id"])
+                log.info("anchored %s on retry", o["order_id"])
+            except (ChainError, httpx.HTTPError) as e:
+                log.warning("anchor retry for %s failed: %s", o["order_id"], e)
+
     def refresh_pending() -> None:
+        retry_unanchored()
         for o in db.all("SELECT order_id FROM paypal_orders WHERE status='ATTESTING'"):
             refresh_attestation(o["order_id"])
 
@@ -355,7 +403,13 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
         if not order or order["status"] in ("ATTESTING", "ANCHORED"):
             return "ignored"
         db.update_order(order_id, status="CONFIRMED", capture_id=resource.get("id"))
-        anchor(order_id, resource["id"])
+        try:
+            anchor(order_id, resource["id"])
+        except Exception:
+            # Forget the event so PayPal's redelivery is processed again (the poller also retries
+            # CONFIRMED orders without a proof); the webhook answers 5xx, which makes PayPal retry.
+            db.forget_event(event["id"])
+            raise
         return "anchored" if get_order(order_id)["status"] == "ANCHORED" else "attesting"
 
     @app.post("/api/paypal/orders")

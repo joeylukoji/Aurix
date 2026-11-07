@@ -38,7 +38,12 @@ let txQueue = Promise.resolve();
 function signAndSend(msg) {
   const run = txQueue.then(async () => {
     const p = await C.prepare(wallet.address, msg); // account number, sequence, chain id from the chain
-    return C.broadcast(AurixTx.signTx(wallet, p));
+    const res = await C.broadcast(AurixTx.signTx(wallet, p));
+    // Direct broadcast bypassed the gateway: let it record the payment in Guardian history.
+    // The gateway re-reads the tx from the chain (never trusts us) and dedupes by hash.
+    if (C.gatewayOk && res && res.hash && (msg.type === "MsgSend" || msg.type === "MsgCreateEscrow"))
+      api("/api/txs/observed", { method: "POST", body: { txhash: res.hash } }).catch(() => {});
+    return res;
   });
   txQueue = run.catch(() => {});
   return run;
@@ -248,7 +253,14 @@ async function search(q) {
 }
 window.explorerSearch = search;
 
+let statusTick = 0;
 async function refreshStatus() {
+  // The gateway is optional and may come and go: re-detect it every ~9 s.
+  if (++statusTick % 3 === 0) {
+    const was = C.gatewayOk;
+    await C.detectGateway().catch(() => {});
+    if (was !== C.gatewayOk) { applyGateway(); toast(C.gatewayOk ? "Gateway back online" : "Gateway unreachable: PayPal and risk scoring are off"); }
+  }
   try {
     const s = await C.status();
     const ep = C.activeEndpoint;

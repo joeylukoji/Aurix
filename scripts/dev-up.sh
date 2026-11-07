@@ -6,6 +6,9 @@
 # VALIDATORS (default 4): number of validator nodes; node i uses the ports above + i*VALIDATOR_PORT_STEP
 # (default 1000). The gateway talks to node0. AURIX_NET_HOME (default $RUN_DIR/chain-net),
 # RUN_DIR (pids+logs, default $ROOT/.run).
+# ATTESTORS (default 0): extra independent PayPal attestors (attestor/). Attestor i (1..N) uses seed
+# "aurix-dev-attestor-i" (override ATTESTOR_SEED_PREFIX), talks to node i (mod VALIDATORS), serves
+# /health on ATTESTOR_PORT(8095)+i-1. ANCHOR_THRESHOLD (default 1) = attestations needed per proof.
 # Stop with scripts/dev-down.sh (same RUN_DIR).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -14,6 +17,8 @@ RPC_PORT=${RPC_PORT:-$((26657+OFF))}; REST_PORT=${REST_PORT:-$((1317+OFF))}
 GRPC_PORT=${GRPC_PORT:-$((9090+OFF))}; P2P_PORT=${P2P_PORT:-$((26656+OFF))}; PROM_PORT=${PROM_PORT:-$((26660+OFF))}
 GUARDIAN_PORT=${GUARDIAN_PORT:-$((8000+OFF))}; SIM_PORT=${SIM_PORT:-$((8090+OFF))}
 GATEWAY_PORT=${GATEWAY_PORT:-$((8080+OFF))}
+ATTESTORS=${ATTESTORS:-0}; ATTESTOR_PORT=${ATTESTOR_PORT:-$((8095+OFF))}
+ATTESTOR_SEED_PREFIX=${ATTESTOR_SEED_PREFIX:-aurix-dev-attestor-}
 RUN_DIR=${RUN_DIR:-$ROOT/.run}; mkdir -p "$RUN_DIR"
 export AURIX_NET_HOME=${AURIX_NET_HOME:-$RUN_DIR/chain-net}
 VALIDATORS=${VALIDATORS:-4}; STEP=${VALIDATOR_PORT_STEP:-1000}
@@ -22,6 +27,7 @@ BIN=$ROOT/chain/build/aurixd
 log() { echo "[dev-up] $*"; }
 port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 PORTS=($GUARDIAN_PORT $SIM_PORT $GATEWAY_PORT)
+for ((i = 0; i < ATTESTORS; i++)); do PORTS+=($((ATTESTOR_PORT + i))); done
 for ((i = 0; i < VALIDATORS; i++)); do
   PORTS+=($((RPC_PORT + i * STEP)) $((REST_PORT + i * STEP)) $((GRPC_PORT + i * STEP)) $((P2P_PORT + i * STEP)) $((PROM_PORT + i * STEP)))
 done
@@ -50,9 +56,17 @@ venv() { # dir
 }
 
 log "building aurixd"; (cd "$ROOT/chain" && go build -o build/aurixd ./cmd/aurixd)
-AURIXD=$BIN VALIDATORS=$VALIDATORS PORT_STEP=$STEP RPC_PORT=$RPC_PORT REST_PORT=$REST_PORT \
+SEEDS=""; for ((i = 1; i <= ATTESTORS; i++)); do SEEDS+="${SEEDS:+ }$ATTESTOR_SEED_PREFIX$i"; done
+INIT_ENV=()
+if ((ATTESTORS > 0)); then INIT_ENV+=(ATTESTOR_SEEDS="$SEEDS"); fi
+if [[ -n "${ANCHOR_THRESHOLD:-}" ]]; then INIT_ENV+=(ANCHOR_THRESHOLD="$ANCHOR_THRESHOLD"); fi
+env "${INIT_ENV[@]}" AURIXD=$BIN VALIDATORS=$VALIDATORS PORT_STEP=$STEP RPC_PORT=$RPC_PORT REST_PORT=$REST_PORT \
   GRPC_PORT=$GRPC_PORT P2P_PORT=$P2P_PORT PROM_PORT=$PROM_PORT "$ROOT/chain/scripts/init-localnet.sh"
 for d in guardian paypal-sim gateway; do venv "$ROOT/$d"; done
+if ((ATTESTORS > 0)) && ! "$ROOT/attestor/.venv/bin/python" -c "import httpx, cryptography, Crypto" 2>/dev/null; then
+  log "creating venv in $ROOT/attestor"; python3 -m venv "$ROOT/attestor/.venv"
+  "$ROOT/attestor/.venv/bin/pip" install -q -r "$ROOT/attestor/requirements.txt"
+fi
 
 for ((i = 0; i < VALIDATORS; i++)); do  # ports and peers are written in each node's config
   start "chain$i" "$ROOT/chain" "$BIN" start --home "$AURIX_NET_HOME/node$i"
@@ -81,4 +95,13 @@ PAYPAL_CLIENT_SECRET=sim-client-secret PAYPAL_WEBHOOK_ID=SIM-WEBHOOK-ID \
 SIM_WEBHOOK_URL="http://127.0.0.1:$GATEWAY_PORT/api/paypal/webhook" SIM_PUBLIC_URL="http://localhost:$SIM_PORT" \
   start gateway "$ROOT/gateway" .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port "$GATEWAY_PORT"
 wait_for gateway "http://127.0.0.1:$GATEWAY_PORT/api/health"
+CHAIN_ID=$(curl -fsS "http://127.0.0.1:$RPC_PORT/status" | jq -r .result.node_info.network)
+for ((i = 1; i <= ATTESTORS; i++)); do
+  n=$((i % VALIDATORS))
+  ATTESTOR_SEED="$ATTESTOR_SEED_PREFIX$i" CHAIN_REST="http://127.0.0.1:$((REST_PORT + n * STEP))" CHAIN_ID=$CHAIN_ID \
+  PAYPAL_BASE_URL="http://127.0.0.1:$SIM_PORT" PAYPAL_CLIENT_ID=sim-client-id PAYPAL_CLIENT_SECRET=sim-client-secret \
+  POLL_INTERVAL=${ATTESTOR_POLL_INTERVAL:-1} ATTESTOR_PORT=$((ATTESTOR_PORT + i - 1)) \
+    start "attestor$i" "$ROOT/attestor" .venv/bin/python -m attestor
+  wait_for "attestor$i" "http://127.0.0.1:$((ATTESTOR_PORT + i - 1))/health"
+done
 log "AURIX up: http://localhost:$GATEWAY_PORT  (run dir $RUN_DIR)"

@@ -171,3 +171,120 @@ def test_db_migrates_old_schema(tmp_path):
     row = DB(str(path)).one("SELECT * FROM paypal_orders WHERE order_id='O1'")
     assert "attestations" in row and "attest_threshold" in row
     DB(str(path))  # idempotent
+
+
+class FlakyChain(FakeChain):
+    """Rejects the first `fail` anchor broadcasts (node down / mempool full)."""
+
+    def __init__(self, fail=1, **kw):
+        super().__init__(**kw)
+        self.fail = fail
+
+    def broadcast(self, tx: bytes):
+        if self.fail:
+            self.fail -= 1
+            raise ChainError(502, "node unavailable")
+        return super().broadcast(tx)
+
+
+def _capture_webhook(monkeypatch):
+    sent = []
+    monkeypatch.setattr(SIM.httpx, "post", lambda url, json, headers, timeout: sent.append((json, headers)) or
+                        type("R", (), {"status_code": 200, "text": ""})())
+    return sent
+
+
+def test_failed_anchor_is_retried_on_redelivery(tmp_path, monkeypatch):
+    chain = FlakyChain(fail=1, threshold=1)
+    c, sim = gateway(tmp_path, monkeypatch, chain)
+    sent = _capture_webhook(monkeypatch)
+    oid = c.post("/api/paypal/orders", json={"amount_usd": "5.00"}).json()["order_id"]
+    sim.post(f"/sim/orders/{oid}/approve")
+    c.post(f"/api/paypal/orders/{oid}/approve", json={"confirm": True})
+    end = time.time() + 5
+    while not sent:
+        assert time.time() < end
+        time.sleep(0.05)
+    event, headers = sent[0]
+    assert c.post("/api/paypal/webhook", json=event, headers=headers).status_code >= 400
+    assert c.get(f"/api/paypal/orders/{oid}").json()["status"] == "CONFIRMED"
+    # PayPal redelivers the same event: it must not be dropped as a duplicate
+    assert c.post("/api/paypal/webhook", json=event, headers=headers).json()["result"] == "anchored"
+    assert c.get(f"/api/paypal/orders/{oid}").json()["status"] == "ANCHORED"
+    assert c.post("/api/paypal/webhook", json=event, headers=headers).json()["result"] == "duplicate"
+
+
+def test_failed_anchor_is_retried_by_poller(tmp_path, monkeypatch):
+    chain = FlakyChain(fail=1, threshold=1)
+    c, sim = gateway(tmp_path, monkeypatch, chain)
+    sent = _capture_webhook(monkeypatch)
+    oid = c.post("/api/paypal/orders", json={"amount_usd": "5.00"}).json()["order_id"]
+    sim.post(f"/sim/orders/{oid}/approve")
+    c.post(f"/api/paypal/orders/{oid}/approve", json={"confirm": True})
+    end = time.time() + 5
+    while not sent:
+        assert time.time() < end
+        time.sleep(0.05)
+    c.post("/api/paypal/webhook", json=sent[0][0], headers=sent[0][1])
+    assert c.get(f"/api/paypal/orders/{oid}").json()["status"] == "CONFIRMED"
+    c.app.state.refresh_pending()
+    o = c.get(f"/api/paypal/orders/{oid}").json()
+    assert o["status"] == "ANCHORED" and len(chain.txs) == 1
+
+
+def test_retry_does_not_double_attest(tmp_path, monkeypatch):
+    """Broadcast went through but its result was lost: the retry sees our attestation on chain."""
+    chain = FakeChain(threshold=2)
+    c, sim = gateway(tmp_path, monkeypatch, chain)
+    oid = pay(c, sim)
+    db = c.app.state.db
+    db.update_order(oid, status="CONFIRMED", proof_hash=None)
+    c.app.state.refresh_pending()
+    assert db.one("SELECT status FROM paypal_orders WHERE order_id=?", oid)["status"] == "ATTESTING"
+    assert len(chain.txs) == 1
+
+
+class TxChain(FakeChain):
+    def __init__(self):
+        super().__init__()
+        self.known = {}
+
+    def tx(self, h):
+        if h not in self.known:
+            raise ChainError(404, "tx not found")
+        return self.known[h]
+
+
+def test_observed_tx_recorded_from_chain_data(tmp_path, monkeypatch):
+    chain = TxChain()
+    g = guardian_transport()
+    s = Settings(chain_url="http://x", chain_rest_url="http://x", database_path=str(tmp_path / "o.db"),
+                 attest_poll_interval=0)
+    c = TestClient(create_app(s, chain=chain, guardian=GuardianClient("http://g", transport=g), paypal=None))
+    h = "AB" * 32
+    assert c.post("/api/txs/observed", json={"txhash": "zz"}).status_code == 400
+    assert c.post("/api/txs/observed", json={"txhash": h}).status_code == 404
+    chain.known[h] = {"hash": h, "height": 5, "type": "MsgSend", "from": GATEWAY, "to": OTHER, "amount": 3_000_000,
+                      "code": 0}
+    r = c.post("/api/txs/observed", json={"txhash": h.lower(), "amount": 1, "from": "forged"}).json()
+    assert r["recorded"] is True and r["tx"]["from"] == GATEWAY
+    import json as _json
+    body = _json.loads(g.calls[-1].content)
+    assert body["sender"] == GATEWAY and body["amount"] == 3.0  # from chain data, not the client
+    assert c.post("/api/txs/observed", json={"txhash": h}).json()["recorded"] is False  # idempotent
+    assert len(g.calls) == 1
+
+
+def test_cors(tmp_path, monkeypatch):
+    s = Settings(chain_url="http://x", chain_rest_url="http://x", database_path=str(tmp_path / "c.db"),
+                 attest_poll_interval=0, cors_origins=["https://wallet.example"])
+    c = TestClient(create_app(s, chain=TxChain(), guardian=GuardianClient("http://g", transport=guardian_transport()),
+                              paypal=None))
+    r = c.options("/api/health", headers={"Origin": "https://wallet.example", "Access-Control-Request-Method": "POST"})
+    assert r.headers["access-control-allow-origin"] == "https://wallet.example"
+    r = c.get("/api/health", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in r.headers
+    monkeypatch.setenv("CORS_ORIGINS", "")
+    assert Settings().cors_origins == []
+    monkeypatch.delenv("CORS_ORIGINS")
+    assert Settings().cors_origins == ["*"]

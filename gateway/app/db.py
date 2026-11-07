@@ -61,6 +61,10 @@ class DB:
         except sqlite3.IntegrityError:
             return False
 
+    def forget_event(self, event_id: str):
+        """Undoes record_event_once when processing failed, so a redelivery is handled again."""
+        self.exec("DELETE FROM webhook_events WHERE event_id=?", event_id)
+
     def save_risk(self, context: str, ref: str, risk: dict | None):
         if risk:
             self.exec("INSERT INTO risk_scores(context, ref, score, level, reasons, model_version) VALUES (?,?,?,?,?,?)",

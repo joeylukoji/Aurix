@@ -31,7 +31,7 @@ AURIX is a testnet monetary protocol where an AI assesses a payment **before** i
 | **AURIX Wallet & Transfer** | Create a demo wallet, check the balance, send/receive AUR (CometBFT consensus) |
 | **Smart Money** | Finite-state escrow: lock, release on condition, refund at deadline |
 | **Neural Guardian** | Advisory risk score with explained reasons (SHAP) before confirmation |
-| **PayPal connector** | USD payment via PayPal Orders API (local simulator now, Sandbox next), signed and idempotent webhook, tracking proof anchored on AURIX |
+| **PayPal connector** | USD payment via PayPal Orders API (local simulator now, Sandbox next), signed and idempotent webhook, tracking proof anchored on AURIX once **k-of-n independent attestors** confirmed the capture at PayPal |
 
 ## Architecture
 
@@ -46,12 +46,17 @@ Four layers; the core depends on no upper layer:
 
 ```mermaid
 flowchart LR
-    U[Web wallet<br/>browser signing] --> GW[API Gateway :8080<br/>FastAPI + SQLite]
+    U[Web wallet<br/>browser signing] -- direct REST, failover --> CHAIN[AURIX nodes aurixd<br/>Cosmos SDK + CometBFT<br/>RPC :26657, REST :1317]
+    U -. optional .-> GW[API Gateway :8080<br/>FastAPI + SQLite<br/>attestor #1]
     GW --> AI[Neural Guardian :8000]
     GW --> PP[PayPal simulator :8090<br/>Sandbox later]
     PP -- signed webhook --> GW
-    GW --> CHAIN[AURIX node aurixd<br/>Cosmos SDK + CometBFT<br/>RPC :26657, REST :1317]
+    GW -- MsgAnchorProof --> CHAIN
+    AT[Attestors attestor/<br/>independent operators] -- read capture --> PP
+    AT -- MsgAnchorProof --> CHAIN
 ```
+
+The wallet reads and broadcasts **directly** against chain nodes (`web/config.json`, `?nodes=` URL override, Settings panel), so it keeps working when the gateway is down; the gateway is only needed for PayPal, Neural Guardian scoring and the dev faucet. A PayPal proof is `PENDING` on chain until `anchor_threshold` of the `anchor_signers` (gateway + independent attestors, governed by `x/gov`) have each verified the capture at PayPal; then it becomes `CONFIRMED` and the order `ANCHORED`.
 
 Indexer, PostgreSQL and Redis are planned, not built. Full details: [`docs/architecture/services.md`](docs/architecture/services.md).
 
@@ -73,12 +78,14 @@ Indexer, PostgreSQL and Redis are planned, not built. Full details: [`docs/archi
 ```
 aurix/
 ├── chain/        # Cosmos SDK node: app/, x/smartmoney, proto/, cmd/aurixd
-├── gateway/      # API Gateway / orchestration
+├── gateway/      # API Gateway / orchestration (first attestor)
+├── attestor/     # Independent PayPal attestor daemon (k-of-n anchoring)
 ├── guardian/     # Neural Guardian (FastAPI)
 ├── paypal-sim/   # Temporary local PayPal simulator (tests only)
 ├── web/          # Wallet, explorer, AG Grid
 ├── api/          # openapi.json (generated)
-├── deploy/       # docker-compose.yml, render.yaml
+├── deploy/       # docker-compose.yml, render.yaml, public node / static wallet config
+├── networks/     # aurix-testnet-2 multi-operator genesis package
 ├── docs/         # Documentation (Scrum, modelling, diagrams)
 ├── tests/e2e/    # Playwright demo journey
 └── .env.example
@@ -93,6 +100,8 @@ scripts/dev-up.sh     # start chain, guardian, paypal-sim, gateway
 scripts/test-all.sh   # run all test suites
 scripts/dev-down.sh   # stop everything
 ```
+
+`ATTESTORS=2 ANCHOR_THRESHOLD=2 scripts/dev-up.sh` also starts two independent attestors (genesis lists gateway + attestors as anchor signers, 2 attestations required). `scripts/attest-test.sh` runs that setup end to end (honest payment ATTESTING 1/2 → ANCHORED; forged proof stays PENDING and is refused by the other attestor). The gateway allows cross-origin calls (`CORS_ORIGINS`, default `*` for dev) so a statically deployed wallet can use its faucet and PayPal API.
 
 ### With Docker Compose
 
@@ -143,21 +152,25 @@ cd gateway && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/python 
 The gateway tests build, initialise and start a real `aurixd` node (needs Go and `jq`). The browser journey (wallet → send → escrow → PayPal → explorer) runs with Playwright against a running stack:
 
 ```bash
-node tests/e2e/demo-journey.js
+NODES=http://localhost:1317,http://localhost:2317 node tests/e2e/demo-journey.js   # direct-to-chain path
+node tests/e2e/gateway-off.js   # static wallet; stops the gateway, then node0 (destructive: run last)
 ```
+
+`scripts/test-all.sh` runs everything: chain Go tests, slashing, guardian, paypal-sim, gateway and attestor pytest, `attest-test.sh`, `gov-test.sh`, `upgrade-drill.sh`, then both browser journeys on a fresh 4-validator stack.
 
 ## Implementation status
 
 | Component | Status | Notes |
 | --- | --- | --- |
-| `chain/` | ✅ V1 | **Cosmos SDK v0.50 + CometBFT v0.38**, **4 validators** by default (BFT: survives 1 faulty node, verified with `scripts/bft-demo.sh`). `x/aurixbank` = `x/auth` + `x/bank` (`uaur`, fixed supply, sequences as nonces, fees); custom `x/smartmoney` module (escrow, proof anchoring). See [`chain/README.md`](chain/README.md). |
+| `chain/` | ✅ V1 | **Cosmos SDK v0.50 + CometBFT v0.38**, **4 validators** by default (BFT: survives 1 faulty node, verified with `scripts/bft-demo.sh`). `x/aurixbank` = `x/auth` + `x/bank` (`uaur`, fixed supply, sequences as nonces, fees); custom `x/smartmoney` module (escrow, k-of-n proof attestation); `x/gov` + `x/upgrade` (params and anchor signers changed by proposal). See [`chain/README.md`](chain/README.md). |
 | `guardian/` | ✅ V1 | FastAPI + LightGBM, SHAP reasons via native TreeSHAP. **Trained on PaySim** (Kaggle, 6.3 M transactions), out-of-time ROC-AUC 0.978 / PR-AUC 0.939. See [`guardian/MODEL_CARD.md`](guardian/MODEL_CARD.md). |
-| `gateway/` | ✅ V1 | FastAPI (variant recommended in the architecture doc). PayPal Orders v2, webhook signature verification, idempotency, proof anchoring. SQLite index (PostgreSQL planned). |
+| `gateway/` | ✅ V1 | FastAPI (variant recommended in the architecture doc). PayPal Orders v2, webhook signature verification, idempotency; first attestor (order `ATTESTING` until the proof is `CONFIRMED`), failed anchors retried; CORS; optional for the wallet. SQLite index (PostgreSQL planned). |
+| `attestor/` | ✅ V1 | Independent daemon: polls pending proofs, re-checks each capture at PayPal (status, order id, hash) and attests or refuses. `/health` with attested/refused counts. See [`attestor/README.md`](attestor/README.md). |
 | `paypal-sim/` | 🧪 temporary | Local PayPal API simulator used until the real Sandbox is connected. |
-| `web/` | ✅ V1 | secp256k1 keys generated in the browser; Cosmos txs (`SIGN_MODE_DIRECT`) signed locally. AG Grid explorer. |
+| `web/` | ✅ V1 | secp256k1 keys generated in the browser; Cosmos txs (`SIGN_MODE_DIRECT`) signed locally and broadcast **directly** to chain nodes with failover (gateway optional). AG Grid explorer. |
 | `api/openapi.json` | ✅ | Generated from the gateway (`create_app().openapi()`). |
 | `deploy/` | ⚠️ | Compose and Render blueprint written; not yet deployed online. See [`deploy/README.md`](deploy/README.md). |
-| `scripts/` | ✅ | `dev-up.sh`, `dev-down.sh`, `test-all.sh`. |
+| `scripts/` | ✅ | `dev-up.sh` (`ATTESTORS=N`), `dev-down.sh`, `test-all.sh`, `attest-test.sh`, `slashing-test.sh`, `bft-demo.sh`, `gov-test.sh`, `upgrade-drill.sh`. |
 | Indexer, PostgreSQL, Redis | ❌ planned | The gateway reads the chain directly and keeps a SQLite index. |
 | Real PayPal Sandbox | ❌ pending | Needs Sandbox credentials; config-only switch. |
 | Demo video, Devpost | 📝 drafted | [`docs/submission/`](docs/submission/devpost.md) |
@@ -198,12 +211,12 @@ Backlog, user stories, Definition of Done and ceremonies: [`docs/scrum/`](docs/s
 
 1. The on-chain ledger is the **single source of truth** for AUR balances.
 2. The AI can neither validate, invalidate nor modify a transaction.
-3. USD funds (PayPal) never become AUR: only a **proof (hash)** is anchored.
+3. USD funds (PayPal) never become AUR: only a **proof (hash)** is anchored, and only once k-of-n independent attestors confirmed the capture (one compromised signer cannot confirm a fake payment).
 4. PayPal webhooks are signature-verified and idempotent.
 5. No secrets or private keys in the repository.
 
 ## Limitations and scope
 
 - Demonstration testnet: **AUR has no real monetary value**.
-- The 4 validators run on one machine, operated by one team: real BFT consensus, not yet independent multi-operator decentralisation.
+- The 4 validators run on one machine, operated by one team: real BFT consensus, not yet independent multi-operator decentralisation. The multi-operator package (`networks/aurix-testnet-2`) and the attestor service are ready and tested locally, but need real outside operators to be launched (see [`docs/planning/decentralization.md`](docs/planning/decentralization.md)).
 - Roadmap: multiple validators, additional regulated gateways, GNN, Kubernetes.

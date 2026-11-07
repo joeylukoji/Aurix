@@ -1,10 +1,13 @@
 // AURIX demo journey: wallet -> faucet -> send -> escrow lock/release -> PayPal (simulator) -> explorer.
 // Usage: BASE_URL=http://localhost:8080 SHOT_DIR=/tmp/shots node tests/e2e/demo-journey.js
+// NODES (optional, comma separated chain REST URLs) is passed as ?nodes= so the wallet reads and
+// broadcasts directly against the nodes (the gateway is then only used for faucet, PayPal, Guardian).
 const fs = require('fs');
 const { chromium } = require('playwright');
 
 const BASE_URL = (process.env.BASE_URL || 'http://localhost:8080').replace(/\/$/, '');
 const SHOT_DIR = process.env.SHOT_DIR || '.';
+const NODES = process.env.NODES || '';
 const RECIPIENT = 'aur12zc3mwptt9l78ljkeehal5ssjmht6gunwaaclt';
 const toastMatches = re => document.getElementById('toast').textContent.match(new RegExp(re));
 const step = msg => console.log(`[e2e] ${msg}`);
@@ -17,8 +20,15 @@ async function main() {
     const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
     page.on('pageerror', e => errors.push(e.message));
 
-    step(`open ${BASE_URL}`);
-    await page.goto(BASE_URL + '/');
+    const url = BASE_URL + '/' + (NODES ? `?nodes=${encodeURIComponent(NODES)}` : '');
+    step(`open ${url}`);
+    await page.goto(url);
+    if (NODES) {
+      await page.waitForFunction(() => /block #\d+/.test(document.getElementById('chainStatus').textContent));
+      const via = await page.getAttribute('#chainStatus', 'title');
+      step(`chain status ${via}`);
+      if (!/URL \?nodes=/.test(via || '')) throw new Error(`wallet not using ?nodes= endpoint (${via})`);
+    }
 
     step('create wallet and claim faucet');
     await page.click('#createWallet');

@@ -85,7 +85,8 @@ flowchart TB
 | `MsgCreateEscrow` | smartmoney | Verrouille des AUR de l'émetteur jusqu'à une condition ou une échéance |
 | `MsgReleaseEscrow` | smartmoney | Libère les fonds vers le bénéficiaire si la condition est satisfaite |
 | `MsgRefundEscrow` | smartmoney | Rembourse l'émetteur (échéance dépassée ou annulation autorisée) |
-| `MsgAnchorProof` | smartmoney | Enregistre la preuve de suivi d'un paiement externe (hash uniquement) |
+| `MsgAnchorProof` | smartmoney | Une **attestation** de la preuve de suivi d'un paiement externe (hash, réf. commande, réf. capture). Seuls les `anchor_signers` peuvent attester ; la preuve reste `PENDING` jusqu'à `anchor_threshold` signataires distincts, puis devient `CONFIRMED` (événements `proof_attested`, `proof_confirmed`) |
+| `MsgUpdateParams` | smartmoney | Modifie `anchor_signers` / `anchor_threshold` ; autorité = compte du module `x/gov` (proposition uniquement) |
 
 > **[Proposition]** `MsgAnchorProof` n'est pas dans le document v1.1, qui parle d'« associer une preuve de suivi ». Elle matérialise ce lien. Elle ne crée ni ne déplace aucun AUR.
 
@@ -168,7 +169,8 @@ Content-Type: application/json
 | Capture | Seulement après approbation humaine explicite |
 | Webhook | Vérification de la signature via l'API de vérification de PayPal ; rejet si invalide |
 | Idempotence | L'identifiant d'événement PayPal est stocké avec une contrainte d'unicité ; un doublon est ignoré avec un succès HTTP 200 |
-| Preuve | Après capture confirmée, `MsgAnchorProof` avec le hash de l'identifiant de commande et de capture |
+| Preuve | Après capture confirmée, la passerelle envoie son `MsgAnchorProof` (hash commande + capture, et les deux références) comme **premier attesteur** ; la commande reste `ATTESTING` jusqu'à ce que des attesteurs indépendants (`attestor/`, qui relisent chacun la capture chez PayPal) amènent la preuve à `CONFIRMED`, puis `ANCHORED`. Un ancrage échoué est réessayé (renvoi du webhook ou tâche de fond) |
+| Indépendance du portefeuille | Le portefeuille web lit et diffuse directement vers les nœuds (bascule entre endpoints) ; la passerelle est optionnelle (PayPal, Guardian, faucet), autorise CORS et enregistre dans l'historique Guardian les paiements diffusés en direct via `POST /api/txs/observed` (relus sur la chaîne) |
 
 Les identifiants client et secrets PayPal sont lus dans des variables d'environnement, jamais commités.
 
@@ -207,7 +209,10 @@ sequenceDiagram
     P-->>G: Webhook signé
     G->>G: Vérifie signature, contrôle idempotence
     G->>D: Enregistre l'événement
-    G->>C: MsgAnchorProof (hash)
+    G->>C: MsgAnchorProof (hash) = attestation 1/k
+    participant A as Attesteurs
+    A->>P: GET capture (statut, id commande)
+    A->>C: MsgAnchorProof = attestations 2..k
     C-->>G: Bloc confirmé
     G-->>W: Preuve visible dans l'explorateur
 ```

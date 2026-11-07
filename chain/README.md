@@ -4,7 +4,9 @@
 | --- | --- |
 | `x/aurixbank` (layer 1) | Standard `x/auth` (accounts, sequence = nonce, secp256k1 signatures, fees) + `x/bank` (`uaur` balances, `MsgSend`). No mint module: supply is fixed at genesis. |
 | Validator operation | `x/staking` + `x/slashing` (downtime jailing, double-sign slashing) + `x/evidence` + `x/distribution` (fees and rewards to validators). CLI: `aurixd tx staking create-validator/delegate/unbond`, `aurixd tx slashing unjail`. Live test: `scripts/slashing-test.sh`. |
-| `x/smartmoney` (layer 2) | Custom module: `MsgCreateEscrow`, `MsgReleaseEscrow`, `MsgRefundEscrow`, `MsgAnchorProof`; escrowed funds are held by the module account. |
+| `x/smartmoney` (layer 2) | Custom module: `MsgCreateEscrow`, `MsgReleaseEscrow`, `MsgRefundEscrow`, `MsgAnchorProof`, `MsgUpdateParams`; escrowed funds are held by the module account. |
+| k-of-n payment proofs | `MsgAnchorProof` is one attestation by a member of `params.anchor_signers`. A new hash is `PENDING`; it becomes `CONFIRMED` when `params.anchor_threshold` distinct signers attested the same (order ref, capture ref). Duplicate or mismatching attestations are rejected. Events `proof_attested` (hash, attestor, attestations, threshold) and `proof_confirmed` (hash, height). REST: `/aurix/smartmoney/v1/proofs/{hash}`, `/proofs_pending`, `/params`. Signers = gateway + independent `attestor/` daemons. |
+| Governance | `x/gov` v1 + `x/upgrade`: the authority of every keeper (including smartmoney `MsgUpdateParams`) is the gov module account, so signers/threshold and software upgrades change only by proposal. See `docs/governance.md`. |
 | Consensus | CometBFT, **4 validators** by default (own key, equal stake, persistent peers), 1 s blocks. Tolerates 1 faulty validator out of 4. |
 
 ## Multi-validator testnet
@@ -12,7 +14,9 @@
 `scripts/init-localnet.sh` creates `VALIDATORS` (default 4) node homes in `$AURIX_NET_HOME/node0..N-1`.
 Each validator signs its own gentx with an equal stake (50,000 AUR); nodes are wired as persistent
 peers. Node *i* listens on the base ports + *i* × `PORT_STEP` (default 1000): node0 on RPC 26657 /
-REST 1317, node1 on 27657 / 2317, and so on.
+REST 1317, node1 on 27657 / 2317, and so on. `ATTESTOR_SEEDS` (space separated) adds funded anchor
+signers after the gateway and `ANCHOR_THRESHOLD` (default 1) sets the attestations required;
+`scripts/dev-up.sh` sets both when `ATTESTORS=N` and starts the attestor daemons.
 
 ```bash
 go build -o build/aurixd ./cmd/aurixd
@@ -77,5 +81,7 @@ aurixd tx bank send validator <addr> 5000000uaur ...
 aurixd query smartmoney escrow <id>
 aurixd query smartmoney escrows
 aurixd query smartmoney proof <hash>
+aurixd query smartmoney pending-proofs
+aurixd tx smartmoney anchor-proof <hash> <external-ref> <capture-ref> --from <anchor-signer> ...
 aurixd query smartmoney params
 ```

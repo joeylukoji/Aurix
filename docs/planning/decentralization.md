@@ -1,6 +1,19 @@
 # Decentralisation plan
 
-Status: **1a (slashing, evidence, distribution, validator CLI, metrics) is implemented and tested.** The rest is planned. Last updated 2026-11-07.
+Status (last updated 2026-11-07): **all code of workstreams 1a, 1b, 2, 3 (option A) and 4 is implemented
+and tested locally** (`scripts/test-all.sh`). What remains needs **real outside operators** and cannot be
+done by the team alone: the multi-operator genesis ceremony (1c), public endpoints run by different
+operators, and the 24 h uptime report / failure drill on that network (1d).
+
+| # | Workstream | Done and tested here | Still requires outside operators |
+| --- | --- | --- | --- |
+| 1a | Slashing, evidence, distribution, validator CLI, metrics | ✅ `scripts/slashing-test.sh`, `scripts/bft-demo.sh` | — |
+| 1b | Operator onboarding package | ✅ `networks/aurix-testnet-2/` (README, scripts, `gentx/`, `peers.txt`), `docs/operators.md`, `deploy/public-node/` | Reproducible tagged release + published SHA-256 |
+| 1c | Genesis ceremony `aurix-testnet-2` | Scripts ready (dry-run possible on a throwaway chain id) | ❌ Real operators' gentxs, distinct machines/providers |
+| 1d | Operations | Local failure behaviour: `bft-demo.sh` (1 of 4 down → chain continues), e2e node0 kill → wallet fails over | ❌ Public seed/RPC by different operators, 24 h uptime report, drill on the real network |
+| 2 | Wallet talks to the chain directly | ✅ `web/chain.js` + `web/config.json` (`?nodes=`, Settings), static deployable; gateway CORS; `tests/e2e/demo-journey.js` (direct path via `NODES`) and `tests/e2e/gateway-off.js` (gateway stopped after faucet: send + escrow create/release; node0 killed: failover to node1) in `test-all.sh` | Endpoint list of public nodes run by different operators |
+| 3 | k-of-n proof anchoring (option A) | ✅ keeper/genesis tests (`go test`), `attestor/` (pytest), gateway `ATTESTING` + anchor retry (pytest), `scripts/attest-test.sh`: threshold 2, gateway + 2 attestors, honest payment ATTESTING 1/2 → ANCHORED with proof CONFIRMED; a forged proof from one attestor key stays PENDING and the other attestor refuses it | Attestors run by independent operators with their own PayPal read credentials |
+| 4 | On-chain governance | ✅ `x/gov` + `x/upgrade`, smartmoney `MsgUpdateParams`, `docs/governance.md`, `scripts/gov-test.sh`, `scripts/upgrade-drill.sh` | Votes by independent validators |
 
 Today the monetary rules are enforced by a BFT consensus that neither the gateway, the AI nor
 PayPal can bypass. Who *operates* the network is still centralised:
@@ -74,7 +87,7 @@ Original task list:
 **Acceptance:** `scripts/test-all.sh` passes. A local 4-node test shows a stopped validator jailed
 after the window, then rejoining after `unjail`.
 
-### 1b. Operator onboarding package
+### 1b. Operator onboarding package — ✅ package written (`networks/aurix-testnet-2/`), release pending
 
 1. Write `networks/aurix-testnet-2/README.md` with:
    - hardware: 2 vCPU, 4 GB RAM, 50 GB SSD;
@@ -86,7 +99,7 @@ after the window, then rejoining after `unjail`.
    - optionally use a sentry-node layout or `tmkms`;
    - firewall RPC; use the `file` or `os` keyring, not `test`.
 
-### 1c. Genesis ceremony (`aurix-testnet-2`)
+### 1c. Genesis ceremony (`aurix-testnet-2`) — ❌ needs outside operators
 
 1. Each operator runs `aurixd init <moniker>` and `aurixd keys add <name>` **on their own machine**, then sends only their account address. No private key is shared.
 2. The coordinator builds the pre-genesis:
@@ -99,7 +112,7 @@ after the window, then rejoining after `unjail`.
 4. The coordinator runs `collect-gentxs` and `validate-genesis`, then publishes the final `genesis.json` and its hash in the repo.
 5. Operators verify the hash, set `persistent_peers` and `seeds` from the published list (`networks/aurix-testnet-2/peers.txt`), and start before `genesis_time`.
 
-### 1d. Operations
+### 1d. Operations — ❌ needs outside operators (local failover tested)
 
 1. Run one public seed node and at least 2 public RPC/REST endpoints, operated by **different** operators. Workstream 2 uses them.
 2. Monitoring: a shared Grafana or uptime page per validator, plus an alert on missed blocks.
@@ -123,7 +136,7 @@ behaves as expected.
 
 ---
 
-## 2. Wallet talks to the chain directly
+## 2. Wallet talks to the chain directly — ✅ done
 
 **Goal:** sending AUR and using escrows work with the gateway turned off. The gateway becomes
 optional: it is only needed for Neural Guardian scoring and PayPal.
@@ -156,12 +169,18 @@ optional: it is only needed for Neural Guardian scoring and PayPal.
 **Acceptance:** both tests pass in `scripts/test-all.sh`. Turning off the gateway only disables
 PayPal and risk scoring, and the UI says so.
 
+**Status:** ✅ both pass in `scripts/test-all.sh` (`e2e`, `gateway-off`). The wallet re-detects the
+gateway every ~9 s and shows "gateway off: PayPal & risk scoring disabled". After a direct broadcast
+the wallet calls `POST /api/txs/observed {txhash}` (when a gateway is configured): the gateway re-reads
+the tx from the chain and records it in Guardian history. Note: `web/config.json` was used instead of
+the `web/endpoints.json` named in 2a.
+
 **Limit:** the wallet trusts the node it reads from. Light-client verification of the data is out
 of scope; using several independent endpoints reduces the risk.
 
 ---
 
-## 3. k-of-n proof anchoring
+## 3. k-of-n proof anchoring — ✅ option A done
 
 **Goal:** a PayPal payment proof is final only when **k of n independent attestors** confirm it,
 for example 2 of 3. No single key can anchor a fake proof.
@@ -208,9 +227,14 @@ Good for the hackathon, not the target design.
 **Acceptance:** with `anchor_threshold = 2` and 3 attestors, a payment is `CONFIRMED` only after 2
 independent checks against PayPal. A fake proof submitted by one compromised attestor stays `PENDING`.
 
+**Status:** ✅ met on a local network by `scripts/attest-test.sh` (also part of `test-all.sh`). Option B
+was not needed. The gateway retries a failed anchor (the webhook event is forgotten on failure so a
+PayPal redelivery is processed again, and the poller re-anchors `CONFIRMED` orders without a proof).
+PENDING-proof expiry (optional item 2) is not implemented.
+
 ---
 
-## 4. On-chain governance
+## 4. On-chain governance — ✅ done
 
 **Goal:** module parameters, the anchor signer set and software upgrades change only through
 proposals that validators and delegators vote on.

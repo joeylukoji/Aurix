@@ -26,6 +26,10 @@ class Settings:
     # "simulator" (local paypal-sim, tests only) or "sandbox" (real PayPal Sandbox)
     paypal_env: str = field(default_factory=lambda: _env("PAYPAL_ENV", "sandbox"))
 
+    # Comma separated origins allowed by CORS ("*" for dev; "" disables the middleware).
+    cors_origins: list = field(default_factory=lambda: [o.strip() for o in _env("CORS_ORIGINS", "*").split(",")
+                                                        if o.strip()])
+
     @property
     def paypal_configured(self) -> bool:
         return bool(self.paypal_client_id and self.paypal_client_secret)

@@ -96,14 +96,16 @@
     let gw = override != null ? trim(override) : trim(state.config?.gateway);
     let candidates = gw ? [gw] : (override === "" || !/^https?:$/.test(location.protocol)) ? [] : [trim(location.origin)];
     if (gw === "none") candidates = [];
-    state.gateway = ""; state.gatewayOk = false; state.health = null;
+    // Probe first, then switch state at once (detection is re-run periodically by the UI).
     for (const c of candidates) {
       try {
         const r = await timedFetch(c + "/api/health", {}, 3000);
         const h = r.ok && (await r.json());
-        if (h && h.status === "ok") { state.gateway = c; state.gatewayOk = true; state.health = h; return; }
+        if (h && h.status === "ok") { state.gateway = c; state.gatewayOk = true; state.health = h; return true; }
       } catch {}
     }
+    state.gateway = ""; state.gatewayOk = false; state.health = null;
+    return false;
   }
 
   async function init() {

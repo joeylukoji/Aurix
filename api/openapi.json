@@ -201,6 +201,43 @@
         }
       }
     },
+    "/api/txs/observed": {
+      "post": {
+        "summary": "Observed",
+        "description": "Called by the wallet after it broadcast a tx directly to a node. The gateway fetches the tx\nfrom the chain itself and never trusts client-supplied fields.",
+        "operationId": "observed_api_txs_observed_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObservedTx"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/escrows": {
       "get": {
         "summary": "Escrows",
@@ -334,6 +371,44 @@
       "get": {
         "summary": "Proof",
         "operationId": "proof_api_explorer_proofs__h__get",
+        "parameters": [
+          {
+            "name": "h",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "H"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/proofs/{h}": {
+      "get": {
+        "summary": "Proof Normalised",
+        "description": "Normalised chain proof: {hash, external_ref, capture_ref, status, attestations, threshold}.",
+        "operationId": "proof_normalised_api_proofs__h__get",
         "parameters": [
           {
             "name": "h",
@@ -725,6 +800,20 @@
           "type"
         ],
         "title": "Msg"
+      },
+      "ObservedTx": {
+        "properties": {
+          "txhash": {
+            "type": "string",
+            "title": "Txhash",
+            "description": "hash of a tx the wallet broadcast directly to a chain node"
+          }
+        },
+        "type": "object",
+        "required": [
+          "txhash"
+        ],
+        "title": "ObservedTx"
       },
       "OrderReq": {
         "properties": {
