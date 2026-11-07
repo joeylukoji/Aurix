@@ -3,7 +3,9 @@
 # Ports: set PORT_OFFSET (added to defaults) or each port explicitly:
 #   RPC_PORT(26657) REST_PORT(1317) GRPC_PORT(9090) P2P_PORT(26656)
 #   GUARDIAN_PORT(8000) SIM_PORT(8090) GATEWAY_PORT(8080)
-# AURIX_HOME (chain home, default $RUN_DIR/chain-home), RUN_DIR (pids+logs, default $ROOT/.run).
+# VALIDATORS (default 4): number of validator nodes; node i uses the ports above + i*VALIDATOR_PORT_STEP
+# (default 1000). The gateway talks to node0. AURIX_NET_HOME (default $RUN_DIR/chain-net),
+# RUN_DIR (pids+logs, default $ROOT/.run).
 # Stop with scripts/dev-down.sh (same RUN_DIR).
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -13,12 +15,17 @@ GRPC_PORT=${GRPC_PORT:-$((9090+OFF))}; P2P_PORT=${P2P_PORT:-$((26656+OFF))}
 GUARDIAN_PORT=${GUARDIAN_PORT:-$((8000+OFF))}; SIM_PORT=${SIM_PORT:-$((8090+OFF))}
 GATEWAY_PORT=${GATEWAY_PORT:-$((8080+OFF))}
 RUN_DIR=${RUN_DIR:-$ROOT/.run}; mkdir -p "$RUN_DIR"
-export AURIX_HOME=${AURIX_HOME:-$RUN_DIR/chain-home}
+export AURIX_NET_HOME=${AURIX_NET_HOME:-$RUN_DIR/chain-net}
+VALIDATORS=${VALIDATORS:-4}; STEP=${VALIDATOR_PORT_STEP:-1000}
 BIN=$ROOT/chain/build/aurixd
 
 log() { echo "[dev-up] $*"; }
 port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
-for p in $RPC_PORT $REST_PORT $GRPC_PORT $P2P_PORT $GUARDIAN_PORT $SIM_PORT $GATEWAY_PORT; do
+PORTS=($GUARDIAN_PORT $SIM_PORT $GATEWAY_PORT)
+for ((i = 0; i < VALIDATORS; i++)); do
+  PORTS+=($((RPC_PORT + i * STEP)) $((REST_PORT + i * STEP)) $((GRPC_PORT + i * STEP)) $((P2P_PORT + i * STEP)))
+done
+for p in "${PORTS[@]}"; do
   if port_busy "$p"; then echo "[dev-up] port $p already in use (set PORT_OFFSET or *_PORT)" >&2; exit 1; fi
 done
 
@@ -43,25 +50,27 @@ venv() { # dir
 }
 
 log "building aurixd"; (cd "$ROOT/chain" && go build -o build/aurixd ./cmd/aurixd)
-AURIXD=$BIN "$ROOT/chain/scripts/init-local.sh"
+AURIXD=$BIN VALIDATORS=$VALIDATORS PORT_STEP=$STEP RPC_PORT=$RPC_PORT REST_PORT=$REST_PORT \
+  GRPC_PORT=$GRPC_PORT P2P_PORT=$P2P_PORT "$ROOT/chain/scripts/init-localnet.sh"
 for d in guardian paypal-sim gateway; do venv "$ROOT/$d"; done
 
-start chain "$ROOT/chain" "$BIN" start --home "$AURIX_HOME" \
-  --rpc.laddr "tcp://127.0.0.1:$RPC_PORT" --api.enable --api.address "tcp://127.0.0.1:$REST_PORT" \
-  --grpc.address "127.0.0.1:$GRPC_PORT" --p2p.laddr "tcp://127.0.0.1:$P2P_PORT" --rpc.pprof_laddr ""
+for ((i = 0; i < VALIDATORS; i++)); do  # ports and peers are written in each node's config
+  start "chain$i" "$ROOT/chain" "$BIN" start --home "$AURIX_NET_HOME/node$i"
+done
 start guardian "$ROOT/guardian" .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port "$GUARDIAN_PORT"
 SIM_WEBHOOK_URL="http://127.0.0.1:$GATEWAY_PORT/api/paypal/webhook" SIM_PUBLIC_URL="http://localhost:$SIM_PORT" \
 SIM_CLIENT_ID=sim-client-id SIM_CLIENT_SECRET=sim-client-secret SIM_WEBHOOK_ID=SIM-WEBHOOK-ID \
   start paypal-sim "$ROOT/paypal-sim" .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port "$SIM_PORT"
 
-wait_for chain "http://127.0.0.1:$RPC_PORT/status"
+wait_for chain0 "http://127.0.0.1:$RPC_PORT/status"
 for i in $(seq 1 120); do
   h=$(curl -fsS "http://127.0.0.1:$RPC_PORT/status" | jq -r '.result.sync_info.latest_block_height' 2>/dev/null || echo 0)
   [[ "$h" -ge 2 ]] && curl -fsS "http://127.0.0.1:$REST_PORT/aurix/smartmoney/v1/params" >/dev/null 2>&1 && break
   sleep 0.5
 done
 [[ "$h" -ge 2 ]] || { echo "[dev-up] chain produces no blocks" >&2; exit 1; }
-log "chain at height $h"
+nv=$(curl -fsS "http://127.0.0.1:$RPC_PORT/validators" | jq -r .result.total)
+log "chain at height $h with $nv validators"
 wait_for guardian "http://127.0.0.1:$GUARDIAN_PORT/health"
 wait_for paypal-sim "http://127.0.0.1:$SIM_PORT/sim/health"
 

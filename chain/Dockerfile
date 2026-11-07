@@ -12,8 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends bash jq curl ca
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /data
 COPY --from=build /aurixd /usr/local/bin/aurixd
-COPY scripts/init-local.sh /usr/local/bin/init-local.sh
-RUN chmod +x /usr/local/bin/init-local.sh
+COPY scripts/init-local.sh scripts/init-localnet.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/init-local.sh /usr/local/bin/init-localnet.sh
 ENV AURIX_HOME=/data/aurix
 VOLUME /data
 # 26657: CometBFT RPC, 1317: REST API, 9090: gRPC

@@ -5,7 +5,7 @@ set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 export PORT_OFFSET=${PORT_OFFSET:-10000}
 export RUN_DIR=${RUN_DIR:-$(mktemp -d /tmp/aurix-test-XXXX)}
-export AURIX_HOME=${AURIX_HOME:-$RUN_DIR/chain-home}
+export AURIX_NET_HOME=${AURIX_NET_HOME:-$RUN_DIR/chain-net}
 export SHOT_DIR=${SHOT_DIR:-$RUN_DIR/shots}; mkdir -p "$SHOT_DIR"
 NAMES=(); RESULTS=()
 run() { # name cmd...

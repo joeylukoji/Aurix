@@ -4,9 +4,36 @@
 | --- | --- |
 | `x/aurixbank` (layer 1) | Standard `x/auth` (accounts, sequence = nonce, secp256k1 signatures, fees) + `x/bank` (`uaur` balances, `MsgSend`). No mint module: supply is fixed at genesis. |
 | `x/smartmoney` (layer 2) | Custom module: `MsgCreateEscrow`, `MsgReleaseEscrow`, `MsgRefundEscrow`, `MsgAnchorProof`; escrowed funds are held by the module account. |
-| Consensus | CometBFT, single validator (testnet), 1 s blocks |
+| Consensus | CometBFT, **4 validators** by default (own key, equal stake, persistent peers), 1 s blocks. Tolerates 1 faulty validator out of 4. |
 
-## Run locally
+## Multi-validator testnet
+
+`scripts/init-localnet.sh` creates `VALIDATORS` (default 4) node homes in `$AURIX_NET_HOME/node0..N-1`.
+Each validator signs its own gentx with an equal stake (50,000 AUR); nodes are wired as persistent
+peers. Node *i* listens on the base ports + *i* × `PORT_STEP` (default 1000): node0 on RPC 26657 /
+REST 1317, node1 on 27657 / 2317, and so on.
+
+```bash
+go build -o build/aurixd ./cmd/aurixd
+```
+
+```bash
+AURIXD=./build/aurixd AURIX_NET_HOME=$HOME/.aurix-localnet scripts/init-localnet.sh
+```
+
+```bash
+for i in 0 1 2 3; do ./build/aurixd start --home $HOME/.aurix-localnet/node$i & done
+```
+
+Verified behaviour: with 4/4 validators each block carries 4 signatures; with one stopped the chain
+keeps finalising (3/4 > 2/3); with two stopped it halts instead of forking; restarted nodes catch up.
+`scripts/bft-demo.sh` (repo root) shows this on the dev stack. In Docker Compose, `chain-init` + `chain0..3`
+run the same 4-validator network.
+
+**Honest limit:** the 4 validators run on one machine and are operated by one team, so this shows
+real BFT consensus and fault tolerance, not independent multi-operator decentralisation yet.
+
+## Run a single node
 
 ```bash
 go build -o build/aurixd ./cmd/aurixd

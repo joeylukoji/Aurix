@@ -3,8 +3,10 @@
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 RUN_DIR=${RUN_DIR:-$ROOT/.run}
-for name in gateway paypal-sim guardian chain; do
-  f="$RUN_DIR/$name.pid"; [[ -f "$f" ]] || continue
+shopt -s nullglob
+for f in "$RUN_DIR"/gateway.pid "$RUN_DIR"/paypal-sim.pid "$RUN_DIR"/guardian.pid "$RUN_DIR"/chain*.pid; do
+  [[ -f "$f" ]] || continue
+  name=$(basename "$f" .pid)
   pid=$(cat "$f")
   if kill -0 "$pid" 2>/dev/null; then
     kill "$pid"; for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done

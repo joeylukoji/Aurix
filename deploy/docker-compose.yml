@@ -1,12 +1,29 @@
 name: aurix
 services:
-  chain:
+  # 4-validator AURIX testnet: chain-init writes one home per validator into the shared
+  # volume (own key, equal stake, persistent peers), then chain0..chain3 each run a node.
+  # BFT consensus keeps producing blocks with 3 of 4 validators up.
+  chain-init:
     build: ../chain
-    environment:
+    environment: &chain-env
       AURIX_CHAIN_ID: aurix-testnet-1
       AURIX_FAUCET_SEED: ${AURIX_FAUCET_SEED:-aurix-dev-faucet}
       AURIX_GATEWAY_SEED: ${AURIX_GATEWAY_SEED:-aurix-dev-gateway}
+      AURIX_NET_HOME: /data
+      VALIDATORS: "4"
+      PORT_STEP: "0"
+      PEER_HOST: chain%d
+      BIND_HOST: 0.0.0.0
     volumes: ["chain-data:/data"]
+    command: ["bash", "-c", "init-localnet.sh"]
+    healthcheck: { disable: true }
+    restart: "no"
+  chain0: &chain-node
+    build: ../chain
+    environment: *chain-env
+    volumes: ["chain-data:/data"]
+    command: ["aurixd", "start", "--home", "/data/node0"]
+    depends_on: { chain-init: { condition: service_completed_successfully } }
     ports: ["26657:26657", "1317:1317"]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:26657/status"]
@@ -15,6 +32,18 @@ services:
       retries: 12
       start_period: 30s
     restart: unless-stopped
+  chain1:
+    <<: *chain-node
+    command: ["aurixd", "start", "--home", "/data/node1"]
+    ports: []
+  chain2:
+    <<: *chain-node
+    command: ["aurixd", "start", "--home", "/data/node2"]
+    ports: []
+  chain3:
+    <<: *chain-node
+    command: ["aurixd", "start", "--home", "/data/node3"]
+    ports: []
   guardian:
     build: ../guardian
     ports: ["8000:8000"]
@@ -48,8 +77,8 @@ services:
       - path: ../.env
         required: false
     environment:
-      CHAIN_RPC_URL: http://chain:26657
-      CHAIN_REST_URL: http://chain:1317
+      CHAIN_RPC_URL: http://chain0:26657
+      CHAIN_REST_URL: http://chain0:1317
       GUARDIAN_URL: http://guardian:8000
       AURIX_FAUCET_SEED: ${AURIX_FAUCET_SEED:-aurix-dev-faucet}
       AURIX_GATEWAY_SEED: ${AURIX_GATEWAY_SEED:-aurix-dev-gateway}
@@ -68,7 +97,7 @@ services:
       start_period: 15s
     restart: unless-stopped
     depends_on:
-      chain: { condition: service_healthy }
+      chain0: { condition: service_healthy }
       guardian: { condition: service_healthy }
       # Simulator only; remove together with the paypal-sim service for real Sandbox.
       paypal-sim: { condition: service_healthy }
