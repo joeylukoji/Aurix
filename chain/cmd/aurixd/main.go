@@ -17,19 +17,22 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	"github.com/cosmos/cosmos-sdk/client/keys"
 	"github.com/cosmos/cosmos-sdk/client/rpc"
+	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	"github.com/cosmos/cosmos-sdk/server"
+	svrcmd "github.com/cosmos/cosmos-sdk/server/cmd"
 	serverconfig "github.com/cosmos/cosmos-sdk/server/config"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
-	svrcmd "github.com/cosmos/cosmos-sdk/server/cmd"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authcmd "github.com/cosmos/cosmos-sdk/x/auth/client/cli"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	bankcli "github.com/cosmos/cosmos-sdk/x/bank/client/cli"
 	genutilcli "github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
 	"github.com/spf13/cast"
 	"github.com/spf13/cobra"
 
 	"github.com/joeylukoji/aurix/chain/app"
+	smcli "github.com/joeylukoji/aurix/chain/x/smartmoney/client/cli"
 )
 
 func main() {
@@ -95,14 +98,17 @@ func rootCmd() *cobra.Command {
 func queryCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "query", Aliases: []string{"q"}, Short: "Querying subcommands", RunE: client.ValidateCmd}
 	cmd.AddCommand(rpc.QueryEventForTxCmd(), rpc.ValidatorCommand(), server.QueryBlockCmd(),
-		authcmd.QueryTxsByEventsCmd(), server.QueryBlocksCmd(), authcmd.QueryTxCmd())
+		authcmd.QueryTxsByEventsCmd(), server.QueryBlocksCmd(), authcmd.QueryTxCmd(), smcli.GetQueryCmd())
 	return cmd
 }
 
 func txCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "tx", Short: "Transactions subcommands", RunE: client.ValidateCmd}
 	cmd.AddCommand(authcmd.GetSignCommand(), authcmd.GetBroadcastCommand(), authcmd.GetEncodeCommand(),
-		authcmd.GetDecodeCommand(), authcmd.GetSimulateCmd())
+		authcmd.GetDecodeCommand(), authcmd.GetSimulateCmd(), smcli.GetTxCmd())
+	bank := &cobra.Command{Use: "bank", Short: "Bank transactions", RunE: client.ValidateCmd}
+	bank.AddCommand(bankcli.NewSendTxCmd(addresscodec.NewBech32Codec(app.Bech32Prefix)))
+	cmd.AddCommand(bank)
 	return cmd
 }
 
