@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	storetypes "cosmossdk.io/store/types"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
@@ -34,8 +35,26 @@ var Upgrades = []Upgrade{
 	},
 }
 
+// DisabledUpgrades is a comma separated list of upgrade names whose handler is NOT registered.
+// It is empty in release builds. scripts/upgrade-drill.sh sets it at link time
+// (-ldflags "-X github.com/joeylukoji/aurix/chain/app.DisabledUpgrades=v2") to build a
+// stand-in for the "old" binary, which must halt at the upgrade height.
+var DisabledUpgrades = ""
+
+func upgradeDisabled(name string) bool {
+	for _, d := range strings.Split(DisabledUpgrades, ",") {
+		if strings.TrimSpace(d) == name {
+			return true
+		}
+	}
+	return false
+}
+
 func (app *App) registerUpgradeHandlers() {
 	for _, u := range Upgrades {
+		if upgradeDisabled(u.Name) {
+			continue
+		}
 		app.UpgradeKeeper.SetUpgradeHandler(u.Name, u.CreateUpgradeHandler(app.ModuleManager, app.configurator))
 	}
 
