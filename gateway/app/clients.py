@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import time
 import uuid
 
 import httpx
@@ -11,30 +13,130 @@ class ChainError(Exception):
         self.status, self.detail = status, detail
 
 
+ESCROW_STATUS = {"ESCROW_STATUS_LOCKED": "LOCKED", "ESCROW_STATUS_RELEASED": "RELEASED",
+                 "ESCROW_STATUS_REFUNDED": "REFUNDED"}
+
+
+def _uaur(coins) -> int:
+    if isinstance(coins, dict):
+        coins = [coins]
+    return sum(int(c["amount"]) for c in coins or [] if c.get("denom") == "uaur")
+
+
+def normalize_tx(tr: dict) -> dict:
+    """Flattens a Cosmos tx_response into the explorer/wallet row format."""
+    msgs = tr.get("tx", {}).get("body", {}).get("messages", [])
+    m = msgs[0] if msgs else {}
+    events: dict[str, dict] = {}
+    for e in tr.get("events", []):
+        events.setdefault(e["type"], {a["key"]: a.get("value") for a in e.get("attributes", [])})
+    mtype = m.get("@type", "").rsplit(".", 1)[-1]
+    row = {
+        "hash": tr.get("txhash"), "height": int(tr.get("height", 0)), "type": mtype,
+        "from": m.get("from_address") or m.get("sender") or m.get("signer"),
+        "to": m.get("to_address") or m.get("recipient"),
+        "amount": _uaur(m.get("amount")) or None,
+        "escrow_id": int(m["escrow_id"]) if m.get("escrow_id") else None,
+        "code": int(tr.get("code", 0)), "log": tr.get("raw_log") if tr.get("code") else "",
+        "timestamp": tr.get("timestamp"),
+    }
+    for ev in ("escrow_created", "escrow_released", "escrow_refunded"):
+        if ev in events:
+            row["escrow_id"] = int(events[ev]["escrow_id"])
+            row["to"] = events[ev].get("recipient") or row["to"]
+            amt = events[ev].get("amount", "")
+            row["amount"] = int(amt.removesuffix("uaur")) if amt.endswith("uaur") else row["amount"]
+    return row
+
+
+def normalize_escrow(e: dict) -> dict:
+    return {"id": int(e["id"]), "sender": e["sender"], "recipient": e["recipient"], "arbiter": e.get("arbiter") or "",
+            "amount": _uaur(e["amount"]), "deadline_height": int(e["deadline_height"]),
+            "status": ESCROW_STATUS.get(e["status"], e["status"]), "created_height": int(e.get("created_height", 0))}
+
+
 class ChainClient:
-    def __init__(self, base_url: str, transport: httpx.BaseTransport | None = None):
-        self.http = httpx.Client(base_url=base_url, timeout=20, transport=transport)
+    """Reads the Cosmos chain via its REST API (:1317) and CometBFT RPC (:26657)."""
+
+    def __init__(self, rpc_url: str, rest_url: str, transport: httpx.BaseTransport | None = None):
+        self.rpc = httpx.Client(base_url=rpc_url, timeout=20, transport=transport)
+        self.rest = httpx.Client(base_url=rest_url, timeout=20, transport=transport)
 
     def _get(self, path: str, **params):
-        r = self.http.get(path, params=params or None)
-        if r.status_code >= 400:
-            raise ChainError(r.status_code, r.json().get("error", r.text))
-        return r.json()
-
-    def status(self) -> dict: return self._get("/status")
-    def account(self, addr: str) -> dict: return self._get(f"/accounts/{addr}")
-    def blocks(self, limit: int = 50) -> list: return self._get("/blocks", limit=limit)
-    def escrows(self) -> list: return self._get("/escrows")
-    def escrow(self, i: int) -> dict: return self._get(f"/escrows/{i}")
-    def proof(self, h: str) -> dict: return self._get(f"/proofs/{h}")
-    def tx(self, h: str) -> dict: return self._get(f"/txs/{h}")
-
-    def broadcast(self, tx: dict) -> dict:
-        r = self.http.post("/txs", json=tx)
+        r = self.rest.get(path, params=params or None)
         body = r.json()
         if r.status_code >= 400:
-            raise ChainError(r.status_code, body.get("error") or body.get("log") or r.text)
+            raise ChainError(r.status_code if r.status_code != 500 or body.get("code") != 5 else 404,
+                             body.get("message", r.text))
         return body
+
+    def status(self) -> dict:
+        r = self.rpc.get("/status").json()["result"]
+        return {"chain_id": r["node_info"]["network"], "height": int(r["sync_info"]["latest_block_height"]),
+                "denom": "uaur"}
+
+    def account(self, addr: str) -> dict:
+        """Account number + sequence (nonce) + uaur balance. New accounts have none yet."""
+        try:
+            info = self._get(f"/cosmos/auth/v1beta1/account_info/{addr}")["info"]
+            num, seq, exists = int(info.get("account_number", 0)), int(info.get("sequence", 0)), True
+        except ChainError as e:
+            if e.status not in (404, 400) and "not found" not in e.detail:
+                raise
+            num, seq, exists = 0, 0, False
+        bal = self._get(f"/cosmos/bank/v1beta1/balances/{addr}/by_denom", denom="uaur")["balance"]
+        return {"address": addr, "account_number": num, "sequence": seq, "nonce": seq, "exists": exists,
+                "balance": int(bal["amount"])}
+
+    def escrows(self) -> list:
+        return [normalize_escrow(e) for e in self._get("/aurix/smartmoney/v1/escrows").get("escrows", [])]
+
+    def escrow(self, i: int) -> dict:
+        return normalize_escrow(self._get(f"/aurix/smartmoney/v1/escrows/{i}")["escrow"])
+
+    def proof(self, h: str) -> dict:
+        p = self._get(f"/aurix/smartmoney/v1/proofs/{h}")["proof"]
+        return p | {"height": int(p["height"])}
+
+    def tx(self, h: str) -> dict:
+        return normalize_tx(self._get(f"/cosmos/tx/v1beta1/txs/{h}")["tx_response"])
+
+    def search_txs(self, query: str, limit: int = 100) -> list:
+        body = self._get("/cosmos/tx/v1beta1/txs", query=query, order_by="ORDER_BY_DESC", limit=limit)
+        return [normalize_tx(t) for t in body.get("tx_responses") or []]
+
+    def blocks(self, limit: int = 50) -> list:
+        h = self.status()["height"]
+        out, top = [], h
+        while top >= 1 and len(out) < limit:
+            low = max(1, top - 19)
+            metas = self.rpc.get("/blockchain", params={"minHeight": low, "maxHeight": top}).json()["result"]["block_metas"]
+            out += [{"height": int(m["header"]["height"]), "time": m["header"]["time"], "hash": m["block_id"]["hash"],
+                     "num_txs": int(m["num_txs"]), "proposer": m["header"]["proposer_address"]} for m in metas]
+            top = low - 1
+        return out[:limit]
+
+    def broadcast(self, tx_bytes: bytes, wait_s: float = 15) -> dict:
+        """Broadcasts (sync, i.e. CheckTx) then waits until the tx is included in a block."""
+        r = self.rest.post("/cosmos/tx/v1beta1/txs", json={"tx_bytes": base64.b64encode(tx_bytes).decode(),
+                                                         "mode": "BROADCAST_MODE_SYNC"})
+        if r.status_code >= 400:
+            raise ChainError(r.status_code, r.json().get("message", r.text))
+        resp = r.json()["tx_response"]
+        if int(resp.get("code", 0)) != 0:
+            code = int(resp["code"])
+            detail = resp.get("raw_log") or ("tx already in mempool/cache (replay)" if code == 19 else "tx rejected")
+            raise ChainError(400, f"{detail} [{resp.get('codespace', 'sdk')}:{code}]")
+        deadline = time.monotonic() + wait_s
+        while time.monotonic() < deadline:
+            g = self.rest.get(f"/cosmos/tx/v1beta1/txs/{resp['txhash']}")
+            if g.status_code == 200:
+                res = normalize_tx(g.json()["tx_response"])
+                if res["code"] != 0:
+                    raise ChainError(400, res["log"])
+                return res
+            time.sleep(0.25)
+        raise ChainError(504, f"tx {resp['txhash']} not included within {wait_s}s")
 
 
 class GuardianClient:

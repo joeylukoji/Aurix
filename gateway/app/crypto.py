@@ -1,42 +1,132 @@
-"""ed25519 keys and canonical sign bytes, byte-compatible with chain/ledger (Go)."""
+"""Cosmos SDK transaction signing (secp256k1, SIGN_MODE_DIRECT) without heavy deps.
+
+Keys: private key = sha256(seed string), same derivation as the web wallet and
+`aurixd seed-address`. Addresses: bech32("aur", ripemd160(sha256(compressed pubkey))).
+"""
 from __future__ import annotations
 
 import hashlib
-import json
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from Crypto.Hash import RIPEMD160
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.utils import Prehashed, decode_dss_signature
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-MSG_FIELDS = ["type", "to", "amount", "arbiter", "deadline_height", "escrow_id", "hash", "external_ref"]
-DEFAULT_FEE = 1_000
+from . import proto
+
+PREFIX = "aur"
+DENOM = "uaur"
 MICRO = 1_000_000
+GAS_LIMIT = 300_000
+FEE = 2_000  # uaur; min gas price is 0.0025uaur -> 750uaur required
+_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+
+# ---------------- bech32 ----------------
+_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 
 
-def key_from_seed(seed: str) -> Ed25519PrivateKey:
-    return Ed25519PrivateKey.from_private_bytes(hashlib.sha256(seed.encode()).digest())
+def _polymod(values):
+    gen = [0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3]
+    chk = 1
+    for v in values:
+        b = chk >> 25
+        chk = (chk & 0x1FFFFFF) << 5 ^ v
+        for i in range(5):
+            chk ^= gen[i] if ((b >> i) & 1) else 0
+    return chk
 
 
-def pubkey_bytes(k: Ed25519PrivateKey) -> bytes:
-    return k.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+def _hrp_expand(hrp):
+    return [ord(x) >> 5 for x in hrp] + [0] + [ord(x) & 31 for x in hrp]
 
 
-def address_from_pub(pub: bytes) -> str:
-    return "aur1" + hashlib.sha256(pub).digest()[:20].hex()
+def _convertbits(data, frombits, tobits, pad=True):
+    acc = bits = 0
+    ret, maxv = [], (1 << tobits) - 1
+    for value in data:
+        acc = (acc << frombits) | value
+        bits += frombits
+        while bits >= tobits:
+            bits -= tobits
+            ret.append((acc >> bits) & maxv)
+    if pad and bits:
+        ret.append((acc << (tobits - bits)) & maxv)
+    elif not pad and (bits >= frombits or ((acc << (tobits - bits)) & maxv)):
+        raise ValueError("invalid padding")
+    return ret
 
 
-def canonical_msg(msg: dict) -> dict:
-    """Same field order as Go's Msg struct; zero values omitted (omitempty)."""
-    return {f: msg[f] for f in MSG_FIELDS if msg.get(f) not in (None, "", 0)}
+def bech32_encode(hrp: str, data: bytes) -> str:
+    d = _convertbits(data, 8, 5)
+    chk = _polymod(_hrp_expand(hrp) + d + [0] * 6) ^ 1
+    return hrp + "1" + "".join(_CHARSET[x] for x in d + [(chk >> 5 * (5 - i)) & 31 for i in range(6)])
 
 
-def sign_bytes(chain_id: str, msg: dict, sender: str, nonce: int, fee: int) -> bytes:
-    doc = {"chain_id": chain_id, "msg": canonical_msg(msg), "from": sender, "nonce": nonce, "fee": fee}
-    return json.dumps(doc, separators=(",", ":"), ensure_ascii=False).encode()
+def bech32_decode(addr: str) -> tuple[str, bytes]:
+    addr = addr.lower()
+    pos = addr.rfind("1")
+    hrp, data = addr[:pos], [_CHARSET.index(c) for c in addr[pos + 1:]]
+    if pos < 1 or len(data) < 6 or _polymod(_hrp_expand(hrp) + data) != 1:
+        raise ValueError("invalid bech32 checksum")
+    return hrp, bytes(_convertbits(data[:-6], 5, 8, False))
 
 
-def sign_tx(k: Ed25519PrivateKey, chain_id: str, msg: dict, nonce: int, fee: int = DEFAULT_FEE) -> dict:
-    pub = pubkey_bytes(k)
-    sender = address_from_pub(pub)
-    sig = k.sign(sign_bytes(chain_id, msg, sender, nonce, fee))
-    return {"msg": canonical_msg(msg), "from": sender, "pub_key": pub.hex(), "nonce": nonce, "fee": fee,
-            "signature": sig.hex()}
+def valid_address(addr: str) -> bool:
+    try:
+        hrp, data = bech32_decode(addr)
+        return hrp == PREFIX and len(data) in (20, 32)
+    except (ValueError, IndexError):
+        return False
+
+
+# ---------------- keys ----------------
+class Key:
+    def __init__(self, seed: str):
+        d = int.from_bytes(hashlib.sha256(seed.encode()).digest(), "big")
+        self._sk = ec.derive_private_key(d, ec.SECP256K1())
+        self.pubkey = self._sk.public_key().public_bytes(Encoding.X962, PublicFormat.CompressedPoint)
+        self.address = bech32_encode(PREFIX, RIPEMD160.new(hashlib.sha256(self.pubkey).digest()).digest())
+
+    def sign(self, data: bytes) -> bytes:
+        """64-byte r||s over sha256(data), low-S normalised as Cosmos requires."""
+        digest = hashlib.sha256(data).digest()
+        r, s = decode_dss_signature(self._sk.sign(digest, ec.ECDSA(Prehashed(hashes.SHA256()))))
+        if s > _N // 2:
+            s = _N - s
+        return r.to_bytes(32, "big") + s.to_bytes(32, "big")
+
+
+# ---------------- messages ----------------
+def msg_send(frm: str, to: str, amount: int) -> bytes:
+    return proto.any_("/cosmos.bank.v1beta1.MsgSend",
+                      proto.string(1, frm) + proto.string(2, to) + proto.msg(3, proto.coin(DENOM, amount)))
+
+
+def msg_anchor_proof(signer: str, hash_hex: str, external_ref: str) -> bytes:
+    return proto.any_("/aurix.smartmoney.v1.MsgAnchorProof",
+                      proto.string(1, signer) + proto.string(2, hash_hex) + proto.string(3, external_ref))
+
+
+def build_tx(key: Key, msgs: list[bytes], chain_id: str, account_number: int, sequence: int,
+             memo: str = "") -> bytes:
+    """Builds and signs a TxRaw with SIGN_MODE_DIRECT."""
+    body = b"".join(proto.msg(1, m) for m in msgs) + proto.string(2, memo)
+    pub_any = proto.any_("/cosmos.crypto.secp256k1.PubKey", proto.bytes_(1, key.pubkey))
+    mode_info = proto.msg(1, proto.uint(1, 1))  # single { mode: SIGN_MODE_DIRECT }
+    signer_info = proto.msg(1, pub_any) + proto.msg(2, mode_info) + proto.uint(3, sequence)
+    fee = proto.msg(1, proto.coin(DENOM, FEE)) + proto.uint(2, GAS_LIMIT)
+    auth_info = proto.msg(1, signer_info) + proto.msg(2, fee)
+    sign_doc = proto.bytes_(1, body) + proto.bytes_(2, auth_info) + proto.string(3, chain_id) + proto.uint(4, account_number)
+    return proto.bytes_(1, body) + proto.bytes_(2, auth_info) + proto.bytes_(3, key.sign(sign_doc))
+
+
+def msg_create_escrow(sender: str, recipient: str, amount: int, deadline_height: int, arbiter: str = "") -> bytes:
+    return proto.any_("/aurix.smartmoney.v1.MsgCreateEscrow",
+                      proto.string(1, sender) + proto.string(2, recipient) + proto.string(3, arbiter)
+                      + proto.msg(4, proto.coin(DENOM, amount)) + proto.uint(5, deadline_height))
+
+
+def msg_settle_escrow(kind: str, signer: str, escrow_id: int) -> bytes:
+    """kind: 'Release' or 'Refund'."""
+    return proto.any_(f"/aurix.smartmoney.v1.Msg{kind}Escrow", proto.string(1, signer) + proto.uint(2, escrow_id))

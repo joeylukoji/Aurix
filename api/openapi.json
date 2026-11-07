@@ -131,6 +131,7 @@
     "/api/txs/prepare": {
       "post": {
         "summary": "Prepare",
+        "description": "Returns what the browser needs to build and sign a Cosmos tx, plus the advisory risk score.",
         "operationId": "prepare_api_txs_prepare_post",
         "requestBody": {
           "content": {
@@ -302,7 +303,7 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "default": 200,
+              "default": 100,
               "title": "Limit"
             }
           }
@@ -698,39 +699,15 @@
       },
       "SignedTx": {
         "properties": {
-          "msg": {
-            "type": "object",
-            "title": "Msg"
-          },
-          "from": {
+          "tx_bytes": {
             "type": "string",
-            "title": "From"
-          },
-          "pub_key": {
-            "type": "string",
-            "title": "Pub Key"
-          },
-          "nonce": {
-            "type": "integer",
-            "title": "Nonce"
-          },
-          "fee": {
-            "type": "integer",
-            "title": "Fee"
-          },
-          "signature": {
-            "type": "string",
-            "title": "Signature"
+            "title": "Tx Bytes",
+            "description": "base64 protobuf TxRaw signed by the user's key (SIGN_MODE_DIRECT)"
           }
         },
         "type": "object",
         "required": [
-          "msg",
-          "from",
-          "pub_key",
-          "nonce",
-          "fee",
-          "signature"
+          "tx_bytes"
         ],
         "title": "SignedTx"
       },

@@ -5,6 +5,8 @@ and every AUR movement is a transaction signed by the user's own key.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import os
 import secrets
@@ -23,6 +25,12 @@ from .config import Settings
 from .db import DB
 
 RISKY_TYPES = {"MsgSend", "MsgCreateEscrow"}
+TYPE_URLS = {
+    "MsgSend": "/cosmos.bank.v1beta1.MsgSend",
+    "MsgCreateEscrow": "/aurix.smartmoney.v1.MsgCreateEscrow",
+    "MsgReleaseEscrow": "/aurix.smartmoney.v1.MsgReleaseEscrow",
+    "MsgRefundEscrow": "/aurix.smartmoney.v1.MsgRefundEscrow",
+}
 
 
 class Msg(BaseModel):
@@ -40,12 +48,7 @@ class PrepareReq(BaseModel):
 
 
 class SignedTx(BaseModel):
-    msg: dict
-    sender: str = Field(alias="from")
-    pub_key: str
-    nonce: int
-    fee: int
-    signature: str
+    tx_bytes: str = Field(description="base64 protobuf TxRaw signed by the user's key (SIGN_MODE_DIRECT)")
 
 
 class OrderReq(BaseModel):
@@ -61,14 +64,14 @@ class ApproveReq(BaseModel):
 def create_app(settings: Settings | None = None, chain: ChainClient | None = None,
                guardian: GuardianClient | None = None, paypal=None) -> FastAPI:
     s = settings or Settings()
-    chain = chain or ChainClient(s.chain_url)
+    chain = chain or ChainClient(s.chain_url, s.chain_rest_url)
     guardian = guardian or GuardianClient(s.guardian_url)
     if paypal is None:
         paypal = MockPayPalClient() if s.paypal_mock else PayPalClient(
             s.paypal_base_url, s.paypal_client_id, s.paypal_client_secret, s.paypal_webhook_id)
     db = DB(s.database_path)
-    faucet_key = crypto.key_from_seed(s.faucet_seed)
-    gateway_key = crypto.key_from_seed(s.gateway_seed)
+    faucet_key = crypto.Key(s.faucet_seed)
+    gateway_key = crypto.Key(s.gateway_seed)
     signer_lock = threading.Lock()
 
     app = FastAPI(title="AURIX API Gateway", version="0.1.0")
@@ -81,11 +84,11 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
     def chain_id() -> str:
         return chain.status()["chain_id"]
 
-    def sign_and_send(key, msg: dict) -> dict:
-        with signer_lock:  # serialise nonces of server-held dev keys
-            sender = crypto.address_from_pub(crypto.pubkey_bytes(key))
-            nonce = chain.account(sender)["nonce"]
-            return chain.broadcast(crypto.sign_tx(key, chain_id(), msg, nonce))
+    def sign_and_send(key: crypto.Key, msg: bytes) -> dict:
+        with signer_lock:  # serialise sequences of server-held dev keys
+            acct = chain.account(key.address)
+            tx = crypto.build_tx(key, [msg], chain_id(), acct["account_number"], acct["sequence"])
+            return chain.broadcast(tx)
 
     # ---------------- health & wallets ----------------
     @app.get("/api/health")
@@ -102,28 +105,45 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
         """Demo convenience: returns a fresh key. It is NOT stored server-side.
         The web wallet generates keys in the browser instead."""
         seed = secrets.token_hex(32)
-        k = crypto.key_from_seed(seed)
-        return {"address": crypto.address_from_pub(crypto.pubkey_bytes(k)), "seed": seed,
+        return {"address": crypto.Key(seed).address, "seed": seed,
                 "warning": "Demo testnet key. Store it yourself; the gateway does not keep it."}
+
+    def check_addr(addr: str):
+        if not crypto.valid_address(addr):
+            raise HTTPException(400, f"invalid address {addr!r}")
 
     @app.get("/api/wallets/{addr}")
     def wallet(addr: str):
+        check_addr(addr)
         acct = chain.account(addr)  # balance from the chain = source of truth
-        history = [t for b in chain.blocks(500) for t in b["txs"] if addr in (t.get("from"), t.get("to"))]
+        seen, history = set(), []
+        for q in (f"message.sender='{addr}'", f"transfer.recipient='{addr}'"):
+            for t in chain.search_txs(q, 100):
+                if t["hash"] not in seen:
+                    seen.add(t["hash"])
+                    history.append(t)
+        history.sort(key=lambda t: t["height"], reverse=True)
         return {**acct, "balance_aur": acct["balance"] / crypto.MICRO, "history": history}
 
     @app.post("/api/wallets/{addr}/faucet")
     def faucet(addr: str):
-        if not addr.startswith("aur1"):
-            raise HTTPException(400, "invalid address")
-        return sign_and_send(faucet_key, {"type": "MsgSend", "to": addr, "amount": 100 * crypto.MICRO})
+        check_addr(addr)
+        return sign_and_send(faucet_key, crypto.msg_send(faucet_key.address, addr, 100 * crypto.MICRO))
 
     # ---------------- transactions ----------------
     @app.post("/api/txs/prepare")
     def prepare(req: PrepareReq):
+        """Returns what the browser needs to build and sign a Cosmos tx, plus the advisory risk score."""
         msg = req.msg.model_dump(exclude_none=True)
+        if msg["type"] not in TYPE_URLS:
+            raise HTTPException(400, f"unsupported message type {msg['type']}")
+        check_addr(req.sender)
+        for f in ("to", "arbiter"):
+            if msg.get(f):
+                check_addr(msg[f])
         acct = chain.account(req.sender)
-        cid = chain_id()
+        if not acct["exists"]:
+            raise HTTPException(400, "account has no funds yet: use the faucet first")
         risk, risk_status = None, "not_applicable"
         if msg["type"] in RISKY_TYPES:
             risk = guardian.score(context="escrow" if msg["type"] == "MsgCreateEscrow" else "aur_transfer",
@@ -131,20 +151,22 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
                                   amount=max(msg.get("amount", 0), 1) / crypto.MICRO, currency="AUR",
                                   record=False)
             risk_status = "ok" if risk else "unavailable"
-        sb = crypto.sign_bytes(cid, msg, req.sender, acct["nonce"], crypto.DEFAULT_FEE)
-        return {"chain_id": cid, "nonce": acct["nonce"], "fee": crypto.DEFAULT_FEE,
-                "msg": crypto.canonical_msg(msg), "sign_bytes": sb.decode(),
+        return {"chain_id": chain_id(), "account_number": acct["account_number"], "sequence": acct["sequence"],
+                "fee": {"denom": crypto.DENOM, "amount": crypto.FEE, "gas_limit": crypto.GAS_LIMIT},
+                "type_url": TYPE_URLS[msg["type"]], "msg": msg,
                 "risk": risk, "risk_status": risk_status, "advisory_only": True}
 
     @app.post("/api/txs")
     def submit(tx: SignedTx):
-        body = tx.model_dump(by_alias=True)
-        res = chain.broadcast(body)
-        m = tx.msg
-        if m.get("type") in RISKY_TYPES and res.get("code") == 0:
+        try:
+            raw = base64.b64decode(tx.tx_bytes, validate=True)
+        except binascii.Error:
+            raise HTTPException(400, "tx_bytes must be base64")
+        res = chain.broadcast(raw)
+        if res["type"] in RISKY_TYPES:
             # record in Guardian history (advisory; ignored if unavailable)
-            r = guardian.score(context="aur_transfer", sender=tx.sender, recipient=m.get("to", ""),
-                               amount=m.get("amount", 1) / crypto.MICRO, currency="AUR")
+            r = guardian.score(context="aur_transfer", sender=res["from"], recipient=res.get("to") or "",
+                               amount=(res.get("amount") or 1) / crypto.MICRO, currency="AUR")
             db.save_risk("aur_tx", res["hash"], r)
         return res
 
@@ -159,12 +181,11 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
     # ---------------- explorer ----------------
     @app.get("/api/explorer/blocks")
     def blocks(limit: int = 50):
-        return chain.blocks(limit)
+        return chain.blocks(min(limit, 200))
 
     @app.get("/api/explorer/txs")
-    def txs(limit: int = 200):
-        out = [t | {"time": b["time"]} for b in chain.blocks(500) for t in b["txs"]]
-        return out[:limit]
+    def txs(limit: int = 100):
+        return chain.search_txs("tx.height>0", min(limit, 100))
 
     @app.get("/api/explorer/proofs/{h}")
     def proof(h: str):
@@ -173,7 +194,7 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
     # ---------------- PayPal ----------------
     def anchor(order_id: str, capture_id: str) -> dict:
         h = hashlib.sha256(f"{order_id}|{capture_id}".encode()).hexdigest()
-        res = sign_and_send(gateway_key, {"type": "MsgAnchorProof", "hash": h, "external_ref": f"paypal:{order_id}"})
+        res = sign_and_send(gateway_key, crypto.msg_anchor_proof(gateway_key.address, h, f"paypal:{order_id}"))
         db.update_order(order_id, status="ANCHORED", capture_id=capture_id, proof_hash=h,
                         anchor_tx=res["hash"], anchor_height=res["height"])
         return res

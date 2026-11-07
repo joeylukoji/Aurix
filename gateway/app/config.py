@@ -9,6 +9,7 @@ def _env(k: str, d: str = "") -> str:
 @dataclass
 class Settings:
     chain_url: str = field(default_factory=lambda: _env("CHAIN_RPC_URL", "http://localhost:26657"))
+    chain_rest_url: str = field(default_factory=lambda: _env("CHAIN_REST_URL", "http://localhost:1317"))
     guardian_url: str = field(default_factory=lambda: _env("GUARDIAN_URL", "http://localhost:8000"))
     database_path: str = field(default_factory=lambda: _env("DATABASE_URL", "sqlite:///./aurix.db").removeprefix("sqlite:///"))
     paypal_client_id: str = field(default_factory=lambda: _env("PAYPAL_CLIENT_ID"))

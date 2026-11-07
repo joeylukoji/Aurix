@@ -20,21 +20,34 @@ def _free_port() -> int:
 
 
 @pytest.fixture(scope="session")
-def chain_url(tmp_path_factory):
-    """Builds and runs a real aurixd node (integration tests against the real ledger)."""
-    binary = tmp_path_factory.mktemp("bin") / "aurixd"
+def chain_urls(tmp_path_factory):
+    """Builds and runs a real single-validator Cosmos SDK aurixd node (200 ms blocks)."""
+    tmp = tmp_path_factory.mktemp("chain")
+    binary, home = tmp / "aurixd", tmp / "home"
     subprocess.run(["go", "build", "-o", str(binary), "./cmd/aurixd"], cwd=ROOT / "chain", check=True)
-    port = _free_port()
-    env = os.environ | {"AURIX_LISTEN": f"127.0.0.1:{port}", "AURIX_BLOCK_INTERVAL": "100ms"}
-    proc = subprocess.Popen([str(binary)], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    url = f"http://127.0.0.1:{port}"
-    for _ in range(50):
+    env = os.environ | {"AURIXD": str(binary), "AURIX_HOME": str(home), "RESET": "1"}
+    subprocess.run([str(ROOT / "chain/scripts/init-local.sh")], env=env, check=True, stdout=subprocess.DEVNULL)
+    cfg = home / "config/config.toml"
+    cfg.write_text(cfg.read_text().replace('timeout_commit = "1s"', 'timeout_commit = "200ms"'))
+    rpc, api, grpc, p2p = (_free_port() for _ in range(4))
+    proc = subprocess.Popen([str(binary), "start", "--home", str(home),
+                             "--rpc.laddr", f"tcp://127.0.0.1:{rpc}", "--api.enable", "--api.address", f"tcp://127.0.0.1:{api}",
+                             "--grpc.address", f"127.0.0.1:{grpc}", "--p2p.laddr", f"tcp://127.0.0.1:{p2p}",
+                             "--rpc.pprof_laddr", ""],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    urls = (f"http://127.0.0.1:{rpc}", f"http://127.0.0.1:{api}")
+    for _ in range(150):
         try:
-            httpx.get(url + "/status")
-            break
-        except httpx.HTTPError:
-            time.sleep(0.1)
-    yield url
+            if int(httpx.get(urls[0] + "/status").json()["result"]["sync_info"]["latest_block_height"]) >= 2:
+                httpx.get(urls[1] + "/aurix/smartmoney/v1/params").raise_for_status()
+                break
+        except (httpx.HTTPError, KeyError, ValueError):
+            pass
+        time.sleep(0.2)
+    else:
+        proc.terminate()
+        raise RuntimeError("aurixd did not start")
+    yield urls
     proc.terminate()
 
 
