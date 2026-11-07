@@ -12,6 +12,11 @@ services:
       # Real keys (networks/aurix-testnet-2/scripts/keygen.sh): genesis addresses instead of the dev seeds.
       AURIX_GATEWAY_ADDR: ${AURIX_GATEWAY_ADDR:-}
       AURIX_FAUCET_ADDR: ${AURIX_FAUCET_ADDR:-}
+      # k-of-n PayPal proof anchoring: gateway + 2 independent attestors, 2 attestations required.
+      # With real keys set ATTESTOR_ADDRS (and empty ATTESTOR_SEEDS) instead of the dev seeds.
+      ATTESTOR_SEEDS: ${ATTESTOR_SEEDS-aurix-dev-attestor-1 aurix-dev-attestor-2}
+      ATTESTOR_ADDRS: ${ATTESTOR_ADDRS:-}
+      ANCHOR_THRESHOLD: ${ANCHOR_THRESHOLD:-2}
       AURIX_NET_HOME: /data
       VALIDATORS: "4"
       PORT_STEP: "0"
@@ -54,8 +59,24 @@ services:
     environment:
       AURIX_ENV: ${AURIX_ENV:-}
       GUARDIAN_MNEMONIC: ${GUARDIAN_MNEMONIC:-}
+      GUARDIAN_SEED: aurix-dev-guardian-1
       GUARDIAN_CHAIN_ID: aurix-testnet-1
     ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health',timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    restart: unless-stopped
+  # Second, independently keyed Neural Guardian: the gateway requires GUARDIAN_QUORUM valid signed scores.
+  guardian2:
+    build: ../guardian
+    environment:
+      AURIX_ENV: ${AURIX_ENV:-}
+      GUARDIAN_MNEMONIC: ${GUARDIAN2_MNEMONIC:-}
+      GUARDIAN_SEED: aurix-dev-guardian-2
+      GUARDIAN_CHAIN_ID: aurix-testnet-1
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health',timeout=4)"]
       interval: 10s
@@ -89,8 +110,8 @@ services:
       CHAIN_RPC_URL: http://chain0:26657
       CHAIN_REST_URL: http://chain0:1317
       # H3 quorum: comma separated guardians, valid signed scores required, optional pubkey allowlist.
-      GUARDIAN_URLS: ${GUARDIAN_URLS:-http://guardian:8000}
-      GUARDIAN_QUORUM: ${GUARDIAN_QUORUM:-1}
+      GUARDIAN_URLS: ${GUARDIAN_URLS:-http://guardian:8000,http://guardian2:8000}
+      GUARDIAN_QUORUM: ${GUARDIAN_QUORUM:-2}
       GUARDIAN_PUBKEYS: ${GUARDIAN_PUBKEYS:-}
       # Keys (H2), in priority order: *_MNEMONIC, *_KEY_FILE, then the dev seeds below (refused with
       # AURIX_ENV=production). Put real mnemonics in ../.env (from keygen.sh's gateway.env), never here.
@@ -116,7 +137,41 @@ services:
     depends_on:
       chain0: { condition: service_healthy }
       guardian: { condition: service_healthy }
+      guardian2: { condition: service_healthy }
       # Simulator only; remove together with the paypal-sim service for real Sandbox.
+      paypal-sim: { condition: service_healthy }
+  # Independent PayPal attestors (k-of-n anchoring): each re-checks the capture at PayPal with its own
+  # key and read-only credentials, through a different chain node. Real keys: ATTESTORn_MNEMONIC.
+  attestor1: &attestor
+    build: ../attestor
+    environment:
+      AURIX_ENV: ${AURIX_ENV:-}
+      ATTESTOR_SEED: aurix-dev-attestor-1
+      ATTESTOR_MNEMONIC: ${ATTESTOR1_MNEMONIC:-}
+      CHAIN_REST: http://chain1:1317
+      CHAIN_ID: aurix-testnet-1
+      PAYPAL_BASE_URL: ${PAYPAL_BASE_URL:-http://paypal-sim:8090}
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-sim-client-id}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-sim-client-secret}
+      POLL_INTERVAL: "2"
+    depends_on:
+      chain1: { condition: service_healthy }
+      paypal-sim: { condition: service_healthy }
+    restart: unless-stopped
+  attestor2:
+    <<: *attestor
+    environment:
+      AURIX_ENV: ${AURIX_ENV:-}
+      ATTESTOR_SEED: aurix-dev-attestor-2
+      ATTESTOR_MNEMONIC: ${ATTESTOR2_MNEMONIC:-}
+      CHAIN_REST: http://chain2:1317
+      CHAIN_ID: aurix-testnet-1
+      PAYPAL_BASE_URL: ${PAYPAL_BASE_URL:-http://paypal-sim:8090}
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-sim-client-id}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-sim-client-secret}
+      POLL_INTERVAL: "2"
+    depends_on:
+      chain2: { condition: service_healthy }
       paypal-sim: { condition: service_healthy }
 volumes:
   chain-data:

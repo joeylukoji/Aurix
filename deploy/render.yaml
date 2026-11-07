@@ -1,7 +1,9 @@
 # Render Blueprint. Copy to the repository root (render.yaml) to deploy, or point
 # the Blueprint at deploy/render.yaml.
 #
-# NOTE: the chain is a single-validator Cosmos SDK testnet and MUST have a persistent
+# NOTE: the chain is a single-validator Cosmos SDK testnet (the 4-validator network runs with
+# docker compose or scripts/dev-up.sh; the multi-operator network is networks/aurix-testnet-2) and
+# MUST have a persistent
 # disk at /data (paid plan: disks are not available on the free tier). Without it the
 # chain re-initialises on every deploy and all balances/tx history are lost.
 #
@@ -15,8 +17,15 @@ services:
     dockerfilePath: ./chain/Dockerfile
     dockerContext: ./chain
     disk: { name: chain-data, mountPath: /data, sizeGB: 1 }
+    # init-localnet.sh with 1 validator so the genesis lists the gateway + attestor as anchor
+    # signers with a 2-of-2 threshold (k-of-n anchoring); idempotent on restarts.
+    dockerCommand: >-
+      bash -c "VALIDATORS=1 PORT_STEP=0 BIND_HOST=0.0.0.0 AURIX_NET_HOME=/data/net init-localnet.sh
+      && exec aurixd start --home /data/net/node0"
     envVars:
       - { key: AURIX_CHAIN_ID, value: aurix-testnet-1 }
+      - { key: ATTESTOR_SEEDS, value: aurix-dev-attestor-1 }
+      - { key: ANCHOR_THRESHOLD, value: "2" }
       - { key: AURIX_FAUCET_SEED, sync: false }
       - { key: AURIX_GATEWAY_SEED, sync: false }
 
@@ -69,3 +78,20 @@ services:
       - { key: PAYPAL_CLIENT_ID, value: sim-client-id }
       - { key: PAYPAL_CLIENT_SECRET, value: sim-client-secret }
       - { key: PAYPAL_WEBHOOK_ID, value: SIM-WEBHOOK-ID }
+
+  # Independent PayPal attestor (k-of-n anchoring). Not an HTTP service for users: private.
+  # For a real deployment set ATTESTOR_MNEMONIC (and ATTESTOR_ADDRS on the chain) instead of the seed.
+  - type: pserv
+    name: aurix-attestor
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./attestor/Dockerfile
+    dockerContext: ./attestor
+    envVars:
+      - { key: ATTESTOR_SEED, value: aurix-dev-attestor-1 }
+      - { key: ATTESTOR_MNEMONIC, sync: false }
+      - { key: CHAIN_REST, value: "http://aurix-chain:1317" }
+      - { key: CHAIN_ID, value: aurix-testnet-1 }
+      - { key: PAYPAL_BASE_URL, value: "http://aurix-paypal-sim:8090" }
+      - { key: PAYPAL_CLIENT_ID, value: sim-client-id }
+      - { key: PAYPAL_CLIENT_SECRET, value: sim-client-secret }

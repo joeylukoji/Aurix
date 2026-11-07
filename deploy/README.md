@@ -16,8 +16,12 @@ docker compose -f deploy/docker-compose.yml up --build
 # open http://localhost:8080
 ```
 
-Start order is enforced with healthchecks: `gateway` starts only after `chain`, `guardian`
-and `paypal-sim` are healthy. Chain/gateway state lives in the `chain-data` / `gateway-data`
+Services: `chain-init` writes a 4-validator genesis, then `chain0..chain3` run the validators;
+`guardian` and `guardian2` are two independently keyed Neural Guardians (the gateway needs
+`GUARDIAN_QUORUM=2` valid signed scores); `attestor1` and `attestor2` independently re-check every
+PayPal capture, and a proof is `CONFIRMED` once 2 of the 3 anchor signers (gateway + 2 attestors,
+`ANCHOR_THRESHOLD=2`) attested it. Start order is enforced with healthchecks: `gateway` starts only
+after `chain0`, both guardians and `paypal-sim` are healthy; each attestor waits for its chain node. Chain/gateway state lives in the `chain-data` / `gateway-data`
 volumes; reset with `docker compose -f deploy/docker-compose.yml down -v`.
 
 Optional overrides go in a `.env` at the repo root (read by the gateway and by compose).
@@ -32,7 +36,11 @@ Optional overrides go in a `.env` at the repo root (read by the gateway and by c
 4. `aurix-paypal-sim` is a public web service. If its URL is not `https://aurix-paypal-sim.onrender.com`,
    update `SIM_PUBLIC_URL`. Its webhooks go to the gateway over the private network
    (`http://aurix-gateway:8080/api/paypal/webhook`).
-5. The gateway DB is SQLite in `/tmp` (ephemeral) — fine for a demo; attach a disk and set
+5. `aurix-chain` runs one validator via `init-localnet.sh` (`VALIDATORS=1`) whose genesis lists the
+   gateway and `aurix-attestor` as anchor signers with `ANCHOR_THRESHOLD=2`, so every PayPal proof
+   needs both attestations. `aurix-attestor` is a private service; give it its own key
+   (`ATTESTOR_MNEMONIC`) for anything public.
+6. The gateway DB is SQLite in `/tmp` (ephemeral) — fine for a demo; attach a disk and set
    `DATABASE_URL=sqlite:////data/aurix.db` to keep it.
 
 All images honour `PORT`, which Render sets for web services.

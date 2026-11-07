@@ -42,9 +42,11 @@ echo "network up at height $(height); validator 3 = $VAL3"
 kill "${PIDS[3]}"; echo ">> validator 3 stopped at height $(height)"
 wait_for 90 "validator 3 to be jailed" bash -c "[[ \$('$BIN' q staking validator $VAL3 --node $NODE -o json | jq -r .validator.jailed) == true ]]"
 echo "OK: validator 3 jailed at height $(height) (status $(q staking validator "$VAL3" | jq -r .validator.status))"
-h=$(height); sleep 4
-[[ $(height) -gt $h ]] || { echo "FAIL: chain halted with 3/4 validators" >&2; exit 1; }
-echo "OK: chain still producing blocks with 3/4 validators"
+# Liveness with 3/4: a new block within 20 s. Not 4 s: right after the validator-set change a round
+# whose proposer is the stopped validator waits for timeout_propose (3 s, +0.5 s per round).
+h=$(height); t0=$SECONDS
+wait_for 20 "a new block with 3/4 validators (chain halted?)" bash -c "[[ \$(curl -fsS http://127.0.0.1:$((BASE + 57))/status | jq -r .result.sync_info.latest_block_height) -gt $h ]]"
+echo "OK: chain still producing blocks with 3/4 validators (next block after $((SECONDS - t0)) s)"
 
 start 3; echo ">> validator 3 restarted, waiting for the 60 s jail period"
 sleep 62
