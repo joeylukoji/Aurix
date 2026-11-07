@@ -9,9 +9,8 @@
 | Architecture | [architecture/diagrams.md](architecture/diagrams.md) | UML/C4 diagrams (as built): context, use cases, sequences, states, classes, deployment |
 | Submission | [submission/devpost.md](submission/devpost.md) | Devpost project description |
 | Submission | [submission/demo-script.md](submission/demo-script.md) | < 3 min demo video script |
+| Planning | [planning/decentralization.md](planning/decentralization.md) | Detailed plan: independent validators, direct wallet, k-of-n anchoring, governance |
 
 Diagrams are written in **Mermaid** and render directly on GitHub.
 
 Sources: [`AURIX_SOFTWARE_ARCHITECTURE.md`](../AURIX_SOFTWARE_ARCHITECTURE.md), [`AURIX_hackathon_brief.md`](../AURIX_hackathon_brief.md). Items marked **[Proposal]** are still to be validated by the team.
-
-| Planning | [planning/decentralization.md](planning/decentralization.md) | Detailed plan: independent validators, direct wallet, k-of-n anchoring, governance |
