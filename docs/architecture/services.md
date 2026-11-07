@@ -6,9 +6,9 @@ The MVP runs **4 services** (plus the static web app served by the gateway):
 
 | Service | Language / stack | Ports | Layer | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
-| `chain` — `aurixd` node | Go, Cosmos SDK v0.50, CometBFT v0.38 | 26657 (CometBFT RPC), 1317 (REST/LCD), 9090 (gRPC) | 1-2 | — | built (single validator) |
+| `chain` — `aurixd` node | Go, Cosmos SDK v0.50, CometBFT v0.38 | 26657 (CometBFT RPC), 1317 (REST/LCD), 9090 (gRPC) | 1-2 | — | built (4 validators by default) |
 | `gateway` — API Gateway | Python, FastAPI, SQLite | 8080 (also serves `web/`) | 4 | chain, guardian, PayPal (simulator) | built |
-| `guardian` — Neural Guardian | Python, FastAPI, LightGBM + SHAP | 8000 | 3 | — | built (synthetic data) |
+| `guardian` — Neural Guardian | Python, FastAPI, LightGBM + SHAP | 8000 | 3 | — | built (trained on PaySim) |
 | `paypal-sim` — PayPal API simulator | Python, FastAPI | 8090 | 4 (external stand-in) | gateway (webhook target) | temporary |
 | `web` — Wallet & explorer | Vanilla JS, `@noble` secp256k1, AG Grid | served on 8080 | — | gateway | built |
 | `indexer`, PostgreSQL, Redis | — | — | — | — | **planned** (the gateway reads the chain directly and keeps its own index in SQLite) |
@@ -40,7 +40,7 @@ Single source of truth for balances, escrows and proofs. Details: [`chain/README
 | `x/smartmoney` | `MsgRefundEscrow` | `LOCKED`, height ≥ deadline | Funds → sender, `REFUNDED` |
 | `x/smartmoney` | `MsgAnchorProof` | signer = authorised gateway account, unique hash | Proof stored, **no AUR created** |
 
-`x/staking` runs with one validator. Multi-validator networks are **planned**.
+`x/staking` runs 4 validators by default (`chain/scripts/init-localnet.sh`): each has its own key and equal stake, and the nodes are persistent peers. The chain keeps finalising blocks with 3/4 validators and halts (no fork) with 2/4. Independent operators on separate machines are **planned**.
 
 ## 2. `gateway` — API Gateway (FastAPI)
 
@@ -77,7 +77,7 @@ In the code, `CREATED` and `SCORED` happen in the same request; the stored statu
 
 ## 3. `guardian` — Neural Guardian
 
-`POST /v1/risk/score` → `{risk_score, level, reasons[], advisory_only: true}`. LightGBM classifier with native TreeSHAP reasons, **trained on a synthetic dataset** (`guardian/app/model.py`). If Guardian is down, the gateway returns `risk_status: "unavailable"` and the user can still proceed (US-10). Model card: [`guardian/MODEL_CARD.md`](../../guardian/MODEL_CARD.md). GNN analysis is **planned**.
+`POST /v1/risk/score` → `{risk_score, level, reasons[], advisory_only: true}`. LightGBM classifier with native TreeSHAP reasons, **trained on PaySim** (Kaggle `ealaxi/paysim1`, out-of-time ROC-AUC 0.978, PR-AUC 0.939; see `guardian/MODEL_CARD.md`). If Guardian is down, the gateway returns `risk_status: "unavailable"` and the user can still proceed (US-10). Model card: [`guardian/MODEL_CARD.md`](../../guardian/MODEL_CARD.md). GNN analysis is **planned**.
 
 ## 4. `paypal-sim` — PayPal API simulator (temporary)
 

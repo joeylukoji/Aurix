@@ -32,7 +32,8 @@ Payments fail people in two ways: money is sent to the wrong person or a fraudst
 
 ## Accomplishments that we're proud of
 
-- A real (single-validator) Cosmos chain with a custom module, not a mock ledger.
+- A real 4-validator Cosmos chain (CometBFT BFT consensus, survives a validator going down) with a custom module, not a mock ledger.
+- A risk model trained on 6.3 M PaySim transactions with an honest out-of-time evaluation (ROC-AUC 0.978, PR-AUC 0.939), after removing a known dataset artefact.
 - Non-custodial browser wallet.
 - Ten explicit invariants (no negative balance, no replay, escrow leaves `LOCKED` once, no capture without approval, verified and idempotent webhooks, AI advisory only, USD never minted as AUR…) covered by tests.
 
@@ -49,8 +50,8 @@ Cosmos SDK module wiring, PayPal Orders v2 and webhook verification, and how to 
 
 ## Honest limitations
 
-- Testnet only: **AUR has no monetary value**. Single validator.
-- Guardian is trained on **synthetic data**; its scores are illustrative.
+- Testnet only: **AUR has no monetary value**. 4 validators, but run by one team on one machine.
+- Guardian is trained on **PaySim**, a simulator calibrated on real mobile-money logs, not on AURIX or PayPal data; PaySim fraud is easier to detect than real fraud, and PayPal orders (PaySim `PAYMENT`) always score low.
 - PayPal runs on a **local simulator** until Sandbox credentials are added (clearly labelled in the UI).
 
 ## Built with

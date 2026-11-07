@@ -140,7 +140,7 @@ cd paypal-sim && .venv/bin/python -m pytest -q
 cd gateway && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/python -m pytest -q
 ```
 
-The gateway tests build, initialise and start a real single-validator `aurixd` node (needs Go and `jq`). The browser journey (wallet → send → escrow → PayPal → explorer) runs with Playwright against a running stack:
+The gateway tests build, initialise and start a real `aurixd` node (needs Go and `jq`). The browser journey (wallet → send → escrow → PayPal → explorer) runs with Playwright against a running stack:
 
 ```bash
 node tests/e2e/demo-journey.js
@@ -150,8 +150,8 @@ node tests/e2e/demo-journey.js
 
 | Component | Status | Notes |
 | --- | --- | --- |
-| `chain/` | ✅ V1 | **Cosmos SDK v0.50 + CometBFT v0.38**, single validator. `x/aurixbank` = `x/auth` + `x/bank` (`uaur`, fixed supply, sequences as nonces, fees); custom `x/smartmoney` module (escrow, proof anchoring). See [`chain/README.md`](chain/README.md). |
-| `guardian/` | ✅ V1 | FastAPI + LightGBM, SHAP reasons via native TreeSHAP. **Trained on a synthetic dataset** generated in `guardian/app/model.py`. |
+| `chain/` | ✅ V1 | **Cosmos SDK v0.50 + CometBFT v0.38**, **4 validators** by default (BFT: survives 1 faulty node, verified with `scripts/bft-demo.sh`). `x/aurixbank` = `x/auth` + `x/bank` (`uaur`, fixed supply, sequences as nonces, fees); custom `x/smartmoney` module (escrow, proof anchoring). See [`chain/README.md`](chain/README.md). |
+| `guardian/` | ✅ V1 | FastAPI + LightGBM, SHAP reasons via native TreeSHAP. **Trained on PaySim** (Kaggle, 6.3 M transactions), out-of-time ROC-AUC 0.978 / PR-AUC 0.939. See [`guardian/MODEL_CARD.md`](guardian/MODEL_CARD.md). |
 | `gateway/` | ✅ V1 | FastAPI (variant recommended in the architecture doc). PayPal Orders v2, webhook signature verification, idempotency, proof anchoring. SQLite index (PostgreSQL planned). |
 | `paypal-sim/` | 🧪 temporary | Local PayPal API simulator used until the real Sandbox is connected. |
 | `web/` | ✅ V1 | secp256k1 keys generated in the browser; Cosmos txs (`SIGN_MODE_DIRECT`) signed locally. AG Grid explorer. |
@@ -205,5 +205,5 @@ Backlog, user stories, Definition of Done and ceremonies: [`docs/scrum/`](docs/s
 ## Limitations and scope
 
 - Demonstration testnet: **AUR has no real monetary value**.
-- A single-validator testnet is not multi-operator.
+- The 4 validators run on one machine, operated by one team: real BFT consensus, not yet independent multi-operator decentralisation.
 - Roadmap: multiple validators, additional regulated gateways, GNN, Kubernetes.
