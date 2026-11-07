@@ -13,7 +13,7 @@ var (
 	ErrDuplicateProof  = errorsmod.Register(ModuleName, 9, "proof already anchored")
 
 	ErrDuplicateAttestation = errorsmod.Register(ModuleName, 10, "signer already attested this proof")
-	ErrProofMismatch        = errorsmod.Register(ModuleName, 11, "external_ref/capture_ref differ from the existing proof")
+	ErrProofMismatch        = errorsmod.Register(ModuleName, 11, "external_ref/capture_ref/amount/currency differ from the existing proof")
 	ErrInvalidAuthority     = errorsmod.Register(ModuleName, 12, "invalid authority")
 	ErrInvalidParams        = errorsmod.Register(ModuleName, 13, "invalid params")
 )

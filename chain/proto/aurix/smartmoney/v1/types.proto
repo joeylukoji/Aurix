@@ -51,6 +51,12 @@ message PaymentProof {
   int64 first_seen_height = 8;
   // 0 while pending
   int64 confirmed_height = 9;
+  // payment amount as decimal string (e.g. "12.50")
+  string amount = 10;
+  // ISO 4217 currency (e.g. "USD")
+  string currency = 11;
+  // pending proofs are deleted at this height (0 = never)
+  int64 expires_height = 12;
 }
 
 message Params {
@@ -58,4 +64,6 @@ message Params {
   repeated string anchor_signers = 1;
   // Number of distinct attestations required to confirm a proof.
   uint32 anchor_threshold = 2;
+  // Blocks after which a PENDING proof is deleted (0 = never expire).
+  uint64 pending_ttl_blocks = 3;
 }

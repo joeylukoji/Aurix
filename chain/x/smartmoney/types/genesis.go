@@ -42,6 +42,14 @@ func (gs GenesisState) Validate() error {
 			}
 			att[a] = true
 		}
+		if p.Amount != "" || p.Currency != "" {
+			if err := ValidateProofAmount(p.Amount, p.Currency); err != nil {
+				return fmt.Errorf("proof %s: %w", p.Hash, err)
+			}
+		}
+		if p.ExpiresHeight < 0 {
+			return fmt.Errorf("proof %s: negative expires_height", p.Hash)
+		}
 		if p.Status == PROOF_STATUS_CONFIRMED && p.ConfirmedHeight <= 0 {
 			return fmt.Errorf("proof %s: confirmed without confirmed_height", p.Hash)
 		}

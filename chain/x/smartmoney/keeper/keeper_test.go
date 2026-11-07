@@ -86,7 +86,7 @@ func setup(t *testing.T) *env {
 }
 
 func (e *env) height(h int64) { e.ctx = e.ctx.WithBlockHeight(h) }
-func coin(n int64) sdk.Coin    { return sdk.NewInt64Coin(types.Denom, n) }
+func coin(n int64) sdk.Coin   { return sdk.NewInt64Coin(types.Denom, n) }
 
 // Invariants 1 & 2: supply constant; module balance == sum of LOCKED escrows.
 func (e *env) invariants() {
@@ -197,7 +197,7 @@ func TestAnchorProof(t *testing.T) {
 	if _, err := e.srv.AnchorProof(e.ctx, &types.MsgAnchorProof{Signer: e.gate, Hash: "abcd"}); err == nil {
 		t.Fatal("bad hash")
 	}
-	if _, err := e.srv.AnchorProof(e.ctx, &types.MsgAnchorProof{Signer: e.gate, Hash: hx, ExternalRef: "paypal:1"}); err != nil {
+	if _, err := e.srv.AnchorProof(e.ctx, &types.MsgAnchorProof{Signer: e.gate, Hash: hx, ExternalRef: "paypal:1", Amount: "1.00", Currency: "EUR"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.srv.AnchorProof(e.ctx, &types.MsgAnchorProof{Signer: e.gate, Hash: hx}); err == nil {

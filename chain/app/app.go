@@ -250,7 +250,7 @@ func New(logger log.Logger, db dbm.DB, traceStore io.Writer, loadLatest bool,
 	// The upgrade module runs in the pre-blocker (halts at a scheduled plan height, or runs its handler).
 	app.ModuleManager.SetOrderPreBlockers(upgradetypes.ModuleName)
 	// gov tallies proposals in its end blocker, before staking updates the validator set.
-	app.ModuleManager.SetOrderEndBlockers(govtypes.ModuleName, stakingtypes.ModuleName)
+	app.ModuleManager.SetOrderEndBlockers(govtypes.ModuleName, stakingtypes.ModuleName, smtypes.ModuleName)
 	app.ModuleManager.SetOrderInitGenesis(authtypes.ModuleName, banktypes.ModuleName, distrtypes.ModuleName,
 		stakingtypes.ModuleName, slashingtypes.ModuleName, govtypes.ModuleName, evidencetypes.ModuleName,
 		upgradetypes.ModuleName, smtypes.ModuleName, genutiltypes.ModuleName, consensustypes.ModuleName)

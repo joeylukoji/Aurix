@@ -136,6 +136,9 @@ func (k msgServer) AnchorProof(goCtx context.Context, msg *types.MsgAnchorProof)
 	if b, err := hex.DecodeString(h); err != nil || len(b) != 32 {
 		return nil, types.ErrInvalidHash
 	}
+	if err := types.ValidateProofAmount(msg.Amount, msg.Currency); err != nil {
+		return nil, errorsmod.Wrap(types.ErrInvalidAmount, err.Error())
+	}
 	threshold := params.AnchorThreshold
 	if threshold == 0 {
 		threshold = 1
@@ -145,14 +148,18 @@ func (k msgServer) AnchorProof(goCtx context.Context, msg *types.MsgAnchorProof)
 	case errors.Is(err, collections.ErrNotFound):
 		p = types.PaymentProof{Hash: h, ExternalRef: msg.ExternalRef, CaptureRef: msg.CaptureRef,
 			Height: ctx.BlockHeight(), FirstSeenHeight: ctx.BlockHeight(), Submitter: msg.Signer,
-			Status: types.PROOF_STATUS_PENDING}
+			Status: types.PROOF_STATUS_PENDING, Amount: msg.Amount, Currency: msg.Currency}
+		if params.PendingTtlBlocks > 0 {
+			p.ExpiresHeight = ctx.BlockHeight() + int64(params.PendingTtlBlocks)
+		}
 	case err != nil:
 		return nil, err
 	default:
 		if slices.Contains(p.Attestations, msg.Signer) {
 			return nil, types.ErrDuplicateAttestation
 		}
-		if p.ExternalRef != msg.ExternalRef || p.CaptureRef != msg.CaptureRef {
+		if p.ExternalRef != msg.ExternalRef || p.CaptureRef != msg.CaptureRef ||
+			p.Amount != msg.Amount || p.Currency != msg.Currency {
 			return nil, types.ErrProofMismatch
 		}
 	}
@@ -161,6 +168,7 @@ func (k msgServer) AnchorProof(goCtx context.Context, msg *types.MsgAnchorProof)
 	if p.Status != types.PROOF_STATUS_CONFIRMED && uint32(len(p.Attestations)) >= threshold {
 		p.Status = types.PROOF_STATUS_CONFIRMED
 		p.ConfirmedHeight = ctx.BlockHeight()
+		p.ExpiresHeight = 0
 		confirmedNow = true
 	}
 	if err := k.Proofs.Set(ctx, h, p); err != nil {

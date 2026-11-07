@@ -138,16 +138,16 @@ func GetTxCmd() *cobra.Command {
 		return &types.MsgRefundEscrow{Signer: s, EscrowId: id}
 	})
 	anchor := &cobra.Command{
-		Use:   "anchor-proof [hash] [external-ref] [capture-ref]",
+		Use:   "anchor-proof [hash] [external-ref] [capture-ref] [amount] [currency]",
 		Short: "Attest an external payment proof (signer must be an anchor signer)",
-		Args:  cobra.ExactArgs(3),
+		Args:  cobra.ExactArgs(5),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, err := client.GetClientTxContext(cmd)
 			if err != nil {
 				return err
 			}
 			msg := &types.MsgAnchorProof{Signer: ctx.GetFromAddress().String(), Hash: args[0],
-				ExternalRef: args[1], CaptureRef: args[2]}
+				ExternalRef: args[1], CaptureRef: args[2], Amount: args[3], Currency: args[4]}
 			return tx.GenerateOrBroadcastTxCLI(ctx, cmd.Flags(), msg)
 		},
 	}

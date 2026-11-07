@@ -56,6 +56,8 @@ message MsgAnchorProof {
   string hash = 2;
   string external_ref = 3;
   string capture_ref = 4;
+  string amount = 5;
+  string currency = 6;
 }
 message MsgAnchorProofResponse {
   ProofStatus status = 1;

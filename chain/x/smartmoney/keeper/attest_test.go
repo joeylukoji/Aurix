@@ -30,7 +30,7 @@ func (e *env) setParams(threshold uint32, signers ...string) {
 }
 
 func (e *env) attest(signer, hash, order, capture string) (*types.MsgAnchorProofResponse, error) {
-	return e.srv.AnchorProof(e.ctx, &types.MsgAnchorProof{Signer: signer, Hash: hash, ExternalRef: order, CaptureRef: capture})
+	return e.srv.AnchorProof(e.ctx, &types.MsgAnchorProof{Signer: signer, Hash: hash, ExternalRef: order, CaptureRef: capture, Amount: "12.50", Currency: "USD"})
 }
 
 func TestAttestationThresholdReached(t *testing.T) {

@@ -14,7 +14,8 @@
 # minimum deposit is 5x that), MAX_DEPOSIT_PERIOD (default 24h).
 # Attestors: ATTESTOR_SEEDS (space separated seed strings) adds extra anchor signers after the
 # gateway, each funded with 10000000uaur; ANCHOR_THRESHOLD (default 1) is written to the
-# smartmoney params only when explicitly set.
+# smartmoney params only when explicitly set. PENDING_TTL_BLOCKS (default 600, 0 = never)
+# likewise sets params.pending_ttl_blocks only when set.
 # Idempotent unless RESET=1.
 set -euo pipefail
 BIN=${AURIXD:-aurixd}
@@ -101,6 +102,9 @@ jq --argjson signers "$SIGNERS_JSON" '.app_state.smartmoney.params.anchor_signer
   "$G0" > "$G0.tmp" && mv "$G0.tmp" "$G0"
 if [[ -n "${ANCHOR_THRESHOLD:-}" ]]; then
   jq --argjson t "$ANCHOR_THRESHOLD" '.app_state.smartmoney.params.anchor_threshold = $t' "$G0" > "$G0.tmp" && mv "$G0.tmp" "$G0"
+fi
+if [[ -n "${PENDING_TTL_BLOCKS:-}" ]]; then
+  jq --arg t "$PENDING_TTL_BLOCKS" '.app_state.smartmoney.params.pending_ttl_blocks = $t' "$G0" > "$G0.tmp" && mv "$G0.tmp" "$G0"
 fi
 
 # Every validator signs its own gentx (equal stake) against the shared pre-genesis.

@@ -6,6 +6,8 @@ package keeper
 import (
 	"context"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
+
 	"cosmossdk.io/collections"
 	"cosmossdk.io/core/store"
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -104,4 +106,28 @@ func (k Keeper) LockedTotal(ctx context.Context) (uint64, error) {
 		return false, nil
 	})
 	return total, err
+}
+
+// EndBlocker deletes PENDING proofs whose expires_height (>0) is reached.
+// CONFIRMED proofs never expire.
+func (k Keeper) EndBlocker(goCtx context.Context) error {
+	ctx := sdk.UnwrapSDKContext(goCtx)
+	h := ctx.BlockHeight()
+	var expired []string
+	err := k.Proofs.Walk(ctx, nil, func(hash string, p types.PaymentProof) (bool, error) {
+		if p.Status == types.PROOF_STATUS_PENDING && p.ExpiresHeight > 0 && p.ExpiresHeight <= h {
+			expired = append(expired, hash)
+		}
+		return false, nil
+	})
+	if err != nil {
+		return err
+	}
+	for _, hash := range expired {
+		if err := k.Proofs.Remove(ctx, hash); err != nil {
+			return err
+		}
+		ctx.EventManager().EmitEvent(sdk.NewEvent("proof_expired", sdk.NewAttribute("hash", hash)))
+	}
+	return nil
 }

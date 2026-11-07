@@ -18,10 +18,11 @@ import (
 )
 
 var (
-	_ module.AppModuleBasic = AppModule{}
-	_ module.HasGenesis     = AppModule{}
-	_ module.HasServices    = AppModule{}
-	_ appmodule.AppModule   = AppModule{}
+	_ module.AppModuleBasic   = AppModule{}
+	_ module.HasGenesis       = AppModule{}
+	_ module.HasServices      = AppModule{}
+	_ appmodule.AppModule     = AppModule{}
+	_ appmodule.HasEndBlocker = AppModule{}
 )
 
 type AppModule struct {
@@ -35,7 +36,9 @@ func (AppModule) IsOnePerModuleType() {}
 func (AppModule) IsAppModule()        {}
 func (AppModule) Name() string        { return types.ModuleName }
 
-func (AppModule) RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) { types.RegisterLegacyAminoCodec(cdc) }
+func (AppModule) RegisterLegacyAminoCodec(cdc *codec.LegacyAmino) {
+	types.RegisterLegacyAminoCodec(cdc)
+}
 func (AppModule) RegisterInterfaces(r codectypes.InterfaceRegistry) { types.RegisterInterfaces(r) }
 func (AppModule) RegisterGRPCGatewayRoutes(clientCtx client.Context, mux *runtime.ServeMux) {
 	if err := types.RegisterQueryHandlerClient(context.Background(), mux, types.NewQueryClient(clientCtx)); err != nil {
@@ -77,4 +80,7 @@ func (am AppModule) RegisterServices(cfg module.Configurator) {
 }
 
 // ConsensusVersion implements module.HasConsensusVersion.
-func (AppModule) ConsensusVersion() uint64 { return 2 }
+func (AppModule) ConsensusVersion() uint64 { return 3 }
+
+// EndBlock expires stale PENDING proofs.
+func (am AppModule) EndBlock(ctx context.Context) error { return am.keeper.EndBlocker(ctx) }
