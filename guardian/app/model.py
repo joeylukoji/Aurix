@@ -1,9 +1,12 @@
-"""Neural Guardian risk model: LightGBM trained on the PaySim dataset, explained with SHAP.
+"""Neural Guardian risk model: regularised logistic regression trained on PaySim, with exact linear
+SHAP explanations, an isotonic probability calibration and thresholds chosen on a validation split.
 
-The model file (models/paysim_lgbm.txt) and its out-of-time evaluation
-(models/paysim_metrics.json) are produced by training/train_paysim.py from the
-PaySim CSV (Kaggle ealaxi/paysim1). SHAP values come from LightGBM's native
-TreeSHAP (`pred_contrib=True`). The score is advisory only.
+Artefacts (produced by `python -m training.evaluate <paysim.csv> --ship`, see research/PLAN.md step 2.1):
+  models/guardian_logreg.json      standardisation + coefficients (trained on PaySim steps 1-400)
+  models/guardian_calibration.json isotonic map and raw-score thresholds (fitted on steps 401-550)
+  models/paysim_metrics.json       test metrics (steps 551-744, read once) and model selection
+LightGBM was evaluated as well and rejected on validation: its PR-AUC varied from ~0.96 to ~0.004
+across training seeds. The score is advisory only.
 """
 from __future__ import annotations
 
@@ -13,17 +16,15 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-import lightgbm as lgb
 import numpy as np
 
 from .features import FEATURES as ALL_FEATURES
+from .features import lr_base_feature, lr_columns, lr_row
 
 MODELS = Path(__file__).resolve().parents[1] / "models"
-MODEL_FILE, METRICS_FILE = MODELS / "paysim_lgbm.txt", MODELS / "paysim_metrics.json"
-MODEL_VERSION = "v1.0-lgbm-paysim"
-# Chosen on the out-of-time test set: medium >= 0.1 (precision 0.96, recall 0.95),
-# high >= 0.5 (precision 0.96, recall 0.92).
-THRESHOLDS = (0.1, 0.5)
+MODEL_FILE = MODELS / "guardian_logreg.json"
+CALIBRATION_FILE, METRICS_FILE = MODELS / "guardian_calibration.json", MODELS / "paysim_metrics.json"
+MODEL_VERSION = "v1.1-logreg-paysim"
 TX_TYPE_NAMES = {0: "TRANSFER", 1: "CASH_OUT", 2: "PAYMENT", 3: "CASH_IN", 4: "DEBIT"}
 
 FEATURE_DESCRIPTIONS = {
@@ -65,51 +66,67 @@ class Assessment:
     reasons: list[dict]
 
 
-def level_for(score: float) -> str:
-    if score >= THRESHOLDS[1]:
-        return "high"
-    if score >= THRESHOLDS[0]:
-        return "medium"
-    return "low"
-
-
 class RiskModel:
     def __init__(self) -> None:
-        self.booster = lgb.Booster(model_file=str(MODEL_FILE))
-        self.features = self.booster.feature_name()
+        self.model = json.loads(MODEL_FILE.read_text())
+        if self.model["columns"] != lr_columns():
+            raise RuntimeError("guardian_logreg.json columns do not match app.features.lr_columns()")
+        self.calibration = json.loads(CALIBRATION_FILE.read_text())
         self.metrics = json.loads(METRICS_FILE.read_text())
-        self.model_sha256 = hashlib.sha256(MODEL_FILE.read_bytes()).hexdigest()
-        # Version signed into attestations: release tag + hash of the trained model file actually loaded.
-        self.signed_version = f"{self.metrics.get('model_version', MODEL_VERSION)}+{self.model_sha256[:12]}"
+        self.mean, self.scale = np.array(self.model["mean"]), np.array(self.model["scale"])
+        self.coef, self.intercept = np.array(self.model["coef"]), float(self.model["intercept"])
+        self.thresholds = self.calibration["thresholds"]  # on the RAW score
+        self.features = list(dict.fromkeys(lr_base_feature(c) for c in self.model["columns"]))
+        digest = hashlib.sha256(MODEL_FILE.read_bytes() + CALIBRATION_FILE.read_bytes()).hexdigest()
+        self.model_sha256 = digest
+        # Version signed into attestations: release tag + hash of the model and calibration actually loaded.
+        self.signed_version = f"{MODEL_VERSION}+{digest[:12]}"
+
+    def level_for(self, raw: float) -> str:
+        if raw >= self.thresholds["high"]:
+            return "high"
+        if raw >= self.thresholds["medium"]:
+            return "medium"
+        return "low"
+
+    def calibrated(self, raw: float) -> float:
+        return float(np.interp(raw, self.calibration["x"], self.calibration["y"]))
 
     def info(self) -> dict:
         m = self.metrics
+        cal = {k: round(self.calibrated(v), 4) for k, v in self.thresholds.items()}
         return {
             "model_version": MODEL_VERSION, "signed_model_version": self.signed_version,
-            "model_sha256": self.model_sha256, "model_type": "LightGBM gradient-boosted trees (binary)",
+            "model_sha256": self.model_sha256,
+            "model_type": "logistic regression (L2, class-balanced) + isotonic calibration",
             "training_data": {"name": m["dataset"], "sha256": m["dataset_sha256"], "split": m["split"],
                               "synthetic": False, "note": "PaySim is itself a simulator calibrated on real "
                               "mobile-money logs; it is not AURIX or PayPal data."},
             "features": [{"name": n, "description": FEATURE_DESCRIPTIONS[n]} for n in self.features],
             "dropped_features": m.get("dropped_features", []),
-            "levels": {"low": f"< {THRESHOLDS[0]}", "medium": f">= {THRESHOLDS[0]}", "high": f">= {THRESHOLDS[1]}"},
-            "metrics": {k: m[k] for k in ("roc_auc", "pr_auc", "test_rows", "test_fraud", "test_prevalence", "thresholds")},
+            "levels": {"rule": self.calibration["threshold_rules"], "raw_thresholds": self.thresholds,
+                       "as_calibrated_probability": cal},
+            "metrics": {k: m.get(k) for k in ("roc_auc", "pr_auc", "ci95", "test_rows", "test_fraud",
+                                               "test_prevalence", "thresholds", "calibration_test",
+                                               "model_selection", "alternatives_test")},
             "advisory_only": True,
         }
 
     def score(self, feats: dict[str, float], top_k: int = 3) -> Assessment:
-        x = np.array([[feats[f] for f in self.features]], dtype=float)
-        p = float(self.booster.predict(x)[0])
-        contrib = self.booster.predict(x, pred_contrib=True)[0][:-1]  # drop the bias term
-        order = np.argsort(-contrib)
-        reasons = [{"feature": self.features[i], "impact": round(float(contrib[i]), 3),
-                    "text": reason_text(self.features[i], feats)} for i in order[:top_k] if contrib[i] > 0]
-        level = level_for(p)
+        z = (np.array(lr_row(feats)) - self.mean) / self.scale
+        parts = self.coef * z  # exact SHAP values of a linear model (vs the training mean)
+        raw = 1.0 / (1.0 + math.exp(-(self.intercept + float(parts.sum()))))
+        contrib: dict[str, float] = {}
+        for col, v in zip(self.model["columns"], parts, strict=True):
+            base = lr_base_feature(col)
+            contrib[base] = contrib.get(base, 0.0) + float(v)
+        order = sorted(contrib, key=lambda k: -contrib[k])
+        reasons = [{"feature": k, "impact": round(contrib[k], 3), "text": reason_text(k, feats)}
+                   for k in order[:top_k] if contrib[k] > 0]
+        level = self.level_for(raw)
         if level != "low" and not reasons:  # always explain a medium/high score
-            i = int(order[0])
-            reasons = [{"feature": self.features[i], "impact": round(float(contrib[i]), 3),
-                        "text": reason_text(self.features[i], feats)}]
-        return Assessment(round(p, 4), level, reasons)
-
+            k = order[0]
+            reasons = [{"feature": k, "impact": round(contrib[k], 3), "text": reason_text(k, feats)}]
+        return Assessment(round(self.calibrated(raw), 4), level, reasons)
 
 assert set(ALL_FEATURES) >= set(FEATURE_DESCRIPTIONS) - {"hour"}

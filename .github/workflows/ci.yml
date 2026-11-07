@@ -85,6 +85,9 @@ jobs:
         with: { node-version: "22" }
       - run: sudo apt-get update && sudo apt-get install -y jq
       - run: ls /usr/lib/postgresql/*/bin/initdb || (sudo apt-get update && sudo apt-get install -y postgresql)
+      # Test stacks listen on fixed ports below 50000: keep outgoing (ephemeral) ports out of that range,
+      # otherwise a client socket can grab a port between the "port free" check and the bind.
+      - run: sudo sysctl -w net.ipv4.ip_local_port_range="50000 65000"
       - run: npm install -g playwright@1.63.0 && npx playwright install --with-deps chromium
       - run: NODE_PATH="$(npm root -g)" scripts/test-all.sh
         env: { RUN_DIR: /tmp/aurix-ci }

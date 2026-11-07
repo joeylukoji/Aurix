@@ -1,3 +1,5 @@
 # Offline training only (not needed by the API at runtime).
 -r requirements.txt
 pandas==2.2.3
+lightgbm==4.5.0
+scikit-learn==1.6.1

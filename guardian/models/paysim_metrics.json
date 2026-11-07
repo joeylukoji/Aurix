@@ -1,4 +1,5 @@
 {
+  "model": "logistic_regression",
   "dataset": "PaySim (Kaggle ealaxi/paysim1), 6,362,620 transactions, 8,213 fraud",
   "dataset_sha256": "16910f90577b0d981bf8ff289714510bb89bc71bff7d3f220f024e287e4eea6b",
   "features": [
@@ -13,92 +14,145 @@
     "hour",
     "log_amount"
   ],
-  "split": "out-of-time: train steps 1-500, test steps 501-744 (true prevalence)",
-  "train_rows": 6061807,
-  "train_fraud": 5561,
-  "test_rows": 300813,
-  "test_fraud": 2652,
-  "test_prevalence": 0.00882,
-  "roc_auc": 0.9775,
-  "pr_auc": 0.9385,
+  "split": "out-of-time: train steps 1-400, validation 401-550 (model selection, thresholds, calibration), test 551-744 (evaluated once, true prevalence)",
+  "test_rows": 196601,
+  "test_fraud": 2148,
+  "test_prevalence": 0.01093,
+  "roc_auc": 0.999,
+  "pr_auc": 0.973,
+  "ci95": {
+    "roc_auc": [
+      0.9984963257985364,
+      0.999485603050465
+    ],
+    "pr_auc": [
+      0.9673713982572101,
+      0.9777170016130935
+    ],
+    "medium_precision": [
+      0.9294144245652948,
+      0.9488643179315887
+    ],
+    "medium_recall": [
+      0.9338919925512105,
+      0.9539106145251397
+    ],
+    "high_precision": [
+      0.9406134822910124,
+      0.9600667744594702
+    ],
+    "high_recall": [
+      0.7946927374301676,
+      0.8291433891992551
+    ]
+  },
   "thresholds": [
     {
-      "threshold": 0.05,
-      "precision": 0.945,
-      "recall": 0.954,
-      "flag_rate": 0.0089,
-      "true_positives": 2529,
-      "flagged": 2676
+      "threshold": 0.9966198264250046,
+      "tp": 2028,
+      "fp": 130,
+      "fn": 120,
+      "tn": 194323,
+      "precision": 0.9397590361445783,
+      "recall": 0.9441340782122905,
+      "fpr": 0.0006685420127228688,
+      "flag_rate": 0.010976546406172908,
+      "level": "medium"
     },
     {
-      "threshold": 0.1,
-      "precision": 0.961,
-      "recall": 0.95,
-      "flag_rate": 0.00871,
-      "true_positives": 2520,
-      "flagged": 2621
-    },
-    {
-      "threshold": 0.3,
-      "precision": 0.962,
-      "recall": 0.94,
-      "flag_rate": 0.00861,
-      "true_positives": 2492,
-      "flagged": 2590
-    },
-    {
-      "threshold": 0.5,
-      "precision": 0.964,
-      "recall": 0.918,
-      "flag_rate": 0.0084,
-      "true_positives": 2435,
-      "flagged": 2527
-    },
-    {
-      "threshold": 0.7,
-      "precision": 0.989,
-      "recall": 0.524,
-      "flag_rate": 0.00467,
-      "true_positives": 1389,
-      "flagged": 1404
-    },
-    {
-      "threshold": 0.9,
-      "precision": 0.99,
-      "recall": 0.517,
-      "flag_rate": 0.00461,
-      "true_positives": 1372,
-      "flagged": 1386
+      "threshold": 0.9996803580223312,
+      "tp": 1745,
+      "fp": 90,
+      "fn": 403,
+      "tn": 194363,
+      "precision": 0.9509536784741145,
+      "recall": 0.8123836126629422,
+      "fpr": 0.0004628367780389091,
+      "flag_rate": 0.009333624956129419,
+      "level": "high"
     }
   ],
-  "by_type": {
-    "TRANSFER": {
-      "test_rows": 28212,
-      "test_fraud": 1326
+  "calibration_test": {
+    "brier_raw": 0.0030620959196616428,
+    "ece_raw": 0.014780597203430283,
+    "brier_calibrated": 0.001013643012253796,
+    "ece_calibrated": 0.0008854296781643698
+  },
+  "model_selection": {
+    "rule": {
+      "metric": "validation_pr_auc",
+      "max_seed_sd": 0.02
     },
-    "CASH_OUT": {
-      "test_rows": 96418,
-      "test_fraud": 1326
-    },
-    "PAYMENT": {
-      "test_rows": 105160,
-      "test_fraud": 0
-    },
-    "CASH_IN": {
-      "test_rows": 68567,
-      "test_fraud": 0
-    },
-    "DEBIT": {
-      "test_rows": 2456,
-      "test_fraud": 0
+    "chosen": "logistic_regression",
+    "validation_pr_auc": {
+      "logistic_regression": {
+        "by_seed": [
+          0.952284279663673,
+          0.952284279663673,
+          0.952284279663673,
+          0.952284279663673,
+          0.952284279663673
+        ],
+        "mean": 0.952284279663673,
+        "sd": 0.0
+      },
+      "lightgbm": {
+        "by_seed": [
+          0.09254737898195418,
+          0.0041900952270382515,
+          0.814855761572802,
+          0.015369528254974896,
+          0.004185028865613503
+        ],
+        "mean": 0.18622955858047657,
+        "sd": 0.3533479095887024
+      },
+      "rules": {
+        "by_seed": [
+          0.9036965423974817
+        ],
+        "mean": 0.9036965423974817,
+        "sd": 0.0
+      }
     }
   },
-  "feature_importance_gain": {
-    "recipient_prior_txs": 273409971831.99182,
-    "amount_vs_sender_avg": 184808364377.55267,
-    "amount_to_balance": 14472589333.112244,
-    "tx_type": 31425101.905250013,
-    "drains_account": 3928013.613989979,
-    "sender_prior_txs": 3174752.854791213
-  }
+  "protocol_deviations": [
+    "2026-11-07: threshold rules redefined after an inverted-level result (see comment)"
+  ],
+  "alternatives_test": {
+    "lightgbm": {
+      "roc_auc": 0.9645582880865613,
+      "pr_auc": 0.20312376078817856,
+      "seed_spread_pr_auc": [
+        0.20312376078817856,
+        0.010925681964995092,
+        0.8408468661661721,
+        0.029440480695073365,
+        0.01092075301389092
+      ]
+    },
+    "rules": {
+      "roc_auc": 0.9971572815041949,
+      "pr_auc": 0.9380830081989067
+    }
+  },
+  "paired_test_pr_auc_difference": {
+    "rules": {
+      "mean": 0.03512164867962038,
+      "ci95": [
+        0.029031777197446935,
+        0.04149060502936805
+      ],
+      "share_of_resamples_chosen_better": 1.0
+    },
+    "lightgbm": {
+      "mean": 0.7697075509844792,
+      "ci95": [
+        0.7633981876218829,
+        0.7758111671439938
+      ],
+      "share_of_resamples_chosen_better": 1.0
+    }
+  },
+  "results_run": "research/results/raw/ml-eval/20261107T204559Z-689045a"
 }

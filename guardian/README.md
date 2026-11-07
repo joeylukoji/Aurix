@@ -1,6 +1,6 @@
 # AURIX Neural Guardian
 
-Advisory risk-scoring API (LightGBM trained on PaySim, see `MODEL_CARD.md`). Scores are always advisory and
+Advisory risk-scoring API (logistic regression trained on PaySim with a leakage-free protocol, see `MODEL_CARD.md`). Scores are always advisory and
 each one is signed by the Guardian's secp256k1 key so the gateway and the web wallet can check who produced it.
 
 ## Key configuration
@@ -27,7 +27,7 @@ with a `chain_id` field.
 "attestation": {
   "guardian": "aur1...",
   "pubkey": "02...",
-  "payload": "{\"amount\":\"12.5\",\"chain_id\":\"aurix-testnet-1\",\"decision\":\"low\",\"denom\":\"AUR\",\"from\":\"aur1a\",\"issued_at\":1762500000,\"model_version\":\"v1.0-lgbm-paysim+1a2b3c4d5e6f\",\"score\":0.0123,\"to\":\"aur1b\"}",
+  "payload": "{\"amount\":\"12.5\",\"chain_id\":\"aurix-testnet-1\",\"decision\":\"low\",\"denom\":\"AUR\",\"from\":\"aur1a\",\"issued_at\":1762500000,\"model_version\":\"v1.1-lobm-paysim+1a2b3c4d5e6f\",\"score\":0.0123,\"to\":\"aur1b\"}",
   "signature": "<128 hex chars: r||s, low-S>"
 }
 ```
@@ -60,4 +60,4 @@ Any language (e.g. JS with `@noble/secp256k1`):
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/python -m pytest -q
 ```
 
-The trained model (`models/paysim_lgbm.txt`) is committed, so tests need no training step.
+The trained model (`models/guardian_logreg.json`, `models/guardian_calibration.json`) is committed, so tests need no training step. Retrain and re-evaluate with `python -m training.evaluate <paysim.csv> --ship` (`requirements-train.txt`).

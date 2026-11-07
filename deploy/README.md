@@ -5,7 +5,7 @@ Four services:
 | Service | Port | Health | Notes |
 |---|---|---|---|
 | `chain` (aurixd, Cosmos SDK) | 26657 RPC, 1317 REST | `GET :26657/status` | single validator; state in `/data` (needs persistent disk) |
-| `guardian` (Neural Guardian, LightGBM) | 8000 | `GET /health` | internal only |
+| `guardian` (Neural Guardian, logistic regression) | 8000 | `GET /health` | internal only |
 | `paypal-sim` (PayPal simulator) | 8090 | `GET /sim/health` | **public**: the browser is sent to its approval page |
 | `gateway` (FastAPI + web UI) | 8080 | `GET /api/health` | public; serves `web/` |
 

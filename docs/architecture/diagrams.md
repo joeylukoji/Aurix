@@ -24,7 +24,7 @@ flowchart TB
     subgraph AURIX[AURIX system]
         WEB["web (browser)<br/>secp256k1 keys, SIGN_MODE_DIRECT, AG Grid"]
         GW["gateway :8080<br/>FastAPI + SQLite"]
-        GD["guardian :8000<br/>FastAPI + LightGBM + SHAP"]
+        GD["guardian :8000<br/>FastAPI + logistic regression + SHAP"]
         CH["chain aurixd<br/>RPC :26657, REST :1317, gRPC :9090"]
         DB[(SQLite)]
         IX["indexer + PostgreSQL + Redis<br/>planned"]

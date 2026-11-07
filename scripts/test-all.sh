@@ -8,6 +8,11 @@ export RUN_DIR=${RUN_DIR:-$(mktemp -d /tmp/aurix-test-XXXX)}
 export AURIX_NET_HOME=${AURIX_NET_HOME:-$RUN_DIR/chain-net}
 export SHOT_DIR=${SHOT_DIR:-$RUN_DIR/shots}; mkdir -p "$SHOT_DIR"
 NAMES=(); RESULTS=()
+# Test stacks bind fixed ports below 50000; warn when outgoing (ephemeral) ports can collide with them.
+if [[ -r /proc/sys/net/ipv4/ip_local_port_range ]] && (( $(cut -f1 /proc/sys/net/ipv4/ip_local_port_range) < 50000 )); then
+  echo "warning: ephemeral port range $(tr '\t' '-' </proc/sys/net/ipv4/ip_local_port_range) overlaps the test ports;" \
+       "run: sudo sysctl -w net.ipv4.ip_local_port_range=\"50000 65000\"" >&2
+fi
 run() { # name cmd...
   local name=$1; shift; echo "=== $name"
   if "$@" >"$RUN_DIR/test-$name.log" 2>&1; then RESULTS+=(PASS); else RESULTS+=(FAIL); tail -30 "$RUN_DIR/test-$name.log"; fi

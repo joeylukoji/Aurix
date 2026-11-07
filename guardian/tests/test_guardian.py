@@ -52,9 +52,19 @@ def test_small_share_of_balance_is_low():
 def test_known_recipient_lowers_risk():
     for _ in range(6):
         req(sender="aur1other", recipient="aur1shop", amount=10)
-    known = req(amount=50, sender_balance=50, recipient="aur1shop").json()["risk_score"]
-    unknown = req(amount=50, sender_balance=50, recipient="aur1new").json()["risk_score"]
-    assert known < unknown
+    known = req(amount=50, sender_balance=50, recipient="aur1shop").json()
+    unknown = req(amount=50, sender_balance=50, recipient="aur1new").json()
+    # the calibrated probability is a step function (isotonic), so compare it non-strictly and check
+    # that the recipient history is what lowers the linear score
+    assert known["risk_score"] <= unknown["risk_score"]
+    from app.features import online_features
+    from app.main import model
+
+    def recipient_impact(prior: int) -> float:
+        a = model.score(online_features(50, 50, "TRANSFER", 12, [], prior), top_k=10)
+        return next((r["impact"] for r in a.reasons if r["feature"] == "recipient_prior_txs"), 0.0)
+
+    assert recipient_impact(0) > recipient_impact(6)  # a recipient paid before lowers the score
 
 
 def test_features_are_finite_or_missing():

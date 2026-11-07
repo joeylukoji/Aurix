@@ -1,4 +1,8 @@
-"""Trains Neural Guardian on the PaySim dataset (Kaggle: ealaxi/paysim1).
+"""LEGACY (model v1.0, superseded): LightGBM on a 2-way split whose thresholds were read off the test set.
+The shipped model and its evaluation now come from training/evaluate.py (train/validation/test protocol).
+This module is kept for its shared helpers (build, sha256) and to reproduce the v1.0 numbers.
+
+Trains Neural Guardian on the PaySim dataset (Kaggle: ealaxi/paysim1).
 
     python -m training.train_paysim /path/to/PS_20174392719_1491204439457_log.csv [dropped,features]
 

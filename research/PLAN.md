@@ -14,7 +14,7 @@ Principes de travail :
 | Élément | État au 7 nov. | Remarque scientifique |
 | --- | --- | --- |
 | Chaîne Cosmos SDK, `x/smartmoney`, k-of-n, gouvernance, slashing | implémenté, testé | Tests unitaires et scripts de scénarios, mais pas encore de tests de propriétés |
-| Neural Guardian (LightGBM + SHAP, PaySim) | implémenté | **Les seuils 0,1 et 0,5 ont été choisis sur le jeu de test** (point 3, confirmé) |
+| Neural Guardian (PaySim) | implémenté, **étape 2.1 faite le 7 nov.** | Protocole entraînement/validation/test, seuils et calibration choisis sur la validation, IC bootstrap. LightGBM rejeté (instable selon la graine) ; régression logistique livrée (PR-AUC test 0,973 [0,967 ; 0,978]). Une déviation est consignée (règles de seuils redéfinies). Voir `guardian/MODEL_CARD.md`. |
 | Passerelle, payments (PayPal), indexeur PostgreSQL | implémenté | Le découpage en services vient d'être fait (cette version) |
 | PayPal | **simulé** (`paypal-sim/`) | Aucun test sur le vrai Sandbox |
 | Décentralisation | 4 validateurs, **une seule machine, un seul opérateur** | Paquet multi-opérateurs prêt, jamais lancé |

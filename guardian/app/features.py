@@ -47,3 +47,36 @@ def online_features(amount: float, sender_balance: float | None, tx_type: str, h
         "amount_vs_sender_avg": _ratio(amount, avg),
         "recipient_prior_txs": float(recipient_prior),
     }
+
+
+# ---- logistic-regression design matrix (shared by training and the API: same columns, same order) ----
+LR_MISSABLE = ("amount_to_balance", "amount_vs_sender_avg")  # missing -> 0 + a missingness indicator
+LR_BASE = [f for f in FEATURES if f not in ("hour", "log_amount", "tx_type")]
+
+
+def lr_columns() -> list[str]:
+    cols = []
+    for c in LR_BASE:
+        if c in LR_MISSABLE:
+            cols.append(c + "_missing")
+        cols.append(c)
+    return cols + [f"tx_type_{k}" for k in sorted(TX_TYPES.values())]
+
+
+def lr_base_feature(column: str) -> str:
+    """Base feature a design-matrix column belongs to (for explanations)."""
+    if column.startswith("tx_type_"):
+        return "tx_type"
+    return column.removesuffix("_missing")
+
+
+def lr_row(feats: dict[str, float]) -> list[float]:
+    """One design-matrix row from online_features() output."""
+    row = []
+    for c in LR_BASE:
+        v = feats[c]
+        missing = v is None or (isinstance(v, float) and math.isnan(v))
+        if c in LR_MISSABLE:
+            row.append(1.0 if missing else 0.0)
+        row.append(0.0 if missing else float(v))
+    return row + [1.0 if int(feats["tx_type"]) == k else 0.0 for k in sorted(TX_TYPES.values())]

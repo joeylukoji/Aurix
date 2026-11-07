@@ -10,7 +10,7 @@ The MVP runs **7 service types** (plus the static web app served by the gateway)
 | `gateway` — API Gateway (edge) | Python, FastAPI, SQLite (risk log) | 8080 (also serves `web/`) | 4 | chain, guardian, indexer, payments | built |
 | `payments` — PayPal connector | Python, FastAPI, SQLite (orders, webhook events) | 8085 | 4 | chain, guardian, PayPal (simulator) | built |
 | `indexer` — explorer read model | Python, FastAPI, **PostgreSQL** | 8086 | — | chain, PostgreSQL | built |
-| `guardian` — Neural Guardian (×N) | Python, FastAPI, LightGBM + SHAP | 8000 | 3 | — | built (trained on PaySim) |
+| `guardian` — Neural Guardian (×N) | Python, FastAPI, logistic regression + SHAP | 8000 | 3 | — | built (trained on PaySim) |
 | `attestor` — independent PayPal attestor (×N) | Python | 8095 (health) | 2/4 | chain, PayPal | built |
 | `paypal-sim` — PayPal API simulator | Python, FastAPI | 8090 | 4 (external stand-in) | gateway (webhook target) | temporary |
 | `web` — Wallet & explorer | Vanilla JS, `@noble` secp256k1, AG Grid | served on 8080 | — | chain nodes (direct), gateway (optional) | built |
@@ -104,7 +104,7 @@ In the code, `CREATED` and `SCORED` happen in the same request; the stored statu
 
 ## 3. `guardian` — Neural Guardian
 
-`POST /v1/risk/score` → `{risk_score, level, reasons[], advisory_only: true}`. LightGBM classifier with native TreeSHAP reasons, **trained on PaySim** (Kaggle `ealaxi/paysim1`, out-of-time ROC-AUC 0.978, PR-AUC 0.939; see `guardian/MODEL_CARD.md`). If Guardian is down, the gateway returns `risk_status: "unavailable"` and the user can still proceed (US-10). Model card: [`guardian/MODEL_CARD.md`](../../guardian/MODEL_CARD.md). GNN analysis is **planned**.
+`POST /v1/risk/score` → `{risk_score, level, reasons[], advisory_only: true}`. Logistic regression with exact linear SHAP reasons and an isotonic-calibrated probability, **trained on PaySim** (Kaggle `ealaxi/paysim1`, out-of-time ROC-AUC 0.978, PR-AUC 0.939; see `guardian/MODEL_CARD.md`). If Guardian is down, the gateway returns `risk_status: "unavailable"` and the user can still proceed (US-10). Model card: [`guardian/MODEL_CARD.md`](../../guardian/MODEL_CARD.md). GNN analysis is **planned**.
 
 Signed scores (H3): each response carries `attestation` (secp256k1 signature over sha256 of the canonical
 payload `{chain_id, from, to, amount, denom, score, decision, model_version, issued_at}`), `GET /pubkey`

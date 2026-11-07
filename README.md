@@ -71,7 +71,7 @@ Redis is planned, not built. Full details: [`docs/architecture/services.md`](doc
 | Consensus | CometBFT (PoS + BFT) |
 | Blockchain core | Cosmos SDK v0.50 + Go (`x/auth`, `x/bank`, `x/staking`, `x/slashing`, `x/distribution`, `x/evidence`, custom `x/smartmoney`) |
 | Gateway | FastAPI *(Spring Boot in the original target)* |
-| AI | Python, FastAPI, LightGBM + SHAP (PyTorch Geometric on the roadmap) |
+| AI | Python, FastAPI, logistic regression + exact linear SHAP + isotonic calibration (LightGBM evaluated and rejected; PyTorch Geometric on the roadmap) |
 | Data | PostgreSQL (indexer read model), SQLite (payments orders, gateway risk log); Redis planned |
 | Front end | Web wallet + explorer, AG Grid |
 | API | OpenAPI (APIMatic) |
@@ -180,7 +180,7 @@ node tests/e2e/gateway-off.js   # static wallet; stops the gateway, then node0 (
 | Component | Status | Notes |
 | --- | --- | --- |
 | `chain/` | ✅ V1 | **Cosmos SDK v0.50 + CometBFT v0.38**, **4 validators** by default (BFT: survives 1 faulty node, verified with `scripts/bft-demo.sh`). `x/aurixbank` = `x/auth` + `x/bank` (`uaur`, fixed supply, sequences as nonces, fees); custom `x/smartmoney` module (escrow, k-of-n proof attestation); `x/gov` + `x/upgrade` (params and anchor signers changed by proposal). See [`chain/README.md`](chain/README.md). |
-| `guardian/` | ✅ V1 | FastAPI + LightGBM, SHAP reasons via native TreeSHAP. **Trained on PaySim** (Kaggle, 6.3 M transactions), out-of-time ROC-AUC 0.978 / PR-AUC 0.939. See [`guardian/MODEL_CARD.md`](guardian/MODEL_CARD.md). |
+| `guardian/` | ✅ V1 | FastAPI + logistic regression, exact linear SHAP reasons, calibrated probability. **Trained on PaySim** (Kaggle, 6.3 M transactions): test PR-AUC 0.973 [0.967, 0.978], leakage-free train/validation/test split; LightGBM rejected for seed instability. See [`guardian/MODEL_CARD.md`](guardian/MODEL_CARD.md). |
 | `gateway/` | ✅ V1 | FastAPI edge (variant recommended in the architecture doc): wallet API, tx preparation with the signed Guardian quorum, broadcast, dev faucet, CORS; reverse proxy for the indexer and payments services; optional for the wallet. |
 | `payments/` | ✅ V1 | PayPal connector: Orders v2, explicit approval, webhook signature verification, idempotency; first attestor (order `ATTESTING` until the proof is `CONFIRMED`), failed anchors retried. Own SQLite. |
 | `indexer/` | ✅ V1 | Follows the chain block by block into **PostgreSQL** (blocks, txs, address index); serves the explorer and search; balances, escrows and proofs stay live reads from the chain. |

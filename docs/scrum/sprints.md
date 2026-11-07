@@ -74,7 +74,7 @@ Most of the planned S1-S3 scope was delivered on day one (S0), so the remaining 
 Delivered:
 - Cosmos SDK v0.50 chain `aurixd` (4 validators by default): `x/auth` + `x/bank` as "aurixbank", custom `x/smartmoney` (escrow + `MsgAnchorProof`), Go tests.
 - FastAPI gateway with SQLite: wallets, faucet, tx prepare/broadcast, escrows, explorer, PayPal Orders v2 with human approval, verified idempotent webhooks, proof anchoring.
-- Neural Guardian: LightGBM + SHAP reasons, advisory only, trained on PaySim (ROC-AUC 0.978 out-of-time).
+- Neural Guardian: logistic regression + exact linear SHAP reasons, calibrated, advisory only, trained on PaySim (test PR-AUC 0.973 [0.967, 0.978], leakage-free train/validation/test split; LightGBM rejected for seed instability).
 - Local PayPal simulator with buyer approval page and signed webhooks.
 - Web wallet with browser-side secp256k1 signing (`SIGN_MODE_DIRECT`) and AG Grid explorer.
 - Docker Compose, Render blueprint, OpenAPI spec, Playwright demo journey; dev scripts (`scripts/`) and explorer search in progress.
