@@ -51,7 +51,7 @@ func NewState(g Genesis) *State {
 	for _, a := range g.AnchorSigners {
 		s.anchorSigners[a] = true
 	}
-	s.blocks = append(s.blocks, Block{Height: 0, Hash: strings.Repeat("0", 64)})
+	s.blocks = append(s.blocks, Block{Height: 0, Hash: strings.Repeat("0", 64), Txs: []TxResult{}})
 	return s
 }
 

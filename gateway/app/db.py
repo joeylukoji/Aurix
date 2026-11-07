@@ -1,0 +1,58 @@
+"""Off-chain read index / operational store. Never a source of truth for AUR balances."""
+from __future__ import annotations
+
+import json
+import sqlite3
+import threading
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS paypal_orders (
+  order_id TEXT PRIMARY KEY, amount_usd TEXT NOT NULL, payer TEXT, description TEXT,
+  status TEXT NOT NULL, capture_id TEXT, proof_hash TEXT, anchor_tx TEXT, anchor_height INTEGER,
+  risk_score REAL, risk_level TEXT, mock INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS webhook_events (
+  event_id TEXT PRIMARY KEY, event_type TEXT, order_id TEXT, signature_valid INTEGER,
+  received_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS risk_scores (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, context TEXT, ref TEXT, score REAL, level TEXT,
+  reasons TEXT, model_version TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+"""
+
+
+class DB:
+    def __init__(self, path: str):
+        self.conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+        self.conn.row_factory = sqlite3.Row
+        self.lock = threading.Lock()
+        self.conn.executescript(SCHEMA)
+
+    def exec(self, sql: str, *args):
+        with self.lock:
+            return self.conn.execute(sql, args)
+
+    def one(self, sql: str, *args) -> dict | None:
+        row = self.exec(sql, *args).fetchone()
+        return dict(row) if row else None
+
+    def all(self, sql: str, *args) -> list[dict]:
+        return [dict(r) for r in self.exec(sql, *args).fetchall()]
+
+    def record_event_once(self, event_id: str, event_type: str, order_id: str | None) -> bool:
+        """Idempotency: True only the first time an event id is seen."""
+        try:
+            self.exec("INSERT INTO webhook_events(event_id, event_type, order_id, signature_valid) VALUES (?,?,?,1)",
+                      event_id, event_type, order_id)
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def save_risk(self, context: str, ref: str, risk: dict | None):
+        if risk:
+            self.exec("INSERT INTO risk_scores(context, ref, score, level, reasons, model_version) VALUES (?,?,?,?,?,?)",
+                      context, ref, risk["risk_score"], risk["level"], json.dumps(risk["reasons"]), risk["model_version"])
+
+    def update_order(self, order_id: str, **fields):
+        cols = ", ".join(f"{k}=?" for k in fields)
+        self.exec(f"UPDATE paypal_orders SET {cols}, updated_at=CURRENT_TIMESTAMP WHERE order_id=?",
+                  *fields.values(), order_id)
