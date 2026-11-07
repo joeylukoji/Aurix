@@ -22,15 +22,30 @@ FEATURES = [
 ]
 
 REASON_TEXT = {
-    "log_amount": "High absolute amount",
-    "amount_vs_history": "Amount {ratio:.1f}x the sender's average",
-    "new_recipient": "First payment to this recipient",
-    "tx_last_hour": "{count} payments in the last hour",
-    "night_time": "Unusual time of day (night)",
-    "is_usd": "External fiat payment (PayPal)",
+    "log_amount": "Large payment amount ({amount:,.2f})",
+    "amount_vs_history": "Amount is {ratio:.1f}x this sender's average payment",
+    "new_recipient": "First payment from this sender to this recipient",
+    "tx_last_hour": "{count} payments from this sender in the last hour",
+    "night_time": "Sent at an unusual time of day (00:00-06:00 UTC)",
+    "is_usd": "External fiat payment (USD via PayPal)",
 }
 
-MODEL_VERSION = "v0.1-lgbm-synthetic"
+FEATURE_DESCRIPTIONS = {
+    "log_amount": "log(1 + amount)",
+    "amount_vs_history": "amount / sender's average past amount (capped at 50)",
+    "new_recipient": "1 if the sender never paid this recipient before",
+    "tx_last_hour": "number of sender payments in the previous hour",
+    "night_time": "1 if the UTC hour is before 06:00",
+    "is_usd": "1 if currency is USD (PayPal rail)",
+}
+
+MODEL_VERSION = "v0.2-lgbm-synthetic"
+TRAINING_DATA = (
+    "6000 SYNTHETIC transactions (seed 42) whose fraud labels are sampled from a "
+    "hand-written logistic rule (amount vs history, new recipient, velocity, night "
+    "time, amount). NOT real payment data. 80/20 stratified-free random hold-out split."
+)
+THRESHOLDS = (0.4, 0.7)
 
 
 def generate_synthetic(n: int = 6000, seed: int = 42) -> tuple[np.ndarray, np.ndarray]:
@@ -56,12 +71,49 @@ def generate_synthetic(n: int = 6000, seed: int = 42) -> tuple[np.ndarray, np.nd
     return X, y
 
 
-def train() -> lgb.Booster:
-    X, y = generate_synthetic()
+def roc_auc(y: np.ndarray, p: np.ndarray) -> float:
+    """Rank-based (Mann-Whitney) ROC-AUC, ties averaged."""
+    order = np.argsort(p, kind="mergesort")
+    ranks = np.empty(len(p))
+    sp = p[order]
+    i = 0
+    while i < len(sp):
+        j = i
+        while j + 1 < len(sp) and sp[j + 1] == sp[i]:
+            j += 1
+        ranks[order[i:j + 1]] = (i + j) / 2 + 1
+        i = j + 1
+    pos = y == 1
+    n_pos, n_neg = int(pos.sum()), int((~pos).sum())
+    return float((ranks[pos].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg))
+
+
+def evaluate(booster: lgb.Booster, X: np.ndarray, y: np.ndarray) -> dict:
+    p = booster.predict(X)
+    out = {"holdout_size": int(len(y)), "holdout_positive_rate": round(float(y.mean()), 3),
+           "roc_auc": round(roc_auc(y, p), 3), "thresholds": {}}
+    for t in THRESHOLDS:
+        pred = p >= t
+        tp = int((pred & (y == 1)).sum())
+        precision = tp / int(pred.sum()) if pred.sum() else 0.0
+        recall = tp / int((y == 1).sum()) if (y == 1).sum() else 0.0
+        out["thresholds"][str(t)] = {"precision": round(precision, 3), "recall": round(recall, 3),
+                                     "flagged_rate": round(float(pred.mean()), 3)}
+    return out
+
+
+def train() -> tuple[lgb.Booster, dict]:
+    """Train on 80% of the synthetic data; return the model and hold-out metrics."""
+    X_all, y_all = generate_synthetic()
+    idx = np.random.default_rng(123).permutation(len(y_all))
+    cut = int(0.8 * len(idx))
+    tr, te = idx[:cut], idx[cut:]
+    X, y = X_all[tr], y_all[tr]
     ds = lgb.Dataset(X, label=y, feature_name=FEATURES)
     params = {"objective": "binary", "learning_rate": 0.08, "num_leaves": 15,
               "min_data_in_leaf": 40, "verbose": -1, "seed": 7, "deterministic": True}
-    return lgb.train(params, ds, num_boost_round=150)
+    booster = lgb.train(params, ds, num_boost_round=150)
+    return booster, evaluate(booster, X_all[te], y_all[te])
 
 
 @dataclass
@@ -81,21 +133,32 @@ def level_for(score: float) -> str:
 
 class RiskModel:
     def __init__(self) -> None:
-        self.booster = train()
+        self.booster, self.metrics = train()
+
+    def info(self) -> dict:
+        return {"model_version": MODEL_VERSION, "model_type": "LightGBM binary classifier",
+                "explanations": "LightGBM TreeSHAP (pred_contrib)",
+                "training_data": TRAINING_DATA, "synthetic_data": True,
+                "features": [{"name": f, "description": FEATURE_DESCRIPTIONS[f]} for f in FEATURES],
+                "levels": {"low": "< 0.4", "medium": "0.4 - 0.7", "high": ">= 0.7"},
+                "metrics": self.metrics, "advisory_only": True}
 
     def score(self, feats: dict[str, float], top_k: int = 3) -> Assessment:
         x = np.array([[feats[f] for f in FEATURES]], dtype=float)
         p = float(self.booster.predict(x)[0])
         contrib = self.booster.predict(x, pred_contrib=True)[0][:-1]  # drop bias term
         order = np.argsort(-contrib)
+        level = level_for(p)
+        picked = [i for i in order[:top_k] if contrib[i] > 0]
+        if not picked and level != "low":
+            picked = [int(order[0])]  # always explain a medium/high score
         reasons = []
-        for i in order[:top_k]:
-            if contrib[i] <= 0:
-                break
+        for i in picked:
             name = FEATURES[i]
-            text = REASON_TEXT[name].format(ratio=feats["amount_vs_history"], count=int(feats["tx_last_hour"]))
+            text = REASON_TEXT[name].format(ratio=feats["amount_vs_history"], count=int(feats["tx_last_hour"]),
+                                            amount=math.expm1(feats["log_amount"]))
             reasons.append({"feature": name, "impact": round(float(contrib[i]), 3), "text": text})
-        return Assessment(round(p, 3), level_for(p), reasons)
+        return Assessment(round(p, 3), level, reasons)
 
 
 def build_features(amount: float, currency: str, history: list[tuple[str, float, float]],

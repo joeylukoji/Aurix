@@ -46,3 +46,23 @@ def test_risky_payment_scores_higher_with_reasons():
 def test_validation():
     assert req(amount=-1).status_code == 422
     assert req(currency="EUR").status_code == 422
+
+
+def test_model_card_endpoint_and_auc_floor():
+    m = c.get("/v1/model").json()
+    assert m["advisory_only"] is True and m["synthetic_data"] is True
+    assert [f["name"] for f in m["features"]]
+    met = m["metrics"]
+    assert met["roc_auc"] >= 0.70
+    for t in ("0.4", "0.7"):
+        assert 0 <= met["thresholds"][t]["precision"] <= 1
+        assert 0 <= met["thresholds"][t]["recall"] <= 1
+
+
+def test_medium_high_always_has_reason():
+    from app.main import model
+    feats = {"log_amount": 8.0, "amount_vs_history": 40.0, "new_recipient": 1.0,
+             "tx_last_hour": 6.0, "night_time": 1.0, "is_usd": 1.0}
+    a = model.score(feats)
+    assert a.level in {"medium", "high"} and len(a.reasons) >= 1
+    assert all(r["text"] for r in a.reasons)

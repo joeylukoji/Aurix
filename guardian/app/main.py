@@ -46,7 +46,13 @@ class ScoreResponse(BaseModel):
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "model_version": MODEL_VERSION}
+    return {"status": "ok", "model_version": MODEL_VERSION,
+            "roc_auc": model.metrics["roc_auc"], "advisory_only": True}
+
+
+@app.get("/v1/model")
+def model_info() -> dict:
+    return model.info()
 
 
 @app.post("/v1/risk/score", response_model=ScoreResponse)
