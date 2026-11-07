@@ -14,6 +14,7 @@ run() { # name cmd...
   NAMES+=("$name"); echo "--- $name: ${RESULTS[-1]}"
 }
 run chain-go   bash -c "cd '$ROOT/chain' && go test ./..."
+run slashing "$ROOT/scripts/slashing-test.sh"
 run guardian   bash -c "cd '$ROOT/guardian' && .venv/bin/python -m pytest -q"
 run paypal-sim bash -c "cd '$ROOT/paypal-sim' && .venv/bin/python -m pytest -q"
 run gateway    bash -c "cd '$ROOT/gateway' && .venv/bin/pip install -q -r requirements-dev.txt && .venv/bin/python -m pytest -q"

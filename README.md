@@ -60,7 +60,7 @@ Indexer, PostgreSQL and Redis are planned, not built. Full details: [`docs/archi
 | Need | Technology |
 | --- | --- |
 | Consensus | CometBFT (PoS + BFT) |
-| Blockchain core | Cosmos SDK v0.50 + Go (`x/auth`, `x/bank`, `x/staking`, custom `x/smartmoney`) |
+| Blockchain core | Cosmos SDK v0.50 + Go (`x/auth`, `x/bank`, `x/staking`, `x/slashing`, `x/distribution`, `x/evidence`, custom `x/smartmoney`) |
 | Gateway | FastAPI *(Spring Boot in the original target)* |
 | AI | Python, FastAPI, LightGBM + SHAP (PyTorch Geometric on the roadmap) |
 | Data | SQLite (V1 index), PostgreSQL + Redis planned |

@@ -3,6 +3,7 @@
 | Design layer | Implementation |
 | --- | --- |
 | `x/aurixbank` (layer 1) | Standard `x/auth` (accounts, sequence = nonce, secp256k1 signatures, fees) + `x/bank` (`uaur` balances, `MsgSend`). No mint module: supply is fixed at genesis. |
+| Validator operation | `x/staking` + `x/slashing` (downtime jailing, double-sign slashing) + `x/evidence` + `x/distribution` (fees and rewards to validators). CLI: `aurixd tx staking create-validator/delegate/unbond`, `aurixd tx slashing unjail`. Live test: `scripts/slashing-test.sh`. |
 | `x/smartmoney` (layer 2) | Custom module: `MsgCreateEscrow`, `MsgReleaseEscrow`, `MsgRefundEscrow`, `MsgAnchorProof`; escrowed funds are held by the module account. |
 | Consensus | CometBFT, **4 validators** by default (own key, equal stake, persistent peers), 1 s blocks. Tolerates 1 faulty validator out of 4. |
 

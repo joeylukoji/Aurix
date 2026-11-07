@@ -16,6 +16,10 @@ import (
 	reflectionv1 "cosmossdk.io/api/cosmos/reflection/v1"
 	"cosmossdk.io/log"
 	storetypes "cosmossdk.io/store/types"
+	"cosmossdk.io/x/evidence"
+	evidencekeeper "cosmossdk.io/x/evidence/keeper"
+	evidencetypes "cosmossdk.io/x/evidence/types"
+	"cosmossdk.io/x/tx/signing"
 	abci "github.com/cometbft/cometbft/abci/types"
 	dbm "github.com/cosmos/cosmos-db"
 	"github.com/cosmos/cosmos-sdk/baseapp"
@@ -45,14 +49,19 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/consensus"
 	consensuskeeper "github.com/cosmos/cosmos-sdk/x/consensus/keeper"
 	consensustypes "github.com/cosmos/cosmos-sdk/x/consensus/types"
+	distr "github.com/cosmos/cosmos-sdk/x/distribution"
+	distrkeeper "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
+	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
 	"github.com/cosmos/cosmos-sdk/x/genutil"
 	genutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+	"github.com/cosmos/cosmos-sdk/x/slashing"
+	slashingkeeper "github.com/cosmos/cosmos-sdk/x/slashing/keeper"
+	slashingtypes "github.com/cosmos/cosmos-sdk/x/slashing/types"
 	"github.com/cosmos/cosmos-sdk/x/staking"
 	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/cosmos/gogoproto/proto"
-	"cosmossdk.io/x/tx/signing"
 
 	"github.com/joeylukoji/aurix/chain/x/smartmoney"
 	smkeeper "github.com/joeylukoji/aurix/chain/x/smartmoney/keeper"
@@ -69,6 +78,7 @@ var (
 	DefaultNodeHome string
 	maccPerms       = map[string][]string{
 		authtypes.FeeCollectorName:     nil,
+		distrtypes.ModuleName:          nil,
 		stakingtypes.BondedPoolName:    {authtypes.Burner, authtypes.Staking},
 		stakingtypes.NotBondedPoolName: {authtypes.Burner, authtypes.Staking},
 		smtypes.ModuleName:             nil,
@@ -123,6 +133,9 @@ var ModuleBasics = module.NewBasicManager(
 	genutil.NewAppModuleBasic(genutiltypes.DefaultMessageValidator),
 	bank.AppModuleBasic{},
 	staking.AppModuleBasic{},
+	distr.AppModuleBasic{},
+	slashing.AppModuleBasic{},
+	evidence.AppModuleBasic{},
 	consensus.AppModuleBasic{},
 	smartmoney.AppModule{},
 )
@@ -136,6 +149,9 @@ type App struct {
 	AccountKeeper    authkeeper.AccountKeeper
 	BankKeeper       bankkeeper.BaseKeeper
 	StakingKeeper    *stakingkeeper.Keeper
+	DistrKeeper      distrkeeper.Keeper
+	SlashingKeeper   slashingkeeper.Keeper
+	EvidenceKeeper   evidencekeeper.Keeper
 	ConsensusKeeper  consensuskeeper.Keeper
 	SmartMoneyKeeper smkeeper.Keeper
 
@@ -151,7 +167,7 @@ func New(logger log.Logger, db dbm.DB, traceStore io.Writer, loadLatest bool,
 	bApp.SetTxEncoder(enc.TxConfig.TxEncoder())
 
 	keys := storetypes.NewKVStoreKeys(authtypes.StoreKey, banktypes.StoreKey, stakingtypes.StoreKey,
-		consensustypes.StoreKey, smtypes.StoreKey)
+		consensustypes.StoreKey, distrtypes.StoreKey, slashingtypes.StoreKey, evidencetypes.StoreKey, smtypes.StoreKey)
 	authority := authtypes.NewModuleAddress(govtypes.ModuleName).String()
 
 	app := &App{BaseApp: bApp, cdc: enc.Codec, interfaceRegistry: enc.InterfaceRegistry, txConfig: enc.TxConfig}
@@ -170,6 +186,14 @@ func New(logger log.Logger, db dbm.DB, traceStore io.Writer, loadLatest bool,
 	app.StakingKeeper = stakingkeeper.NewKeeper(enc.Codec, runtime.NewKVStoreService(keys[stakingtypes.StoreKey]),
 		app.AccountKeeper, app.BankKeeper, authority,
 		authcodec.NewBech32Codec(Bech32Prefix+"valoper"), authcodec.NewBech32Codec(Bech32Prefix+"valcons"))
+	app.DistrKeeper = distrkeeper.NewKeeper(enc.Codec, runtime.NewKVStoreService(keys[distrtypes.StoreKey]),
+		app.AccountKeeper, app.BankKeeper, app.StakingKeeper, authtypes.FeeCollectorName, authority)
+	app.SlashingKeeper = slashingkeeper.NewKeeper(enc.Codec, enc.Amino, runtime.NewKVStoreService(keys[slashingtypes.StoreKey]),
+		app.StakingKeeper, authority)
+	// Staking hooks: distribution tracks rewards, slashing tracks validator signing info.
+	app.StakingKeeper.SetHooks(stakingtypes.NewMultiStakingHooks(app.DistrKeeper.Hooks(), app.SlashingKeeper.Hooks()))
+	app.EvidenceKeeper = *evidencekeeper.NewKeeper(enc.Codec, runtime.NewKVStoreService(keys[evidencetypes.StoreKey]),
+		app.StakingKeeper, app.SlashingKeeper, app.AccountKeeper.AddressCodec(), runtime.ProvideCometInfoService())
 	app.SmartMoneyKeeper = smkeeper.NewKeeper(enc.Codec, runtime.NewKVStoreService(keys[smtypes.StoreKey]), app.BankKeeper)
 
 	app.ModuleManager = module.NewManager(
@@ -177,15 +201,23 @@ func New(logger log.Logger, db dbm.DB, traceStore io.Writer, loadLatest bool,
 		auth.NewAppModule(enc.Codec, app.AccountKeeper, nil, nil),
 		bank.NewAppModule(enc.Codec, app.BankKeeper, app.AccountKeeper, nil),
 		staking.NewAppModule(enc.Codec, app.StakingKeeper, app.AccountKeeper, app.BankKeeper, nil),
+		distr.NewAppModule(enc.Codec, app.DistrKeeper, app.AccountKeeper, app.BankKeeper, app.StakingKeeper, nil),
+		slashing.NewAppModule(enc.Codec, app.SlashingKeeper, app.AccountKeeper, app.BankKeeper, app.StakingKeeper, nil, enc.InterfaceRegistry),
+		evidence.NewAppModule(app.EvidenceKeeper),
 		consensus.NewAppModule(enc.Codec, app.ConsensusKeeper),
 		smartmoney.NewAppModule(enc.Codec, app.SmartMoneyKeeper),
 	)
-	app.ModuleManager.SetOrderBeginBlockers(stakingtypes.ModuleName)
+	// distribution must run before slashing (rewards for the previous block), slashing
+	// before evidence and staking (downtime jailing uses the last commit).
+	app.ModuleManager.SetOrderBeginBlockers(distrtypes.ModuleName, slashingtypes.ModuleName,
+		evidencetypes.ModuleName, stakingtypes.ModuleName)
 	app.ModuleManager.SetOrderEndBlockers(stakingtypes.ModuleName)
-	app.ModuleManager.SetOrderInitGenesis(authtypes.ModuleName, banktypes.ModuleName, stakingtypes.ModuleName,
+	app.ModuleManager.SetOrderInitGenesis(authtypes.ModuleName, banktypes.ModuleName, distrtypes.ModuleName,
+		stakingtypes.ModuleName, slashingtypes.ModuleName, evidencetypes.ModuleName,
 		smtypes.ModuleName, genutiltypes.ModuleName, consensustypes.ModuleName)
 	app.ModuleManager.SetOrderExportGenesis(consensustypes.ModuleName, authtypes.ModuleName, banktypes.ModuleName,
-		stakingtypes.ModuleName, smtypes.ModuleName, genutiltypes.ModuleName)
+		distrtypes.ModuleName, stakingtypes.ModuleName, slashingtypes.ModuleName, evidencetypes.ModuleName,
+		smtypes.ModuleName, genutiltypes.ModuleName)
 
 	cfg := module.NewConfigurator(enc.Codec, app.MsgServiceRouter(), app.GRPCQueryRouter())
 	if err := app.ModuleManager.RegisterServices(cfg); err != nil {
@@ -229,7 +261,7 @@ func (app *App) InitChainer(ctx sdk.Context, req *abci.RequestInitChain) (*abci.
 	return app.ModuleManager.InitGenesis(ctx, app.cdc, gs)
 }
 
-func (app *App) AppCodec() codec.Codec                     { return app.cdc }
+func (app *App) AppCodec() codec.Codec                      { return app.cdc }
 func (app *App) InterfaceRegistry() types.InterfaceRegistry { return app.interfaceRegistry }
 func (app *App) TxConfig() client.TxConfig                  { return app.txConfig }
 

@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 
+	"cosmossdk.io/client/v2/autocli"
+	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/log"
 	cmtcfg "github.com/cometbft/cometbft/config"
 	dbm "github.com/cosmos/cosmos-db"
@@ -19,10 +21,12 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/rpc"
 	addresscodec "github.com/cosmos/cosmos-sdk/codec/address"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
+	runtimeservices "github.com/cosmos/cosmos-sdk/runtime/services"
 	"github.com/cosmos/cosmos-sdk/server"
 	svrcmd "github.com/cosmos/cosmos-sdk/server/cmd"
 	serverconfig "github.com/cosmos/cosmos-sdk/server/config"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
+	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authcmd "github.com/cosmos/cosmos-sdk/x/auth/client/cli"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
@@ -92,6 +96,13 @@ func rootCmd() *cobra.Command {
 		txCmd(),
 		keys.Commands(),
 	)
+	// AutoCLI generates the staking, slashing, distribution and evidence commands
+	// (create-validator, delegate, unbond, unjail, withdraw-rewards, queries...), so
+	// operators can join and manage validators after genesis. Hand-written commands
+	// (bank send, smartmoney) take precedence.
+	if err := autoCLIOptions(initCtx).EnhanceRootCommand(root); err != nil {
+		panic(err)
+	}
 	return root
 }
 
@@ -145,4 +156,22 @@ func exportApp(logger log.Logger, db dbm.DB, traceStore io.Writer, height int64,
 		}
 	}
 	return a.ExportAppStateAndValidators(forZeroHeight, jailAllowedAddrs, modulesToExport)
+}
+
+func autoCLIOptions(clientCtx client.Context) autocli.AppOptions {
+	tmp := app.New(log.NewNopLogger(), dbm.NewMemDB(), nil, false, simtestutil.EmptyAppOptions{})
+	modules := map[string]appmodule.AppModule{}
+	for name, m := range tmp.ModuleManager.Modules {
+		if am, ok := m.(appmodule.AppModule); ok {
+			modules[name] = am
+		}
+	}
+	return autocli.AppOptions{
+		Modules:               modules,
+		ModuleOptions:         runtimeservices.ExtractAutoCLIOptions(tmp.ModuleManager.Modules),
+		AddressCodec:          addresscodec.NewBech32Codec(app.Bech32Prefix),
+		ValidatorAddressCodec: addresscodec.NewBech32Codec(app.Bech32Prefix + "valoper"),
+		ConsensusAddressCodec: addresscodec.NewBech32Codec(app.Bech32Prefix + "valcons"),
+		ClientCtx:             clientCtx,
+	}
 }

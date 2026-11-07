@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Starts the full AURIX stack without Docker: aurixd chain, guardian, paypal-sim, gateway.
 # Ports: set PORT_OFFSET (added to defaults) or each port explicitly:
-#   RPC_PORT(26657) REST_PORT(1317) GRPC_PORT(9090) P2P_PORT(26656)
+#   RPC_PORT(26657) REST_PORT(1317) GRPC_PORT(9090) P2P_PORT(26656) PROM_PORT(26660, metrics)
 #   GUARDIAN_PORT(8000) SIM_PORT(8090) GATEWAY_PORT(8080)
 # VALIDATORS (default 4): number of validator nodes; node i uses the ports above + i*VALIDATOR_PORT_STEP
 # (default 1000). The gateway talks to node0. AURIX_NET_HOME (default $RUN_DIR/chain-net),
@@ -11,7 +11,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OFF=${PORT_OFFSET:-0}
 RPC_PORT=${RPC_PORT:-$((26657+OFF))}; REST_PORT=${REST_PORT:-$((1317+OFF))}
-GRPC_PORT=${GRPC_PORT:-$((9090+OFF))}; P2P_PORT=${P2P_PORT:-$((26656+OFF))}
+GRPC_PORT=${GRPC_PORT:-$((9090+OFF))}; P2P_PORT=${P2P_PORT:-$((26656+OFF))}; PROM_PORT=${PROM_PORT:-$((26660+OFF))}
 GUARDIAN_PORT=${GUARDIAN_PORT:-$((8000+OFF))}; SIM_PORT=${SIM_PORT:-$((8090+OFF))}
 GATEWAY_PORT=${GATEWAY_PORT:-$((8080+OFF))}
 RUN_DIR=${RUN_DIR:-$ROOT/.run}; mkdir -p "$RUN_DIR"
@@ -23,7 +23,7 @@ log() { echo "[dev-up] $*"; }
 port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 PORTS=($GUARDIAN_PORT $SIM_PORT $GATEWAY_PORT)
 for ((i = 0; i < VALIDATORS; i++)); do
-  PORTS+=($((RPC_PORT + i * STEP)) $((REST_PORT + i * STEP)) $((GRPC_PORT + i * STEP)) $((P2P_PORT + i * STEP)))
+  PORTS+=($((RPC_PORT + i * STEP)) $((REST_PORT + i * STEP)) $((GRPC_PORT + i * STEP)) $((P2P_PORT + i * STEP)) $((PROM_PORT + i * STEP)))
 done
 for p in "${PORTS[@]}"; do
   if port_busy "$p"; then echo "[dev-up] port $p already in use (set PORT_OFFSET or *_PORT)" >&2; exit 1; fi
@@ -51,7 +51,7 @@ venv() { # dir
 
 log "building aurixd"; (cd "$ROOT/chain" && go build -o build/aurixd ./cmd/aurixd)
 AURIXD=$BIN VALIDATORS=$VALIDATORS PORT_STEP=$STEP RPC_PORT=$RPC_PORT REST_PORT=$REST_PORT \
-  GRPC_PORT=$GRPC_PORT P2P_PORT=$P2P_PORT "$ROOT/chain/scripts/init-localnet.sh"
+  GRPC_PORT=$GRPC_PORT P2P_PORT=$P2P_PORT PROM_PORT=$PROM_PORT "$ROOT/chain/scripts/init-localnet.sh"
 for d in guardian paypal-sim gateway; do venv "$ROOT/$d"; done
 
 for ((i = 0; i < VALIDATORS; i++)); do  # ports and peers are written in each node's config
