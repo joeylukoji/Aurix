@@ -1,0 +1,772 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "AURIX API Gateway",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chain/status": {
+      "get": {
+        "summary": "Chain Status",
+        "operationId": "chain_status_api_chain_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/wallets": {
+      "post": {
+        "summary": "New Wallet",
+        "description": "Demo convenience: returns a fresh key. It is NOT stored server-side.\nThe web wallet generates keys in the browser instead.",
+        "operationId": "new_wallet_api_wallets_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/wallets/{addr}": {
+      "get": {
+        "summary": "Wallet",
+        "operationId": "wallet_api_wallets__addr__get",
+        "parameters": [
+          {
+            "name": "addr",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Addr"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/wallets/{addr}/faucet": {
+      "post": {
+        "summary": "Faucet",
+        "operationId": "faucet_api_wallets__addr__faucet_post",
+        "parameters": [
+          {
+            "name": "addr",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Addr"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/txs/prepare": {
+      "post": {
+        "summary": "Prepare",
+        "operationId": "prepare_api_txs_prepare_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrepareReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/txs": {
+      "post": {
+        "summary": "Submit",
+        "operationId": "submit_api_txs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignedTx"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/escrows": {
+      "get": {
+        "summary": "Escrows",
+        "operationId": "escrows_api_escrows_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/escrows/{eid}": {
+      "get": {
+        "summary": "Escrow",
+        "operationId": "escrow_api_escrows__eid__get",
+        "parameters": [
+          {
+            "name": "eid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Eid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/explorer/blocks": {
+      "get": {
+        "summary": "Blocks",
+        "operationId": "blocks_api_explorer_blocks_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/explorer/txs": {
+      "get": {
+        "summary": "Txs",
+        "operationId": "txs_api_explorer_txs_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 200,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/explorer/proofs/{h}": {
+      "get": {
+        "summary": "Proof",
+        "operationId": "proof_api_explorer_proofs__h__get",
+        "parameters": [
+          {
+            "name": "h",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "H"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paypal/orders": {
+      "get": {
+        "summary": "List Orders",
+        "operationId": "list_orders_api_paypal_orders_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Order",
+        "operationId": "create_order_api_paypal_orders_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paypal/orders/{order_id}": {
+      "get": {
+        "summary": "Get Order",
+        "operationId": "get_order_api_paypal_orders__order_id__get",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paypal/orders/{order_id}/approve": {
+      "post": {
+        "summary": "Approve",
+        "operationId": "approve_api_paypal_orders__order_id__approve_post",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveReq"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paypal/orders/{order_id}/cancel": {
+      "post": {
+        "summary": "Cancel",
+        "operationId": "cancel_api_paypal_orders__order_id__cancel_post",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paypal/webhook": {
+      "post": {
+        "summary": "Webhook",
+        "operationId": "webhook_api_paypal_webhook_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApproveReq": {
+        "properties": {
+          "confirm": {
+            "type": "boolean",
+            "title": "Confirm",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "ApproveReq"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "Msg": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount",
+            "description": "uaur"
+          },
+          "arbiter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arbiter"
+          },
+          "deadline_height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline Height"
+          },
+          "escrow_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Escrow Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "title": "Msg"
+      },
+      "OrderReq": {
+        "properties": {
+          "amount_usd": {
+            "type": "string",
+            "title": "Amount Usd"
+          },
+          "payer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payer"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": "AURIX demo purchase"
+          }
+        },
+        "type": "object",
+        "required": [
+          "amount_usd"
+        ],
+        "title": "OrderReq"
+      },
+      "PrepareReq": {
+        "properties": {
+          "from": {
+            "type": "string",
+            "title": "From"
+          },
+          "msg": {
+            "$ref": "#/components/schemas/Msg"
+          }
+        },
+        "type": "object",
+        "required": [
+          "from",
+          "msg"
+        ],
+        "title": "PrepareReq"
+      },
+      "SignedTx": {
+        "properties": {
+          "msg": {
+            "type": "object",
+            "title": "Msg"
+          },
+          "from": {
+            "type": "string",
+            "title": "From"
+          },
+          "pub_key": {
+            "type": "string",
+            "title": "Pub Key"
+          },
+          "nonce": {
+            "type": "integer",
+            "title": "Nonce"
+          },
+          "fee": {
+            "type": "integer",
+            "title": "Fee"
+          },
+          "signature": {
+            "type": "string",
+            "title": "Signature"
+          }
+        },
+        "type": "object",
+        "required": [
+          "msg",
+          "from",
+          "pub_key",
+          "nonce",
+          "fee",
+          "signature"
+        ],
+        "title": "SignedTx"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

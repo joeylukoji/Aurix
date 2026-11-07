@@ -1,0 +1,29 @@
+name: aurix
+services:
+  chain:
+    build: ../chain
+    environment:
+      AURIX_CHAIN_ID: aurix-testnet-1
+      AURIX_FAUCET_SEED: ${AURIX_FAUCET_SEED:-aurix-dev-faucet}
+      AURIX_GATEWAY_SEED: ${AURIX_GATEWAY_SEED:-aurix-dev-gateway}
+    ports: ["26657:26657"]
+  guardian:
+    build: ../guardian
+    ports: ["8000:8000"]
+  gateway:
+    build:
+      context: ..
+      dockerfile: gateway/Dockerfile
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      CHAIN_RPC_URL: http://chain:26657
+      GUARDIAN_URL: http://guardian:8000
+      AURIX_FAUCET_SEED: ${AURIX_FAUCET_SEED:-aurix-dev-faucet}
+      AURIX_GATEWAY_SEED: ${AURIX_GATEWAY_SEED:-aurix-dev-gateway}
+    volumes: ["gateway-data:/data"]
+    ports: ["8080:8080"]
+    depends_on: [chain, guardian]
+volumes:
+  gateway-data:

@@ -16,6 +16,7 @@ AURIX is a testnet monetary protocol where an AI assesses a payment **before** i
 - [Tech stack](#tech-stack)
 - [Repository layout](#repository-layout)
 - [Quick start](#quick-start)
+- [Implementation status](#implementation-status)
 - [Way of working: Scrum](#way-of-working-scrum)
 - [Documentation](#documentation)
 - [Security](#security)
@@ -62,10 +63,10 @@ Full details: [`docs/architecture/services.md`](docs/architecture/services.md).
 | Need | Technology |
 | --- | --- |
 | Consensus | CometBFT (PoS + BFT) |
-| Blockchain core | Cosmos SDK + Go |
-| Gateway | Java 21 + Spring Boot *(alternative: FastAPI)* |
+| Blockchain core | Go state machine (V1), Cosmos SDK + CometBFT as target |
+| Gateway | FastAPI *(Spring Boot in the original target)* |
 | AI | Python, FastAPI, LightGBM + SHAP (PyTorch Geometric on the roadmap) |
-| Data | PostgreSQL (index), Redis (cache) |
+| Data | SQLite (V1 index), PostgreSQL + Redis planned |
 | Front end | Web wallet + explorer, AG Grid |
 | API | OpenAPI (APIMatic) |
 | Deployment | Docker Compose, Render (Kubernetes as target) |
@@ -74,30 +75,73 @@ Full details: [`docs/architecture/services.md`](docs/architecture/services.md).
 
 ```
 aurix/
-├── chain/        # Cosmos SDK node (x/aurixbank, x/smartmoney)
+├── chain/        # AURIX node (Go): aurixbank + smartmoney state machine
 ├── gateway/      # API Gateway / orchestration
 ├── guardian/     # Neural Guardian (FastAPI)
-├── indexer/      # Blocks -> PostgreSQL
 ├── web/          # Wallet, explorer, AG Grid
-├── api/          # openapi.yaml
+├── api/          # openapi.json (generated)
 ├── deploy/       # docker-compose.yml, render.yaml
 ├── docs/         # Documentation (Scrum, modelling, diagrams)
+├── tests/e2e/    # Playwright demo journey
 └── .env.example
 ```
 
 ## Quick start
 
-> Services are under development; these are the target commands.
-
-```bash
-cp .env.example .env
-```
+### With Docker Compose
 
 ```bash
 docker compose -f deploy/docker-compose.yml up --build
 ```
 
-Required variables (never committed): `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`, `PAYPAL_BASE_URL`, `CHAIN_RPC_URL`, `GUARDIAN_URL`, `DATABASE_URL`, `REDIS_URL`.
+Then open http://localhost:8080. Without PayPal credentials the gateway runs in an **offline mock mode** (clearly labelled in the UI). To use the real PayPal Sandbox, copy `.env.example` to `.env` and fill `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` and `PAYPAL_WEBHOOK_ID` (never commit it).
+
+### Without Docker
+
+Run the commands below from the repository root, each in its own terminal.
+
+```bash
+cd chain && go run ./cmd/aurixd
+```
+
+```bash
+cd guardian && python -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/uvicorn app.main:app --port 8000
+```
+
+```bash
+cd gateway && python -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/uvicorn app.main:app --port 8080
+```
+
+### Tests
+
+```bash
+cd chain && go test ./...
+```
+
+```bash
+cd guardian && .venv/bin/python -m pytest -q
+```
+
+```bash
+cd gateway && .venv/bin/python -m pytest -q
+```
+
+The gateway tests build and start a real `aurixd` node. The browser journey (wallet → send → escrow → PayPal → explorer) runs with Playwright against a running stack:
+
+```bash
+node tests/e2e/demo-journey.js
+```
+
+## Implementation status
+
+| Component | Status | Notes |
+| --- | --- | --- |
+| `chain/` | ✅ V1 | Go state machine implementing `x/aurixbank` and `x/smartmoney` messages and invariants 1–5, single validator, in-memory state. Porting to Cosmos SDK modules is the next step. |
+| `guardian/` | ✅ V1 | FastAPI + LightGBM, SHAP reasons via native TreeSHAP. **Trained on a synthetic dataset** generated in `guardian/app/model.py`. |
+| `gateway/` | ✅ V1 | FastAPI (variant recommended in the architecture doc). PayPal Orders v2, webhook signature verification, idempotency, proof anchoring. SQLite index (PostgreSQL planned). |
+| `web/` | ✅ V1 | Keys generated and signed in the browser. AG Grid explorer. |
+| `api/openapi.json` | ✅ | Generated from the gateway (`create_app().openapi()`). |
+| `deploy/` | ⚠️ | Compose and Render blueprint written; images not yet built in CI. |
 
 ## Way of working: Scrum
 

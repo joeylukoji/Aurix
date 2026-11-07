@@ -1,0 +1,31 @@
+# Render Blueprint. Copy to the repository root (render.yaml) to deploy.
+# The chain is a single in-memory validator: its state resets on restart (demo testnet).
+services:
+  - type: pserv
+    name: aurix-chain
+    runtime: docker
+    dockerfilePath: ./chain/Dockerfile
+    dockerContext: ./chain
+    envVars:
+      - { key: AURIX_FAUCET_SEED, sync: false }
+      - { key: AURIX_GATEWAY_SEED, sync: false }
+  - type: pserv
+    name: aurix-guardian
+    runtime: docker
+    dockerfilePath: ./guardian/Dockerfile
+    dockerContext: ./guardian
+  - type: web
+    name: aurix-gateway
+    runtime: docker
+    dockerfilePath: ./gateway/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - { key: CHAIN_RPC_URL, value: "http://aurix-chain:26657" }
+      - { key: GUARDIAN_URL, value: "http://aurix-guardian:8000" }
+      - { key: DATABASE_URL, value: "sqlite:////tmp/aurix.db" }
+      - { key: AURIX_FAUCET_SEED, sync: false }
+      - { key: AURIX_GATEWAY_SEED, sync: false }
+      - { key: PAYPAL_CLIENT_ID, sync: false }
+      - { key: PAYPAL_CLIENT_SECRET, sync: false }
+      - { key: PAYPAL_WEBHOOK_ID, sync: false }
