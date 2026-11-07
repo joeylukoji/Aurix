@@ -29,6 +29,7 @@ from . import crypto
 from .clients import ChainClient, ChainError, GuardianClient, PayPalClient, PayPalError, normalize_proof
 from .config import Settings
 from .db import DB
+from .keys import load_key
 
 log = logging.getLogger("aurix.gateway")
 
@@ -82,8 +83,8 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
         paypal = PayPalClient(s.paypal_base_url, s.paypal_client_id, s.paypal_client_secret, s.paypal_webhook_id)
     paypal_mode = s.paypal_env if paypal is not None else "disabled"
     db = DB(s.database_path)
-    faucet_key = crypto.Key(s.faucet_seed)
-    gateway_key = crypto.Key(s.gateway_seed)
+    faucet_key = load_key("FAUCET", default_seed=s.faucet_seed)
+    gateway_key = load_key("GATEWAY", default_seed=s.gateway_seed)
     signer_lock = threading.Lock()
 
     app = FastAPI(title="AURIX API Gateway", version="0.1.0")
@@ -312,7 +313,12 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
         except ChainError:
             return 1
 
-    def anchor(order_id: str, capture_id: str) -> dict:
+    def capture_amount(capture: dict) -> tuple[str, str]:
+        """(value, currency_code) of a PayPal capture, as PayPal returned them."""
+        amt = capture.get("amount") or {}
+        return str(amt.get("value") or ""), str(amt.get("currency_code") or "")
+
+    def anchor(order_id: str, capture_id: str, amount: str = "", currency: str = "") -> dict:
         """Submits the gateway's attestation (it is the first attestor, not the authority).
         The order stays ATTESTING until the chain proof is CONFIRMED by k-of-n attestors."""
         h = hashlib.sha256(f"{order_id}|{capture_id}".encode()).hexdigest()
@@ -324,14 +330,24 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
         if existing and gateway_key.address in (existing.get("attestations") or [existing.get("submitter")]):
             res = {"hash": None, "height": int(existing.get("first_seen_height") or existing.get("height") or 0)}
         else:
-            try:
-                res = sign_and_send(gateway_key, crypto.msg_anchor_proof(gateway_key.address, h, ref, capture_id))
-            except ChainError as e:
-                if "unknownfield" not in e.detail.lower().replace(" ", ""):
-                    raise
-                # chain predating k-of-n attestation: MsgAnchorProof has no capture_ref yet
-                res = sign_and_send(gateway_key, crypto.msg_anchor_proof(gateway_key.address, h, ref))
+            if not amount or not currency:  # fall back to what was captured / ordered
+                o = db.one("SELECT amount_usd, capture_amount, capture_currency FROM paypal_orders WHERE order_id=?",
+                           order_id) or {}
+                amount = amount or o.get("capture_amount") or o.get("amount_usd") or ""
+                currency = currency or o.get("capture_currency") or ("USD" if o.get("amount_usd") else "")
+            # Newest MsgAnchorProof first; older chains reject unknown fields: amount/currency (5/6), then
+            # capture_ref (4, chain predating k-of-n attestation).
+            variants = [(capture_id, amount, currency), (capture_id, "", ""), ("", "", "")]
+            for i, (cap, amt, cur) in enumerate(variants):
+                try:
+                    res = sign_and_send(gateway_key, crypto.msg_anchor_proof(gateway_key.address, h, ref, cap, amt, cur))
+                    break
+                except ChainError as e:
+                    if i == len(variants) - 1 or "unknownfield" not in e.detail.lower().replace(" ", ""):
+                        raise
+                    log.warning("chain rejected MsgAnchorProof fields, retrying with fewer: %s", e.detail)
         db.update_order(order_id, status="ATTESTING", capture_id=capture_id, proof_hash=h,
+                        capture_amount=amount or None, capture_currency=currency or None,
                         anchor_tx=res["hash"], anchor_height=res["height"])
         refresh_attestation(order_id)
         return res
@@ -402,9 +418,11 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
         order = db.one("SELECT * FROM paypal_orders WHERE order_id=?", order_id)
         if not order or order["status"] in ("ATTESTING", "ANCHORED"):
             return "ignored"
-        db.update_order(order_id, status="CONFIRMED", capture_id=resource.get("id"))
+        amount, currency = capture_amount(resource)
+        db.update_order(order_id, status="CONFIRMED", capture_id=resource.get("id"),
+                        capture_amount=amount or None, capture_currency=currency or None)
         try:
-            anchor(order_id, resource["id"])
+            anchor(order_id, resource["id"], amount, currency)
         except Exception:
             # Forget the event so PayPal's redelivery is processed again (the poller also retries
             # CONFIRMED orders without a proof); the webhook answers 5xx, which makes PayPal retry.
@@ -460,7 +478,9 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
         cap = paypal.capture(order_id)
         capture = cap["purchase_units"][0]["payments"]["captures"][0]
         # The order is ANCHORED only once PayPal's signed webhook arrives (see /api/paypal/webhook).
-        db.update_order(order_id, status="CAPTURED", capture_id=capture["id"])
+        amount, currency = capture_amount(capture)
+        db.update_order(order_id, status="CAPTURED", capture_id=capture["id"],
+                        capture_amount=amount or None, capture_currency=currency or None)
         return get_order(order_id)
 
     @app.post("/api/paypal/orders/{order_id}/cancel")

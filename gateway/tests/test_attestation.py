@@ -169,8 +169,73 @@ def test_db_migrates_old_schema(tmp_path):
     con.commit()
     con.close()
     row = DB(str(path)).one("SELECT * FROM paypal_orders WHERE order_id='O1'")
-    assert "attestations" in row and "attest_threshold" in row
+    assert "attestations" in row and "attest_threshold" in row and "capture_amount" in row
     DB(str(path))  # idempotent
+
+
+def test_msg_anchor_proof_amount_currency_encoding():
+    inner = proto.msg_anchor_proof("aur1x", "ab", "paypal:O", "CAP9", "12.50", "USD")
+    assert inner == (b"\x0a\x05aur1x" + b"\x12\x02ab" + b"\x1a\x08paypal:O" + b"\x22\x04CAP9"
+                     + b"\x2a\x0512.50" + b"\x32\x03USD")
+    assert crypto.msg_anchor_proof("aur1x", "ab", "paypal:O", "CAP9", "12.50", "USD") == \
+        proto.any_("/aurix.smartmoney.v1.MsgAnchorProof", inner)
+
+
+def test_anchor_sends_capture_amount_and_currency(tmp_path, monkeypatch):
+    chain = FakeChain(threshold=1)
+    c, sim = gateway(tmp_path, monkeypatch, chain)
+    oid = c.post("/api/paypal/orders", json={"amount_usd": "12.5"}).json()["order_id"]
+    sim.post(f"/sim/orders/{oid}/approve")
+    c.post(f"/api/paypal/orders/{oid}/approve", json={"confirm": True})
+    end = time.time() + 10
+    while c.get(f"/api/paypal/orders/{oid}").json()["status"] != "ANCHORED":
+        assert time.time() < end
+        time.sleep(0.05)
+    assert b"\x2a\x0512.50\x32\x03USD" in chain.txs[-1]  # amount.value / currency_code of the PayPal capture
+    o = c.get(f"/api/paypal/orders/{oid}").json()
+    assert (o["capture_amount"], o["capture_currency"]) == ("12.50", "USD")
+
+
+class OldChain(FakeChain):
+    """A chain predating H1: rejects MsgAnchorProof field 5/6 as unknown."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.rejected = 0
+
+    def broadcast(self, tx: bytes):
+        if b"\x32\x03USD" in tx:
+            self.rejected += 1
+            raise ChainError(400, "errUnknownField: unknown field 5 in MsgAnchorProof")
+        return super().broadcast(tx)
+
+
+def test_anchor_retries_without_amount_on_old_chain(tmp_path, monkeypatch):
+    chain = OldChain(threshold=1)
+    c, sim = gateway(tmp_path, monkeypatch, chain)
+    oid = pay(c, sim)
+    o = c.get(f"/api/paypal/orders/{oid}").json()
+    assert o["status"] == "ANCHORED"
+    assert chain.rejected == 1 and b"USD" not in chain.txs[-1]
+    cap = o["capture_id"].encode()  # capture_ref is kept on the retry
+    assert b"\x22" + bytes([len(cap)]) + cap in chain.txs[-1]
+
+
+def test_retry_uses_stored_capture_amount(tmp_path, monkeypatch):
+    chain = FlakyChain(fail=1, threshold=1)
+    c, sim = gateway(tmp_path, monkeypatch, chain)
+    sent = _capture_webhook(monkeypatch)
+    oid = c.post("/api/paypal/orders", json={"amount_usd": "7.25"}).json()["order_id"]
+    sim.post(f"/sim/orders/{oid}/approve")
+    c.post(f"/api/paypal/orders/{oid}/approve", json={"confirm": True})
+    end = time.time() + 5
+    while not sent:
+        assert time.time() < end
+        time.sleep(0.05)
+    c.post("/api/paypal/webhook", json=sent[0][0], headers=sent[0][1])
+    c.app.state.refresh_pending()  # poller retry: no capture payload at hand, uses the stored amount
+    assert c.get(f"/api/paypal/orders/{oid}").json()["status"] == "ANCHORED"
+    assert b"\x2a\x047.25\x32\x03USD" in chain.txs[-1]
 
 
 class FlakyChain(FakeChain):

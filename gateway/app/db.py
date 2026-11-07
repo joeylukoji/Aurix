@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS paypal_orders (
   order_id TEXT PRIMARY KEY, amount_usd TEXT NOT NULL, payer TEXT, description TEXT,
   status TEXT NOT NULL, capture_id TEXT, proof_hash TEXT, anchor_tx TEXT, anchor_height INTEGER,
   risk_score REAL, risk_level TEXT, simulated INTEGER NOT NULL DEFAULT 0,
-  attestations TEXT, attest_threshold INTEGER,
+  attestations TEXT, attest_threshold INTEGER, capture_amount TEXT, capture_currency TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS webhook_events (
   event_id TEXT PRIMARY KEY, event_type TEXT, order_id TEXT, signature_valid INTEGER,
@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS risk_scores (
 """
 
 # Columns added after the first release: (name, type). Added in place to older databases.
-MIGRATIONS = {"paypal_orders": [("attestations", "TEXT"), ("attest_threshold", "INTEGER")]}
+MIGRATIONS = {"paypal_orders": [("attestations", "TEXT"), ("attest_threshold", "INTEGER"),
+                                 ("capture_amount", "TEXT"), ("capture_currency", "TEXT")]}
 
 
 class DB:

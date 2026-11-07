@@ -1,11 +1,14 @@
 """Cosmos SDK transaction signing (secp256k1, SIGN_MODE_DIRECT) without heavy deps.
 
-Keys: private key = sha256(seed string), same derivation as the web wallet and
-`aurixd seed-address`. Addresses: bech32("aur", ripemd160(sha256(compressed pubkey))).
+Keys: BIP39 mnemonic -> BIP32 m/44'/118'/0'/0/0 (cosmos standard, same address as
+`aurixd keys add --recover`), a raw 32-byte private key, or (dev only) sha256(seed string),
+the legacy derivation of the demo web wallet and `aurixd seed-address`. Addresses: bech32("aur", ripemd160(sha256(compressed pubkey))).
 """
 from __future__ import annotations
 
 import hashlib
+import hmac
+import unicodedata
 
 from Crypto.Hash import RIPEMD160
 from cryptography.hazmat.primitives import hashes
@@ -81,12 +84,59 @@ def valid_address(addr: str) -> bool:
 
 
 # ---------------- keys ----------------
+COSMOS_PATH = "m/44'/118'/0'/0/0"
+
+
+def _pubkey(k: int) -> bytes:
+    return ec.derive_private_key(k, ec.SECP256K1()).public_key().public_bytes(Encoding.X962, PublicFormat.CompressedPoint)
+
+
+def mnemonic_to_seed(mnemonic: str, passphrase: str = "") -> bytes:
+    """BIP39 seed (PBKDF2-HMAC-SHA512, 2048 rounds). The checksum is not verified (no wordlist bundled);
+    the word count is."""
+    words = unicodedata.normalize("NFKD", mnemonic).split()
+    if len(words) not in (12, 15, 18, 21, 24):
+        raise ValueError("mnemonic must have 12, 15, 18, 21 or 24 words")
+    return hashlib.pbkdf2_hmac("sha512", " ".join(words).encode(),
+                               ("mnemonic" + unicodedata.normalize("NFKD", passphrase)).encode(), 2048)
+
+
+def derive_private_key(seed: bytes, path: str = COSMOS_PATH) -> bytes:
+    """BIP32 private key derivation along `path` (e.g. m/44'/118'/0'/0/0)."""
+    i = hmac.new(b"Bitcoin seed", seed, hashlib.sha512).digest()
+    k, chain = int.from_bytes(i[:32], "big"), i[32:]
+    parts = path.split("/")
+    if parts[0] != "m":
+        raise ValueError("path must start with m")
+    for part in parts[1:]:
+        hardened = part.endswith("'")
+        idx = int(part.rstrip("'")) + (0x80000000 if hardened else 0)
+        data = (b"\x00" + k.to_bytes(32, "big") if hardened else _pubkey(k)) + idx.to_bytes(4, "big")
+        i = hmac.new(chain, data, hashlib.sha512).digest()
+        il = int.from_bytes(i[:32], "big")
+        if il >= _N:
+            raise ValueError("invalid child key")
+        k, chain = (il + k) % _N, i[32:]
+        if k == 0:
+            raise ValueError("invalid child key")
+    return k.to_bytes(32, "big")
+
+
 class Key:
-    def __init__(self, seed: str):
-        d = int.from_bytes(hashlib.sha256(seed.encode()).digest(), "big")
+    def __init__(self, seed: str | None = None, *, private_key: bytes | None = None):
+        """Key(seed) = legacy dev derivation sha256(seed); Key(private_key=32 bytes) for real keys."""
+        if private_key is None:
+            private_key = hashlib.sha256(seed.encode()).digest()
+        d = int.from_bytes(private_key, "big")
+        if len(private_key) != 32 or not 0 < d < _N:
+            raise ValueError("invalid secp256k1 private key")
         self._sk = ec.derive_private_key(d, ec.SECP256K1())
         self.pubkey = self._sk.public_key().public_bytes(Encoding.X962, PublicFormat.CompressedPoint)
         self.address = bech32_encode(PREFIX, RIPEMD160.new(hashlib.sha256(self.pubkey).digest()).digest())
+
+    @classmethod
+    def from_mnemonic(cls, mnemonic: str, path: str = COSMOS_PATH) -> "Key":
+        return cls(private_key=derive_private_key(mnemonic_to_seed(mnemonic), path))
 
     def sign(self, data: bytes) -> bytes:
         """64-byte r||s over sha256(data), low-S normalised as Cosmos requires."""
@@ -103,8 +153,10 @@ def msg_send(frm: str, to: str, amount: int) -> bytes:
                       proto.string(1, frm) + proto.string(2, to) + proto.msg(3, proto.coin(DENOM, amount)))
 
 
-def msg_anchor_proof(signer: str, hash_hex: str, external_ref: str, capture_ref: str = "") -> bytes:
-    return proto.any_(proto.ANCHOR_PROOF_TYPE_URL, proto.msg_anchor_proof(signer, hash_hex, external_ref, capture_ref))
+def msg_anchor_proof(signer: str, hash_hex: str, external_ref: str, capture_ref: str = "",
+                     amount: str = "", currency: str = "") -> bytes:
+    return proto.any_(proto.ANCHOR_PROOF_TYPE_URL,
+                      proto.msg_anchor_proof(signer, hash_hex, external_ref, capture_ref, amount, currency))
 
 
 def build_tx(key: Key, msgs: list[bytes], chain_id: str, account_number: int, sequence: int,
