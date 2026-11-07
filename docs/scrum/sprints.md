@@ -56,11 +56,39 @@ gantt
 - **Goal**: Devpost submission on the afternoon of Nov 12.
 - **Checklist**: video, repository, description, online demo, no secrets, categories ticked, links re-checked.
 
+## Actual status (Nov 7, 2026)
+
+Most of the planned S1-S3 scope was delivered on day one (S0), so the remaining sprints shift to hardening and submission.
+
+| Sprint | Planned scope | Status |
+| --- | --- | --- |
+| S0 | US-01, skeleton, Sandbox account, demo script | Done, except the PayPal Sandbox account (simulator used instead) |
+| S1 | US-02, 03, 04, 11 | Done; US-11 partial (simulator) |
+| S2 | US-05..08, 10, 12, 13, 14 | Done (US-13 verified against the simulator) |
+| S3 | US-09, 15, 16, 18 | Done (OpenAPI as `api/openapi.json`) |
+| S4 | US-17, US-19, integration tests, README | Partial: README and e2e journey done; Render deploy and video not done |
+| S5 | Devpost submission | Not done; draft in [`../submission/devpost.md`](../submission/devpost.md) |
+
+### Sprint review — Nov 7
+
+Delivered:
+- Cosmos SDK v0.50 chain `aurixd` (single validator): `x/auth` + `x/bank` as "aurixbank", custom `x/smartmoney` (escrow + `MsgAnchorProof`), Go tests.
+- FastAPI gateway with SQLite: wallets, faucet, tx prepare/broadcast, escrows, explorer, PayPal Orders v2 with human approval, verified idempotent webhooks, proof anchoring.
+- Neural Guardian: LightGBM + SHAP reasons, advisory only, trained on synthetic data.
+- Local PayPal simulator with buyer approval page and signed webhooks.
+- Web wallet with browser-side secp256k1 signing (`SIGN_MODE_DIRECT`) and AG Grid explorer.
+- Docker Compose, Render blueprint, OpenAPI spec, Playwright demo journey; dev scripts (`scripts/`) and explorer search in progress.
+
+Not delivered / risks: real PayPal Sandbox credentials, online deployment, indexer + PostgreSQL + Redis (replaced by SQLite), video.
+
+Remaining points: about 13 of 81 (US-11/13 Sandbox switch, US-17, US-19).
+
 ## Planned burndown
 
 | End of sprint | S0 | S1 | S2 | S3 | S4 | S5 |
 | --- | --- | --- | --- | --- | --- | --- |
 | Remaining points (of 81) | 73 | 55 | 23 | 10 | 0 | 0 |
+| Actual | ~13 | | | | | |
 
 ```mermaid
 xychart-beta

@@ -1,215 +1,106 @@
-# Service Modelling
+# Service Modelling (as built — MVP)
 
-AURIX is split into **6 independently deployable services**.
+> Status legend: **built** = in the repository and tested; **temporary** = used until the real PayPal Sandbox is connected; **planned** = designed, not built.
 
-| Service | Language | Port [Proposal] | Layer | Depends on |
-| --- | --- | --- | --- | --- |
-| `chain` — AURIX node | Go, Cosmos SDK, CometBFT | 26657 (RPC), 9090 (gRPC) | 1-2 | — |
-| `gateway` — API Gateway | Java 21 / Spring Boot (or FastAPI) | 8080 | 4 | chain, guardian, PayPal, postgres, redis |
-| `guardian` — Neural Guardian | Python, FastAPI | 8000 | 3 | — |
-| `indexer` — Indexer | Go or Python | — | — | chain, postgres |
-| `web` — Wallet & explorer | TypeScript, AG Grid | 3000 | — | gateway |
-| `postgres` / `redis` | — | 5432 / 6379 | — | — |
+The MVP runs **4 services** (plus the static web app served by the gateway):
+
+| Service | Language / stack | Ports | Layer | Depends on | Status |
+| --- | --- | --- | --- | --- | --- |
+| `chain` — `aurixd` node | Go, Cosmos SDK v0.50, CometBFT v0.38 | 26657 (CometBFT RPC), 1317 (REST/LCD), 9090 (gRPC) | 1-2 | — | built (single validator) |
+| `gateway` — API Gateway | Python, FastAPI, SQLite | 8080 (also serves `web/`) | 4 | chain, guardian, PayPal (simulator) | built |
+| `guardian` — Neural Guardian | Python, FastAPI, LightGBM + SHAP | 8000 | 3 | — | built (synthetic data) |
+| `paypal-sim` — PayPal API simulator | Python, FastAPI | 8090 | 4 (external stand-in) | gateway (webhook target) | temporary |
+| `web` — Wallet & explorer | Vanilla JS, `@noble` secp256k1, AG Grid | served on 8080 | — | gateway | built |
+| `indexer`, PostgreSQL, Redis | — | — | — | — | **planned** (the gateway reads the chain directly and keeps its own index in SQLite) |
 
 ```mermaid
 flowchart TB
-    web[web] -->|REST| gateway
-    gateway -->|gRPC / broadcast Tx| chain
+    web["web (browser)<br/>keys + signing"] -->|REST /api/*| gateway
+    gateway -->|"broadcast_tx_sync / tx_search (RPC 26657)"| chain
+    gateway -->|"REST 1317 (balances, escrows, proofs)"| chain
     gateway -->|POST /v1/risk/score| guardian
-    gateway -->|Orders API| paypal[(PayPal Sandbox)]
-    paypal -->|signed webhook| gateway
-    chain -->|events| indexer
-    indexer --> postgres[(PostgreSQL)]
-    gateway -->|read| postgres
-    gateway --> redis[(Redis)]
+    gateway -->|"OAuth2 + Orders v2"| paypal["paypal-sim :8090<br/>(PayPal Sandbox later)"]
+    paypal -->|"signed webhook PAYMENT.CAPTURE.COMPLETED"| gateway
+    gateway --> sqlite[("SQLite<br/>orders, events, risk")]
+    indexer["indexer + PostgreSQL + Redis<br/>(planned)"]:::planned
+    classDef planned stroke-dasharray: 5 5
 ```
 
 ---
 
-## 1. `chain` service — AURIX node
+## 1. `chain` — AURIX node (`aurixd`)
 
-**Responsibility**: single source of truth for balances and escrows.
-
-### Modules and messages
+Single source of truth for balances, escrows and proofs. Details: [`chain/README.md`](../../chain/README.md).
 
 | Module | Message | Preconditions | Effect |
 | --- | --- | --- | --- |
-| `x/aurixbank` | `MsgSend` | valid signature, expected nonce, balance ≥ amount + fees | Debit/credit, fees charged, nonce +1 |
-| `x/smartmoney` | `MsgCreateEscrow` | sufficient balance, deadline > current height | Funds locked, `LOCKED` state |
-| `x/smartmoney` | `MsgReleaseEscrow` | `LOCKED` state, signer = sender or arbiter | Funds → recipient, `RELEASED` state |
-| `x/smartmoney` | `MsgRefundEscrow` | `LOCKED` state, height ≥ deadline (or authorised cancellation) | Funds → sender, `REFUNDED` state |
-| `x/smartmoney` | `MsgAnchorProof` | signer = authorised gateway, unique hash | Proof recorded, **no AUR created** |
+| `x/auth` + `x/bank` ("aurixbank") | `MsgSend` | valid secp256k1 signature, expected account sequence, balance ≥ amount + fees | Debit/credit in `uaur`, fees charged, sequence +1 (replay rejected) |
+| `x/smartmoney` | `MsgCreateEscrow` | sufficient balance, deadline > current height | Funds moved to the module account, `LOCKED` |
+| `x/smartmoney` | `MsgReleaseEscrow` | `LOCKED`, signer = sender or arbiter | Funds → recipient, `RELEASED` |
+| `x/smartmoney` | `MsgRefundEscrow` | `LOCKED`, height ≥ deadline | Funds → sender, `REFUNDED` |
+| `x/smartmoney` | `MsgAnchorProof` | signer = authorised gateway account, unique hash | Proof stored, **no AUR created** |
 
-### State model
+`x/staking` runs with one validator. Multi-validator networks are **planned**.
 
-```mermaid
-classDiagram
-    class Account {
-        +string address
-        +uint64 nonce
-        +Coin balance
-    }
-    class Escrow {
-        +uint64 id
-        +string sender
-        +string recipient
-        +string arbiter
-        +Coin amount
-        +int64 deadlineHeight
-        +EscrowStatus status
-    }
-    class EscrowStatus {
-        <<enumeration>>
-        LOCKED
-        RELEASED
-        REFUNDED
-    }
-    class PaymentProof {
-        +bytes32 hash
-        +string externalRef
-        +int64 height
-        +string submitter
-    }
-    Account "1" --> "*" Escrow : creates
-    Escrow --> EscrowStatus
-```
+## 2. `gateway` — API Gateway (FastAPI)
 
----
+Orchestrates the chain, Guardian and PayPal; never holds user private keys. It holds only its own gateway key (used for faucet and `MsgAnchorProof`).
 
-## 2. `gateway` service — API Gateway / orchestration
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/health`, `GET /api/chain/status` | Health and chain height |
+| `POST /api/wallets`, `GET /api/wallets/{addr}`, `POST /api/wallets/{addr}/faucet` | Register address, balance (read from chain), testnet faucet |
+| `POST /api/txs/prepare` | Returns account number, sequence, chain-id and a Guardian risk score for the unsigned tx |
+| `POST /api/txs` | Broadcasts a tx signed in the browser |
+| `GET /api/escrows`, `GET /api/escrows/{id}` | Escrow state from the chain |
+| `GET /api/explorer/blocks`, `/txs`, `/proofs/{hash}` | Explorer data |
+| `POST /api/paypal/orders`, `GET /api/paypal/orders[/{id}]` | Create (and score) / list USD orders |
+| `POST /api/paypal/orders/{id}/approve` (`confirm=true`), `/cancel` | Human approval → capture; cancel |
+| `POST /api/paypal/webhook` | Signature-verified, idempotent webhook → anchor proof |
 
-**Responsibility**: single entry point; orchestrates AI, PayPal and chain. Holds **no** authority over balances.
-
-### Internal components
-
-```mermaid
-flowchart LR
-    subgraph gateway
-        C[REST Controllers] --> WS[WalletService]
-        C --> TS[TransferService]
-        C --> ES[EscrowService]
-        C --> PS[PaymentService]
-        C --> WH[WebhookHandler]
-        TS --> RC[RiskClient]
-        PS --> RC
-        PS --> PC[PayPalClient]
-        WH --> SV[SignatureVerifier]
-        WH --> ID[IdempotencyStore]
-        TS --> CC[ChainClient]
-        ES --> CC
-        WH --> CC
-        WS --> CC
-        WS --> RR[ReadRepository]
-    end
-```
-
-### Endpoints
-
-| Method | Path | Internal service | Story |
-| --- | --- | --- | --- |
-| POST | `/api/wallets` | WalletService | US-02 |
-| GET | `/api/wallets/{addr}` | WalletService | US-03 |
-| POST | `/api/transfers` | TransferService | US-04 |
-| POST | `/api/escrows` | EscrowService | US-05 |
-| POST | `/api/escrows/{id}/release` | EscrowService | US-06 |
-| POST | `/api/escrows/{id}/refund` | EscrowService | US-07 |
-| POST | `/api/paypal/orders` | PaymentService | US-11 |
-| POST | `/api/paypal/orders/{id}/approve` | PaymentService | US-12 |
-| POST | `/api/paypal/webhook` | WebhookHandler | US-13, US-14 |
-| GET | `/api/explorer/blocks`, `/api/explorer/txs` | ReadRepository | US-15 |
+The explorer search API is being added in parallel; see the gateway code and [`api/openapi.json`](../../api/openapi.json).
 
 ### PayPal order lifecycle
 
 ```mermaid
 stateDiagram-v2
-    [*] --> CREATED: POST /orders
-    CREATED --> SCORED: Guardian score received
-    CREATED --> SCORED: Guardian unavailable (null score)
-    SCORED --> APPROVED: human approval
-    SCORED --> CANCELLED: cancellation
-    APPROVED --> CAPTURED: PayPal capture
-    CAPTURED --> CONFIRMED: signed webhook verified
+    [*] --> CREATED: POST /api/paypal/orders (PayPal order created)
+    CREATED --> SCORED: Guardian score stored (or "unavailable")
+    SCORED --> CANCELLED: cancel
+    SCORED --> CAPTURED: buyer approves on PayPal page + confirm=true
+    CAPTURED --> CONFIRMED: verified webhook PAYMENT.CAPTURE.COMPLETED
     CONFIRMED --> ANCHORED: MsgAnchorProof included in a block
     ANCHORED --> [*]
-    CANCELLED --> [*]
 ```
 
----
+In the code, `CREATED` and `SCORED` happen in the same request; the stored status after creation is `SCORED`. Proof hash = `sha256(order_id|capture_id)`, memo `paypal:<order_id>`.
 
-## 3. `guardian` service — Neural Guardian
+## 3. `guardian` — Neural Guardian
 
-**Responsibility**: return an **advisory** risk score and its reasons. No write path to the chain.
+`POST /v1/risk/score` → `{risk_score, level, reasons[], advisory_only: true}`. LightGBM classifier with native TreeSHAP reasons, **trained on a synthetic dataset** (`guardian/app/model.py`). If Guardian is down, the gateway returns `risk_status: "unavailable"` and the user can still proceed (US-10). Model card: [`guardian/MODEL_CARD.md`](../../guardian/MODEL_CARD.md). GNN analysis is **planned**.
 
-```mermaid
-flowchart LR
-    REQ[JSON request] --> FE[Feature engineering<br/>amount vs history,<br/>new recipient,<br/>frequency, time of day]
-    FE --> M[LightGBM model]
-    M --> S[Score 0..1]
-    M --> X[SHAP]
-    X --> R[Readable reasons]
-    S --> L[Level low/medium/high]
-    L --> RESP[Response<br/>advisory_only = true]
-    R --> RESP
-```
+## 4. `paypal-sim` — PayPal API simulator (temporary)
 
-| Item | Value |
-| --- | --- |
-| Endpoints | `POST /v1/risk/score`, `GET /health` |
-| V1 model | LightGBM + SHAP |
-| Thresholds [Proposal] | low < 0.4 ≤ medium < 0.7 ≤ high |
-| Training data | Generated synthetic dataset (to be documented) |
-| Unavailability | The gateway shows "analysis unavailable" and blocks nothing |
+Implements the subset of PayPal used by the gateway: `POST /v1/oauth2/token`, `POST /v2/checkout/orders`, `GET /v2/checkout/orders/{id}`, `POST /v2/checkout/orders/{id}/capture`, `POST /v1/notifications/verify-webhook-signature`, a buyer approval page `GET /checkoutnow?token=…`, and test helpers under `/sim/*` (list, resend and forge webhook events). On capture it POSTs a signed `PAYMENT.CAPTURE.COMPLETED` webhook to the gateway. The gateway uses the same PayPal client for the simulator and the real Sandbox; switching is configuration only — see [`paypal-sim/README.md`](../../paypal-sim/README.md).
 
----
+## 5. `web` — Wallet & explorer
 
-## 4. `indexer` service
-
-**Responsibility**: subscribe to block events and feed PostgreSQL (read-only for balances).
-
-### Data model
-
-```mermaid
-erDiagram
-    BLOCKS ||--o{ TXS : contains
-    TXS ||--o| ESCROWS : "creates / updates"
-    PAYPAL_ORDERS ||--o{ WEBHOOK_EVENTS : receives
-    PAYPAL_ORDERS ||--o| RISK_SCORES : "scored by"
-    TXS ||--o| RISK_SCORES : "scored by"
-    PAYPAL_ORDERS ||--o| TXS : "anchored by"
-
-    BLOCKS { bigint height PK; text hash; timestamp time }
-    TXS { text hash PK; bigint height FK; text type; text sender; text recipient; numeric amount; text status }
-    ESCROWS { bigint id PK; text sender; text recipient; text arbiter; numeric amount; bigint deadline_height; text status }
-    PAYPAL_ORDERS { text order_id PK; numeric amount_usd; text status; text capture_id; text anchor_tx FK }
-    WEBHOOK_EVENTS { text event_id PK "UNIQUE"; text order_id FK; text type; boolean signature_valid; timestamp received_at }
-    RISK_SCORES { bigint id PK; text context; text ref; numeric score; text level; jsonb reasons; text model_version }
-```
-
----
-
-## 5. `web` service
-
-| Screen | Data | Source |
-| --- | --- | --- |
-| Wallet | Address, AUR balance, Sandbox USD balance (kept separate) | gateway → chain |
-| Transfer | Form + Guardian alert + confirmation | gateway |
-| Smart Money | Escrow list and actions | gateway |
-| PayPal payment | Order, score, approve button | gateway |
-| Explorer | Blocks, transactions (AG Grid) | gateway → postgres |
-
----
+Tabs: **Wallet**, **Send AUR**, **Smart Money**, **PayPal (USD)**, **Explorer** (AG Grid). Keys are generated in the browser (secp256k1); transactions are built as Cosmos protobuf and signed locally with `SIGN_MODE_DIRECT` (`web/cosmos-tx.js`). USD and AUR balances are displayed separately.
 
 ## Invariants
 
-| # | Invariant | Service | Test |
-| --- | --- | --- | --- |
-| 1 | Total supply changes only through planned issuance | chain | unit |
-| 2 | Σ locked funds = Σ `LOCKED` escrows | chain | unit |
-| 3 | No double release, no release after refund | chain | unit |
-| 4 | Nonce strictly increasing; replay rejected | chain | unit |
-| 5 | Balance never negative | chain | property |
-| 6 | Replayed webhook has no effect | gateway | integration |
-| 7 | Webhook with invalid signature rejected | gateway | integration |
-| 8 | No capture without human approval | gateway | integration |
-| 9 | Guardian modifies no transaction | gateway + guardian | integration |
-| 10 | Without PayPal, transfers and escrows still work | all | end-to-end |
+1. The chain is the only source of truth for AUR balances.
+2. Balances never go negative; fees are always charged.
+3. Each sequence is used once (replay rejected).
+4. An escrow leaves `LOCKED` exactly once.
+5. No release after refund, no refund before deadline.
+6. Duplicate PayPal webhooks are a 200 no-op.
+7. Webhooks with an invalid signature are rejected.
+8. No PayPal capture without explicit human approval.
+9. The AI is advisory only: it never blocks or modifies a transaction.
+10. USD never becomes AUR: only a hash is anchored.
+
+## Run and test
+
+- Local stack: [`scripts/dev-up.sh`](../../scripts/dev-up.sh), [`scripts/dev-down.sh`](../../scripts/dev-down.sh), all tests: [`scripts/test-all.sh`](../../scripts/test-all.sh).
+- Deployment and healthchecks: [`deploy/README.md`](../../deploy/README.md).

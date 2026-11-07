@@ -6,7 +6,9 @@
 | Scrum | [scrum/product-backlog.md](scrum/product-backlog.md) | Epics, user stories, acceptance criteria, estimates |
 | Scrum | [scrum/sprints.md](scrum/sprints.md) | Sprints S0 to S5, goals, sprint backlogs, burndown |
 | Architecture | [architecture/services.md](architecture/services.md) | Modelling of each service (responsibilities, API, data) |
-| Architecture | [architecture/diagrams.md](architecture/diagrams.md) | UML/C4 diagrams: context, use cases, sequences, states, classes, ER, deployment |
+| Architecture | [architecture/diagrams.md](architecture/diagrams.md) | UML/C4 diagrams (as built): context, use cases, sequences, states, classes, deployment |
+| Submission | [submission/devpost.md](submission/devpost.md) | Devpost project description |
+| Submission | [submission/demo-script.md](submission/demo-script.md) | < 3 min demo video script |
 
 Diagrams are written in **Mermaid** and render directly on GitHub.
 

@@ -31,7 +31,7 @@ AURIX is a testnet monetary protocol where an AI assesses a payment **before** i
 | **AURIX Wallet & Transfer** | Create a demo wallet, check the balance, send/receive AUR (CometBFT consensus) |
 | **Smart Money** | Finite-state escrow: lock, release on condition, refund at deadline |
 | **Neural Guardian** | Advisory risk score with explained reasons (SHAP) before confirmation |
-| **PayPal connector** | USD payment in Sandbox (Orders API), signed and idempotent webhook, tracking proof anchored on AURIX |
+| **PayPal connector** | USD payment via PayPal Orders API (local simulator now, Sandbox next), signed and idempotent webhook, tracking proof anchored on AURIX |
 
 ## Architecture
 
@@ -46,17 +46,14 @@ Four layers; the core depends on no upper layer:
 
 ```mermaid
 flowchart LR
-    U[Web wallet] --> GW[API Gateway]
-    GW --> AI[Neural Guardian]
-    GW --> PP[PayPal Sandbox]
+    U[Web wallet<br/>browser signing] --> GW[API Gateway :8080<br/>FastAPI + SQLite]
+    GW --> AI[Neural Guardian :8000]
+    GW --> PP[PayPal simulator :8090<br/>Sandbox later]
     PP -- signed webhook --> GW
-    GW --> CHAIN[AURIX node<br/>Cosmos SDK + CometBFT]
-    CHAIN --> IDX[Indexer] --> PG[(PostgreSQL)]
-    GW --> PG
-    GW --> RD[(Redis)]
+    GW --> CHAIN[AURIX node aurixd<br/>Cosmos SDK + CometBFT<br/>RPC :26657, REST :1317]
 ```
 
-Full details: [`docs/architecture/services.md`](docs/architecture/services.md).
+Indexer, PostgreSQL and Redis are planned, not built. Full details: [`docs/architecture/services.md`](docs/architecture/services.md).
 
 ## Tech stack
 
@@ -88,6 +85,14 @@ aurix/
 ```
 
 ## Quick start
+
+### With the dev scripts
+
+```bash
+scripts/dev-up.sh     # start chain, guardian, paypal-sim, gateway
+scripts/test-all.sh   # run all test suites
+scripts/dev-down.sh   # stop everything
+```
 
 ### With Docker Compose
 
@@ -151,7 +156,11 @@ node tests/e2e/demo-journey.js
 | `paypal-sim/` | 🧪 temporary | Local PayPal API simulator used until the real Sandbox is connected. |
 | `web/` | ✅ V1 | secp256k1 keys generated in the browser; Cosmos txs (`SIGN_MODE_DIRECT`) signed locally. AG Grid explorer. |
 | `api/openapi.json` | ✅ | Generated from the gateway (`create_app().openapi()`). |
-| `deploy/` | ⚠️ | Compose and Render blueprint written; images not yet built in CI. |
+| `deploy/` | ⚠️ | Compose and Render blueprint written; not yet deployed online. See [`deploy/README.md`](deploy/README.md). |
+| `scripts/` | ✅ | `dev-up.sh`, `dev-down.sh`, `test-all.sh`. |
+| Indexer, PostgreSQL, Redis | ❌ planned | The gateway reads the chain directly and keeps a SQLite index. |
+| Real PayPal Sandbox | ❌ pending | Needs Sandbox credentials; config-only switch. |
+| Demo video, Devpost | 📝 drafted | [`docs/submission/`](docs/submission/devpost.md) |
 
 ## Way of working: Scrum
 
@@ -178,6 +187,10 @@ Backlog, user stories, Definition of Done and ceremonies: [`docs/scrum/`](docs/s
 | [docs/scrum/sprints.md](docs/scrum/sprints.md) | Detailed sprint plan and burndown |
 | [docs/architecture/services.md](docs/architecture/services.md) | Service modelling |
 | [docs/architecture/diagrams.md](docs/architecture/diagrams.md) | Use cases, sequences, states, classes, ER, deployment |
+| [docs/submission/devpost.md](docs/submission/devpost.md) | Devpost project description |
+| [docs/submission/demo-script.md](docs/submission/demo-script.md) | < 3 min demo video script |
+| [guardian/MODEL_CARD.md](guardian/MODEL_CARD.md) | Neural Guardian model card |
+| [deploy/README.md](deploy/README.md) | Deployment and healthchecks |
 | [AURIX_SOFTWARE_ARCHITECTURE.md](AURIX_SOFTWARE_ARCHITECTURE.md) | Reference software architecture ([French original](AURIX_ARCHITECTURE_LOGICIELLE.md)) |
 | [AURIX_hackathon_brief.md](AURIX_hackathon_brief.md) | Hackathon pitch file ([French original](AURIX_dossier_hackathon.md)) |
 
