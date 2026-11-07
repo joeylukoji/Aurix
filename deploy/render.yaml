@@ -1,33 +1,71 @@
-# Render Blueprint. Copy to the repository root (render.yaml) to deploy.
-# Single-validator Cosmos SDK testnet. Attach a persistent disk at /data to keep state across deploys.
+# Render Blueprint. Copy to the repository root (render.yaml) to deploy, or point
+# the Blueprint at deploy/render.yaml.
+#
+# NOTE: the chain is a single-validator Cosmos SDK testnet and MUST have a persistent
+# disk at /data (paid plan: disks are not available on the free tier). Without it the
+# chain re-initialises on every deploy and all balances/tx history are lost.
+#
+# Public URLs below assume the default service names (https://<name>.onrender.com).
+# If Render assigns a different subdomain, update SIM_PUBLIC_URL accordingly.
 services:
   - type: pserv
     name: aurix-chain
     runtime: docker
+    plan: starter
     dockerfilePath: ./chain/Dockerfile
     dockerContext: ./chain
     disk: { name: chain-data, mountPath: /data, sizeGB: 1 }
     envVars:
+      - { key: AURIX_CHAIN_ID, value: aurix-testnet-1 }
       - { key: AURIX_FAUCET_SEED, sync: false }
       - { key: AURIX_GATEWAY_SEED, sync: false }
+
   - type: pserv
     name: aurix-guardian
     runtime: docker
+    plan: starter
     dockerfilePath: ./guardian/Dockerfile
     dockerContext: ./guardian
+    envVars:
+      - { key: PORT, value: "8000" }
+
+  # PayPal simulator: a PUBLIC web service because the buyer's browser is redirected
+  # to its approval page. Delete this service when switching to the real PayPal Sandbox.
+  - type: web
+    name: aurix-paypal-sim
+    runtime: docker
+    plan: free
+    dockerfilePath: ./paypal-sim/Dockerfile
+    dockerContext: ./paypal-sim
+    healthCheckPath: /sim/health
+    envVars:
+      - { key: PORT, value: "8090" }
+      - { key: SIM_PUBLIC_URL, value: "https://aurix-paypal-sim.onrender.com" }
+      # Webhooks go over Render's private network to the gateway.
+      - { key: SIM_WEBHOOK_URL, value: "http://aurix-gateway:8080/api/paypal/webhook" }
+      - { key: SIM_CLIENT_ID, value: sim-client-id }
+      - { key: SIM_CLIENT_SECRET, value: sim-client-secret }
+      - { key: SIM_WEBHOOK_ID, value: SIM-WEBHOOK-ID }
+
   - type: web
     name: aurix-gateway
     runtime: docker
+    plan: free
     dockerfilePath: ./gateway/Dockerfile
     dockerContext: .
     healthCheckPath: /api/health
     envVars:
+      - { key: PORT, value: "8080" }
       - { key: CHAIN_RPC_URL, value: "http://aurix-chain:26657" }
       - { key: CHAIN_REST_URL, value: "http://aurix-chain:1317" }
       - { key: GUARDIAN_URL, value: "http://aurix-guardian:8000" }
       - { key: DATABASE_URL, value: "sqlite:////tmp/aurix.db" }
       - { key: AURIX_FAUCET_SEED, sync: false }
       - { key: AURIX_GATEWAY_SEED, sync: false }
-      - { key: PAYPAL_CLIENT_ID, sync: false }
-      - { key: PAYPAL_CLIENT_SECRET, sync: false }
-      - { key: PAYPAL_WEBHOOK_ID, sync: false }
+      # Simulator wiring. For the real Sandbox set PAYPAL_ENV=sandbox,
+      # PAYPAL_BASE_URL=https://api-m.sandbox.paypal.com and real credentials.
+      - { key: PAYPAL_ENV, value: simulator }
+      - { key: PAYPAL_BASE_URL, value: "http://aurix-paypal-sim:8090" }
+      - { key: PAYPAL_CLIENT_ID, value: sim-client-id }
+      - { key: PAYPAL_CLIENT_SECRET, value: sim-client-secret }
+      - { key: PAYPAL_WEBHOOK_ID, value: SIM-WEBHOOK-ID }

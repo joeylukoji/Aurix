@@ -8,17 +8,38 @@ services:
       AURIX_GATEWAY_SEED: ${AURIX_GATEWAY_SEED:-aurix-dev-gateway}
     volumes: ["chain-data:/data"]
     ports: ["26657:26657", "1317:1317"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:26657/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
   guardian:
     build: ../guardian
     ports: ["8000:8000"]
-  # Local PayPal simulator for tests. DELETE this service (and the PAYPAL_* overrides
-  # below) when switching to the real PayPal Sandbox.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health',timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    restart: unless-stopped
+  # Local PayPal simulator. DELETE this service (and the PAYPAL_* overrides below,
+  # or set them in ../.env) when switching to the real PayPal Sandbox.
   paypal-sim:
     build: ../paypal-sim
     environment:
       SIM_WEBHOOK_URL: http://gateway:8080/api/paypal/webhook
-      SIM_PUBLIC_URL: http://localhost:8090
+      SIM_PUBLIC_URL: ${SIM_PUBLIC_URL:-http://localhost:8090}
     ports: ["8090:8090"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8090/sim/health',timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
   gateway:
     build:
       context: ..
@@ -32,7 +53,6 @@ services:
       GUARDIAN_URL: http://guardian:8000
       AURIX_FAUCET_SEED: ${AURIX_FAUCET_SEED:-aurix-dev-faucet}
       AURIX_GATEWAY_SEED: ${AURIX_GATEWAY_SEED:-aurix-dev-gateway}
-      # PayPal simulator settings (replace with real Sandbox values from .env later)
       PAYPAL_ENV: ${PAYPAL_ENV:-simulator}
       PAYPAL_BASE_URL: ${PAYPAL_BASE_URL:-http://paypal-sim:8090}
       PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-sim-client-id}
@@ -40,7 +60,18 @@ services:
       PAYPAL_WEBHOOK_ID: ${PAYPAL_WEBHOOK_ID:-SIM-WEBHOOK-ID}
     volumes: ["gateway-data:/data"]
     ports: ["8080:8080"]
-    depends_on: [chain, guardian, paypal-sim]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8080/api/health',timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped
+    depends_on:
+      chain: { condition: service_healthy }
+      guardian: { condition: service_healthy }
+      # Simulator only; remove together with the paypal-sim service for real Sandbox.
+      paypal-sim: { condition: service_healthy }
 volumes:
   chain-data:
   gateway-data:
