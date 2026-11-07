@@ -4,8 +4,8 @@ import json
 import httpx
 import pytest
 
-from attestor import crypto
-from attestor.service import Attestor, Config, proof_hash
+from attestor import crypto, keys
+from attestor.service import Attestor, Config, normalize_amount, proof_hash
 
 SEED = "attestor test seed"
 ORDER, CAPTURE = "5O190127TN364715T", "3C679366HH908993F"
@@ -69,6 +69,7 @@ class Fake:
 
 def proof(**kw):
     return {"hash": proof_hash(ORDER, CAPTURE), "external_ref": ORDER, "capture_ref": CAPTURE,
+            "amount": "12.50", "currency": "USD",
             "status": "PROOF_STATUS_PENDING", "attestations": ["aur1gatewayxxxx"]} | kw
 
 
@@ -144,7 +145,8 @@ def test_tx_bytes_decode_correctly():
     assert m[2][0].decode() == proof()["hash"]
     assert m[3][0].decode() == ORDER
     assert m[4][0].decode() == CAPTURE
-    assert set(m) == {1, 2, 3, 4}
+    assert m[5][0].decode() == "12.50" and m[6][0].decode() == "USD"
+    assert set(m) == {1, 2, 3, 4, 5, 6}
     auth = decode(auth_b)
     si = decode(auth[1][0])
     pk = decode(si[1][0])
@@ -184,3 +186,81 @@ def test_health_endpoint():
 def test_accepts_gateway_prefixed_external_ref():
     att, fake = make([proof(external_ref=f"paypal:{ORDER}")], capture())
     assert list(att.run_once().values()) == ["attested"] and len(fake.broadcasts) == 1
+
+
+# ---------- H1: amount / currency ----------
+
+def test_refuses_amount_mismatch():
+    att, fake = make([proof(amount="99.00")], capture())
+    assert list(att.run_once().values()) == ["refused"]
+    assert fake.broadcasts == [] and "amount" in next(iter(att.refused.values()))
+
+
+def test_refuses_currency_mismatch():
+    att, fake = make([proof(currency="EUR")], capture())
+    assert list(att.run_once().values()) == ["refused"]
+    assert fake.broadcasts == [] and "currency" in next(iter(att.refused.values()))
+
+
+@pytest.mark.parametrize("kw", [{"amount": ""}, {"amount": None}, {"currency": ""}, {}])
+def test_refuses_empty_amount(kw):
+    p = proof(**kw) if kw else {k: v for k, v in proof().items() if k not in ("amount", "currency")}
+    att, fake = make([p], capture())
+    assert list(att.run_once().values()) == ["refused"] and fake.broadcasts == []
+
+
+def test_amount_normalisation():
+    assert normalize_amount("12.5") == normalize_amount("12.50") == "12.50"
+    assert normalize_amount("12") == "12.00"
+    for bad in ("0", "-1", "abc", "1.005", "NaN", "Infinity"):
+        with pytest.raises(Exception):
+            normalize_amount(bad)
+    # proof "12.5" vs capture "12.50" -> attested; the tx carries the proof's own string
+    att, fake = make([proof(amount="12.5")], capture())
+    assert list(att.run_once().values()) == ["attested"]
+    m = decode(decode(decode(decode(fake.broadcasts[0])[1][0])[1][0])[2][0])
+    assert m[5][0] == b"12.5"
+
+
+# ---------- H2: keys ----------
+
+VECTOR = "abandon " * 11 + "about"
+COSMOS_ADDR = "cosmos19rl4cm2hmr8afy4kldpxz3fka4jguq0auqdal4"
+
+
+def _bech32_data(addr: str) -> bytes:
+    data = [crypto._CHARSET.index(c) for c in addr.rsplit("1", 1)[1][:-6]]
+    return bytes(crypto._convertbits(data, 5, 8)[:20])
+
+
+def test_mnemonic_vector():
+    k = keys.key_from_mnemonic(VECTOR)
+    assert k.address == crypto.bech32_encode("aur", _bech32_data(COSMOS_ADDR))
+    assert crypto.bech32_encode("cosmos", _bech32_data(k.address)) == COSMOS_ADDR
+
+
+def test_key_priority(tmp_path, caplog):
+    kf = tmp_path / "k.hex"
+    kf.write_text("11" * 32 + "\n")
+    kf.chmod(0o600)
+    m = keys.key_from_mnemonic(VECTOR).address
+    f = crypto.Key(private_key=bytes.fromhex("11" * 32)).address
+    s = crypto.Key(SEED).address
+    assert keys.load_key(VECTOR, str(kf), SEED).address == m
+    assert keys.load_key("", str(kf), SEED).address == f
+    with caplog.at_level("WARNING"):
+        assert keys.load_key("", "", SEED).address == s
+    assert keys.DEV_WARNING in caplog.text
+    assert Attestor(Config.from_env({"ATTESTOR_MNEMONIC": VECTOR, "ATTESTOR_SEED": SEED})).address == m
+    with pytest.raises(SystemExit):
+        keys.load_key("", "", "")
+    bad = tmp_path / "bad"
+    bad.write_text("zz")
+    with pytest.raises(SystemExit):
+        keys.load_key("", str(bad), "")
+
+
+def test_production_refuses_seed():
+    with pytest.raises(SystemExit, match="production"):
+        Attestor(Config.from_env({"ATTESTOR_SEED": SEED, "AURIX_ENV": "production"}))
+    assert Attestor(Config.from_env({"ATTESTOR_MNEMONIC": VECTOR, "AURIX_ENV": "production"})).address
