@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS paypal_orders (
   order_id TEXT PRIMARY KEY, amount_usd TEXT NOT NULL, payer TEXT, description TEXT,
   status TEXT NOT NULL, capture_id TEXT, proof_hash TEXT, anchor_tx TEXT, anchor_height INTEGER,
   risk_score REAL, risk_level TEXT, simulated INTEGER NOT NULL DEFAULT 0,
+  attestations TEXT, attest_threshold INTEGER,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS webhook_events (
   event_id TEXT PRIMARY KEY, event_type TEXT, order_id TEXT, signature_valid INTEGER,
@@ -19,6 +20,9 @@ CREATE TABLE IF NOT EXISTS risk_scores (
   reasons TEXT, model_version TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 """
 
+# Columns added after the first release: (name, type). Added in place to older databases.
+MIGRATIONS = {"paypal_orders": [("attestations", "TEXT"), ("attest_threshold", "INTEGER")]}
+
 
 class DB:
     def __init__(self, path: str):
@@ -26,6 +30,14 @@ class DB:
         self.conn.row_factory = sqlite3.Row
         self.lock = threading.Lock()
         self.conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self):
+        for table, cols in MIGRATIONS.items():
+            have = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+            for name, typ in cols:
+                if name not in have:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {typ}")
 
     def exec(self, sql: str, *args):
         with self.lock:

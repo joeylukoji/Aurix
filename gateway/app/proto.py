@@ -41,3 +41,11 @@ def coin(denom: str, amount: int) -> bytes:
 
 def any_(type_url: str, value: bytes) -> bytes:
     return string(1, type_url) + bytes_(2, value)
+
+
+ANCHOR_PROOF_TYPE_URL = "/aurix.smartmoney.v1.MsgAnchorProof"
+
+
+def msg_anchor_proof(signer: str, hash_hex: str, external_ref: str, capture_ref: str = "") -> bytes:
+    """aurix.smartmoney.v1.MsgAnchorProof {signer=1, hash=2, external_ref=3, capture_ref=4} (one attestation)."""
+    return string(1, signer) + string(2, hash_hex) + string(3, external_ref) + string(4, capture_ref)

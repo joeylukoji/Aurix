@@ -8,6 +8,8 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import json
+import logging
 import re
 import os
 import secrets
@@ -23,9 +25,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import crypto
-from .clients import ChainClient, ChainError, GuardianClient, PayPalClient, PayPalError
+from .clients import ChainClient, ChainError, GuardianClient, PayPalClient, PayPalError, normalize_proof
 from .config import Settings
 from .db import DB
+
+log = logging.getLogger("aurix.gateway")
 
 RISKY_TYPES = {"MsgSend", "MsgCreateEscrow"}
 TYPE_URLS = {
@@ -210,6 +214,13 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
     def proof(h: str):
         return chain.proof(h)
 
+    @app.get("/api/proofs/{h}")
+    def proof_normalised(h: str):
+        """Normalised chain proof: {hash, external_ref, capture_ref, status, attestations, threshold}."""
+        if not re.fullmatch(r"[0-9a-fA-F]{64}", h):
+            raise HTTPException(400, "proof hash must be 64 hex characters")
+        return normalize_proof(chain.proof_raw(h.lower()), threshold())
+
     @app.get("/api/explorer/txs/{h}")
     def tx_by_hash(h: str):
         try:
@@ -265,12 +276,71 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
         raise HTTPException(404, "not found")
 
     # ---------------- PayPal ----------------
+    def threshold() -> int:
+        try:
+            return chain.anchor_threshold()
+        except ChainError:
+            return 1
+
     def anchor(order_id: str, capture_id: str) -> dict:
+        """Submits the gateway's attestation (it is the first attestor, not the authority).
+        The order stays ATTESTING until the chain proof is CONFIRMED by k-of-n attestors."""
         h = hashlib.sha256(f"{order_id}|{capture_id}".encode()).hexdigest()
-        res = sign_and_send(gateway_key, crypto.msg_anchor_proof(gateway_key.address, h, f"paypal:{order_id}"))
-        db.update_order(order_id, status="ANCHORED", capture_id=capture_id, proof_hash=h,
+        ref = f"paypal:{order_id}"
+        try:
+            res = sign_and_send(gateway_key, crypto.msg_anchor_proof(gateway_key.address, h, ref, capture_id))
+        except ChainError as e:
+            if "unknownfield" not in e.detail.lower().replace(" ", ""):
+                raise
+            # chain predating k-of-n attestation: MsgAnchorProof has no capture_ref yet
+            res = sign_and_send(gateway_key, crypto.msg_anchor_proof(gateway_key.address, h, ref))
+        db.update_order(order_id, status="ATTESTING", capture_id=capture_id, proof_hash=h,
                         anchor_tx=res["hash"], anchor_height=res["height"])
+        refresh_attestation(order_id)
         return res
+
+    def refresh_attestation(order_id: str) -> None:
+        """Reads the chain proof of an ATTESTING order; ANCHORED once the proof is CONFIRMED."""
+        o = db.one("SELECT order_id, status, proof_hash FROM paypal_orders WHERE order_id=?", order_id)
+        if not o or o["status"] != "ATTESTING" or not o["proof_hash"]:
+            return
+        try:
+            p = normalize_proof(chain.proof_raw(o["proof_hash"]), threshold())
+        except (ChainError, httpx.HTTPError) as e:
+            log.warning("attestation refresh for %s failed: %s", order_id, e)
+            return
+        fields = {"attestations": json.dumps(p["attestations"]), "attest_threshold": p["threshold"]}
+        if p["status"] == "CONFIRMED":
+            fields["status"] = "ANCHORED"
+        db.update_order(order_id, **fields)
+
+    def refresh_pending() -> None:
+        for o in db.all("SELECT order_id FROM paypal_orders WHERE status='ATTESTING'"):
+            refresh_attestation(o["order_id"])
+
+    def present(o: dict) -> dict:
+        signers = json.loads(o.pop("attestations", None) or "[]")
+        thr = o.pop("attest_threshold", None)
+        o["attestations"] = {"count": len(signers), "threshold": thr or 1, "signers": signers}
+        return o
+
+    stop = threading.Event()
+
+    def poller():
+        while not stop.wait(s.attest_poll_interval):
+            try:
+                refresh_pending()
+            except Exception:  # never let the poller die
+                log.exception("attestation poller error")
+
+    @app.on_event("startup")
+    def _start_poller():
+        if s.attest_poll_interval > 0:
+            threading.Thread(target=poller, name="attest-poller", daemon=True).start()
+
+    @app.on_event("shutdown")
+    def _stop_poller():
+        stop.set()
 
     def handle_event(event: dict) -> str:
         """Processes a verified PayPal webhook event. Idempotent by event id."""
@@ -282,11 +352,11 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
         if etype != "PAYMENT.CAPTURE.COMPLETED" or not order_id:
             return "ignored"
         order = db.one("SELECT * FROM paypal_orders WHERE order_id=?", order_id)
-        if not order or order["status"] == "ANCHORED":
+        if not order or order["status"] in ("ATTESTING", "ANCHORED"):
             return "ignored"
         db.update_order(order_id, status="CONFIRMED", capture_id=resource.get("id"))
         anchor(order_id, resource["id"])
-        return "anchored"
+        return "anchored" if get_order(order_id)["status"] == "ANCHORED" else "attesting"
 
     @app.post("/api/paypal/orders")
     def create_order(req: OrderReq):
@@ -312,14 +382,18 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
 
     @app.get("/api/paypal/orders")
     def list_orders():
-        return db.all("SELECT * FROM paypal_orders ORDER BY created_at DESC")
+        refresh_pending()
+        return [present(o) for o in db.all("SELECT * FROM paypal_orders ORDER BY created_at DESC")]
 
     @app.get("/api/paypal/orders/{order_id}")
     def get_order(order_id: str):
         o = db.one("SELECT * FROM paypal_orders WHERE order_id=?", order_id)
         if not o:
             raise HTTPException(404, "order not found")
-        return o
+        if o["status"] == "ATTESTING":  # lazy refresh on read
+            refresh_attestation(order_id)
+            o = db.one("SELECT * FROM paypal_orders WHERE order_id=?", order_id)
+        return present(o)
 
     @app.post("/api/paypal/orders/{order_id}/approve")
     def approve(order_id: str, req: ApproveReq):
@@ -351,6 +425,7 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
             raise HTTPException(400, "invalid webhook signature")
         return {"result": await run_in_threadpool(handle_event, event)}  # invariant 6: duplicates are a 200 no-op
 
+    app.state.refresh_pending = refresh_pending
     web_dir = Path(os.environ.get("WEB_DIR", Path(__file__).resolve().parents[2] / "web"))
     if web_dir.is_dir():
         app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")

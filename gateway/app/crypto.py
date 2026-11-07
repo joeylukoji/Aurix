@@ -103,9 +103,8 @@ def msg_send(frm: str, to: str, amount: int) -> bytes:
                       proto.string(1, frm) + proto.string(2, to) + proto.msg(3, proto.coin(DENOM, amount)))
 
 
-def msg_anchor_proof(signer: str, hash_hex: str, external_ref: str) -> bytes:
-    return proto.any_("/aurix.smartmoney.v1.MsgAnchorProof",
-                      proto.string(1, signer) + proto.string(2, hash_hex) + proto.string(3, external_ref))
+def msg_anchor_proof(signer: str, hash_hex: str, external_ref: str, capture_ref: str = "") -> bytes:
+    return proto.any_(proto.ANCHOR_PROOF_TYPE_URL, proto.msg_anchor_proof(signer, hash_hex, external_ref, capture_ref))
 
 
 def build_tx(key: Key, msgs: list[bytes], chain_id: str, account_number: int, sequence: int,

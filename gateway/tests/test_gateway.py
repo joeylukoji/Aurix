@@ -194,6 +194,10 @@ def paypal_env(chain_urls, tmp_path, monkeypatch):
     return c, TestClient(SIM.app)
 
 
+def paypal_events():
+    return [e["deliveries"] for e in list(SIM.EVENTS.values())[-3:]]
+
+
 def wait_status(c, oid, status, timeout=10):
     end = time.time() + timeout
     while time.time() < end:
@@ -202,7 +206,7 @@ def wait_status(c, oid, status, timeout=10):
         if o["status"] == status:
             return o
         time.sleep(0.1)
-    raise AssertionError(f"order {oid} stuck in {o['status']}")
+    raise AssertionError(f"order {oid} stuck in {o['status']}: {paypal_events()}")
 
 
 def test_paypal_flow_with_simulator(paypal_env):
@@ -218,6 +222,9 @@ def test_paypal_flow_with_simulator(paypal_env):
     done = wait_status(c, oid, "ANCHORED")  # anchored only after the signed webhook
     expected = hashlib.sha256(f"{oid}|{done['capture_id']}".encode()).hexdigest()
     assert done["proof_hash"] == expected
+    assert done["attestations"]["count"] >= 1 and done["attestations"]["threshold"] >= 1
+    pr = c.get(f"/api/proofs/{expected}").json()
+    assert pr["status"] == "CONFIRMED" and pr["external_ref"] == f"paypal:{oid}"
     assert c.get(f"/api/explorer/proofs/{expected}").json()["external_ref"] == f"paypal:{oid}"
     assert c.post(f"/api/paypal/orders/{oid}/approve", json={"confirm": True}).status_code == 409
     sr = c.get(f"/api/explorer/search?q={expected}").json()
