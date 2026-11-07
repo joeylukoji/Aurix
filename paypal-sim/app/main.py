@@ -8,6 +8,7 @@ Mimics the subset of the PayPal REST API that the AURIX gateway uses:
   GET  /v2/checkout/orders/{id}                      order details
   GET  /checkoutnow?token={id}                       buyer approval page (HTML)
   POST /v2/checkout/orders/{id}/capture              capture (only once APPROVED)
+  GET  /v2/payments/captures/{id}                    capture details (used by attestors)
   POST /v1/notifications/verify-webhook-signature    verify a delivered webhook
 and delivers signed PAYMENT.CAPTURE.COMPLETED webhooks to SIM_WEBHOOK_URL.
 
@@ -47,6 +48,7 @@ _SIGNING_KEY = secrets.token_bytes(32)  # stands in for PayPal's certificate pri
 app = FastAPI(title="PayPal Sandbox simulator (AURIX tests only)", version="0.1.0")
 TOKENS: set[str] = set()
 ORDERS: dict[str, dict] = {}
+CAPTURES: dict[str, dict] = {}  # capture id -> capture resource
 EVENTS: dict[str, dict] = {}  # event id -> {"event", "headers", "deliveries"}
 lock = threading.Lock()
 
@@ -222,11 +224,23 @@ def capture(oid: str, _: str = Depends(bearer)):
                "supplementary_data": {"related_ids": {"order_id": oid}}}
         o["status"] = "COMPLETED"
         o["purchase_units"][0]["payments"] = {"captures": [cap]}
+        CAPTURES[cap["id"]] = cap
     event = {"id": "WH-" + uuid.uuid4().hex[:20].upper(), "event_version": "1.0", "create_time": now(),
              "resource_type": "capture", "event_type": "PAYMENT.CAPTURE.COMPLETED",
              "summary": f"Payment completed for $ {amount['value']} {amount['currency_code']}", "resource": cap}
     threading.Thread(target=_deliver_later, args=(event,), daemon=True).start()
     return order_view(o)
+
+
+@app.get("/v2/payments/captures/{cid}")
+def get_capture(cid: str, _: str = Depends(bearer)):
+    """Payments v2 capture details: status, amount and the related order id."""
+    cap = CAPTURES.get(cid)
+    if not cap:
+        paypal_error(404, "RESOURCE_NOT_FOUND", "The specified resource does not exist.", "INVALID_RESOURCE_ID")
+    oid = cap["supplementary_data"]["related_ids"]["order_id"]
+    return cap | {"links": [{"href": f"{PUBLIC_URL}/v2/payments/captures/{cid}", "rel": "self", "method": "GET"},
+                            {"href": f"{PUBLIC_URL}/v2/checkout/orders/{oid}", "rel": "up", "method": "GET"}]}
 
 
 # ---------------- Webhooks ----------------
