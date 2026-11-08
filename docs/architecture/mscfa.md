@@ -2,11 +2,11 @@
 
 **Module :** Multi-Source Cryptographic Financial Attestation (MSCFA)
 **Version :** 1.0 (intégration) — basée sur le cahier des charges technique MSCFA v1.0
-**Statut :** spécification proposée pour **AURIX V2** (après le hackathon), **non implémentée**
+**Statut :** spécification proposée pour **AURIX MVP 0.3** (après le hackathon), **non implémentée**
 **Date :** 2026-11-08
 
-> **Décision (2026-11-08) : MSCFA est reporté à la V2.** Il ne fait pas partie de la soumission du hackathon ;
-> il y est présenté comme prochaine étape. Le découpage en lots du §14 sert de plan pour la V2.
+> **Décision (2026-11-08) : MSCFA est reporté à le MVP 0.3.** Il ne fait pas partie de la soumission du hackathon ;
+> il y est présenté comme prochaine étape. Le découpage en lots du §14 sert de plan pour le MVP 0.3.
 >
 > Ce document adapte le cahier des charges MSCFA v1.0 au code AURIX **existant**. Il précise ce qui est
 > réutilisé, ce qui est nouveau, les écarts assumés par rapport au cahier initial, et un découpage
@@ -379,14 +379,14 @@ Reprennent intégralement le cahier v1.0 §14. Spécifiques à l'intégration :
 
 ---
 
-## 14. Planning V2
+## 14. Planning MVP 0.3
 
 Le cahier v1.0 estime 5 à 10 jours. Il reste **4 jours** avant la soumission, et d'autres tâches
 critiques sont ouvertes (identifiants PayPal Sandbox, déploiement Render, vidéo, Devpost). D'où deux lots :
 
-### Lot H — premier incrément V2 (≈ 2,5 jours)
+### Lot H — premier incrément MVP 0.3 (≈ 2,5 jours)
 
-*Initialement prévu pour le hackathon ; reporté en V2. Les dates ci-dessous sont indicatives.*
+*Initialement prévu pour le hackathon ; reporté dans le MVP 0.3. Les dates ci-dessous sont indicatives.*
 
 | Jour | Contenu | Critère de sortie |
 | --- | --- | --- |
@@ -397,7 +397,7 @@ critiques sont ouvertes (identifiants PayPal Sandbox, déploiement Render, vidé
 À couper en premier si retard : page web de vérification (garder le CLI), contrôles de cohérence 6-8,
 chiffrement du payload brut (ne pas le stocker du tout à la place).
 
-### Lot P — suite de la V2
+### Lot P — suite de le MVP 0.3
 
 **Escrow USD conditionnel** (§14 bis) : environ 2 jours, à faire après le lot H car il réutilise les attestations MSCFA.
 
@@ -406,12 +406,12 @@ contrôles de cohérence restants, portage Go éventuel, transporteur réel, div
 
 ---
 
-## 14 bis. Escrow USD conditionnel (V2, livré avec MSCFA)
+## 14 bis. Escrow USD conditionnel (MVP 0.3, livré avec MSCFA)
 
 > Une version intermédiaire combinant escrow USD et MSCFA réduit, sans modification de la chaîne,
-> est décrite dans [`evidence-escrow.md`](evidence-escrow.md) (V1.5).
+> est décrite dans [`evidence-escrow.md`](evidence-escrow.md) (MVP 0.2).
 
-**Décision (2026-11-08) :** l'escrow en USD est construit en V2, avec MSCFA. Pour le hackathon, l'escrow
+**Décision (2026-11-08) :** l'escrow en USD est construit dans le MVP 0.3, avec MSCFA. Pour le hackathon, l'escrow
 Smart Money reste en AUR et est présenté comme le mécanisme, pas comme un escrow PayPal.
 
 ### Principe : PayPal garde l'argent, AURIX décide quand le libérer

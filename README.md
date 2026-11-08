@@ -1,7 +1,7 @@
 # AURIX — Independent Intelligent Monetary Protocol
 
 > **Programmable Value, Verifiable Trust.**
-> Project submitted to the **PayPal AI Hackathon 2026** — V1 testnet.
+> Project submitted to the **PayPal AI Hackathon 2026** — MVP 0.1 testnet.
 
 AURIX is a testnet monetary protocol where an AI assesses a payment **before** it is confirmed, where payment conditions are enforced by the protocol (escrow), and where **PayPal Sandbox** acts as a bridge to the real economy without ever replacing the native currency **AUR**.
 
@@ -11,7 +11,7 @@ AURIX is a testnet monetary protocol where an AI assesses a payment **before** i
 
 ## Table of contents
 
-- [V1 features](#v1-features)
+- [MVP 0.1 features](#mvp-01-features)
 - [Architecture](#architecture)
 - [Tech stack](#tech-stack)
 - [Repository layout](#repository-layout)
@@ -24,7 +24,7 @@ AURIX is a testnet monetary protocol where an AI assesses a payment **before** i
 
 ---
 
-## V1 features
+## MVP 0.1 features
 
 | Module | Description |
 | --- | --- |
@@ -179,15 +179,15 @@ node tests/e2e/gateway-off.js   # static wallet; stops the gateway, then node0 (
 
 | Component | Status | Notes |
 | --- | --- | --- |
-| `chain/` | ✅ V1 | **Cosmos SDK v0.50 + CometBFT v0.38**, **4 validators** by default (BFT: survives 1 faulty node, verified with `scripts/bft-demo.sh`). `x/aurixbank` = `x/auth` + `x/bank` (`uaur`, fixed supply, sequences as nonces, fees); custom `x/smartmoney` module (escrow, k-of-n proof attestation); `x/gov` + `x/upgrade` (params and anchor signers changed by proposal). See [`chain/README.md`](chain/README.md). |
-| `guardian/` | ✅ V1 | FastAPI + logistic regression, exact linear SHAP reasons, calibrated probability. **Trained on PaySim** (Kaggle, 6.3 M transactions): test PR-AUC 0.973 [0.967, 0.978], leakage-free train/validation/test split; LightGBM rejected for seed instability. See [`guardian/MODEL_CARD.md`](guardian/MODEL_CARD.md). |
-| `gateway/` | ✅ V1 | FastAPI edge (variant recommended in the architecture doc): wallet API, tx preparation with the signed Guardian quorum, broadcast, dev faucet, CORS; reverse proxy for the indexer and payments services; optional for the wallet. |
-| `payments/` | ✅ V1 | PayPal connector: Orders v2, explicit approval, webhook signature verification, idempotency; first attestor (order `ATTESTING` until the proof is `CONFIRMED`), failed anchors retried. Own SQLite. |
-| `indexer/` | ✅ V1 | Follows the chain block by block into **PostgreSQL** (blocks, txs, address index); serves the explorer and search; balances, escrows and proofs stay live reads from the chain. |
+| `chain/` | ✅ MVP 0.1 | **Cosmos SDK v0.50 + CometBFT v0.38**, **4 validators** by default (BFT: survives 1 faulty node, verified with `scripts/bft-demo.sh`). `x/aurixbank` = `x/auth` + `x/bank` (`uaur`, fixed supply, sequences as nonces, fees); custom `x/smartmoney` module (escrow, k-of-n proof attestation); `x/gov` + `x/upgrade` (params and anchor signers changed by proposal). See [`chain/README.md`](chain/README.md). |
+| `guardian/` | ✅ MVP 0.1 | FastAPI + logistic regression, exact linear SHAP reasons, calibrated probability. **Trained on PaySim** (Kaggle, 6.3 M transactions): test PR-AUC 0.973 [0.967, 0.978], leakage-free train/validation/test split; LightGBM rejected for seed instability. See [`guardian/MODEL_CARD.md`](guardian/MODEL_CARD.md). |
+| `gateway/` | ✅ MVP 0.1 | FastAPI edge (variant recommended in the architecture doc): wallet API, tx preparation with the signed Guardian quorum, broadcast, dev faucet, CORS; reverse proxy for the indexer and payments services; optional for the wallet. |
+| `payments/` | ✅ MVP 0.1 | PayPal connector: Orders v2, explicit approval, webhook signature verification, idempotency; first attestor (order `ATTESTING` until the proof is `CONFIRMED`), failed anchors retried. Own SQLite. |
+| `indexer/` | ✅ MVP 0.1 | Follows the chain block by block into **PostgreSQL** (blocks, txs, address index); serves the explorer and search; balances, escrows and proofs stay live reads from the chain. |
 | `common/` | ✅ | Shared library `aurix_common` used by gateway, payments and indexer. |
-| `attestor/` | ✅ V1 | Independent daemon: polls pending proofs, re-checks each capture at PayPal (status, order id, hash) and attests or refuses. `/health` with attested/refused counts. See [`attestor/README.md`](attestor/README.md). |
+| `attestor/` | ✅ MVP 0.1 | Independent daemon: polls pending proofs, re-checks each capture at PayPal (status, order id, hash) and attests or refuses. `/health` with attested/refused counts. See [`attestor/README.md`](attestor/README.md). |
 | `paypal-sim/` | 🧪 temporary | Local PayPal API simulator used until the real Sandbox is connected. |
-| `web/` | ✅ V1 | secp256k1 keys generated in the browser; Cosmos txs (`SIGN_MODE_DIRECT`) signed locally and broadcast **directly** to chain nodes with failover (gateway optional). AG Grid explorer. |
+| `web/` | ✅ MVP 0.1 | secp256k1 keys generated in the browser; Cosmos txs (`SIGN_MODE_DIRECT`) signed locally and broadcast **directly** to chain nodes with failover (gateway optional). AG Grid explorer. |
 | `api/openapi.json` | ✅ | Generated from the gateway (`create_app().openapi()`). |
 | `deploy/` | ⚠️ | Compose and Render blueprint written; not yet deployed online. See [`deploy/README.md`](deploy/README.md). |
 | `scripts/` | ✅ | `dev-up.sh` (`ATTESTORS=N`, `GUARDIANS=N`), `dev-down.sh`, `test-all.sh`, `attest-test.sh`, `harden-test.sh`, `slashing-test.sh`, `bft-demo.sh`, `gov-test.sh`, `upgrade-drill.sh`. |
@@ -247,4 +247,4 @@ Backlog, user stories, Definition of Done and ceremonies: [`docs/scrum/`](docs/s
 
 - Demonstration testnet: **AUR has no real monetary value**.
 - The 4 validators run on one machine, operated by one team: real BFT consensus, not yet independent multi-operator decentralisation. The multi-operator package (`networks/aurix-testnet-2`) and the attestor service are ready and tested locally, but need real outside operators to be launched (see [`docs/planning/decentralization.md`](docs/planning/decentralization.md)).
-- Roadmap (V2): **MSCFA**, multi-source cryptographic financial attestation, i.e. portable proof packages verifiable by a third party, and **conditional USD escrow** on top of PayPal authorize/capture ([`docs/architecture/mscfa.md`](docs/architecture/mscfa.md)); multiple validators, additional regulated gateways, GNN, Kubernetes.
+- Roadmap (MVP 0.3): **MSCFA**, multi-source cryptographic financial attestation, i.e. portable proof packages verifiable by a third party, and **conditional USD escrow** on top of PayPal authorize/capture ([`docs/architecture/mscfa.md`](docs/architecture/mscfa.md)); multiple validators, additional regulated gateways, GNN, Kubernetes.

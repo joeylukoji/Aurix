@@ -32,7 +32,7 @@ La thèse : une monnaie numérique utile à grande échelle doit réunir vérifi
 
 ---
 
-## 3. Trois fonctionnalités V1 et un fil rouge
+## 3. Trois fonctionnalités MVP 0.1 et un fil rouge
 
 | Module | Ce que voit le jury | Ce qui s'exécute |
 | --- | --- | --- |
@@ -175,7 +175,7 @@ Limites reconnues : la valeur de marché de AUR n'est pas garantie ; le code ouv
 
 | Statut | Contenu |
 | --- | --- |
-| Dans la démo (V1, testnet) | Wallet et transferts AUR, Smart Money, Neural Guardian, PayPal Sandbox, explorateur et historique |
+| Dans la démo (MVP 0.1, testnet) | Wallet et transferts AUR, Smart Money, Neural Guardian, PayPal Sandbox, explorateur et historique |
 | Positionnement | Testnet de démonstration ; AUR n'a pas de valeur monétaire réelle |
 | Feuille de route | Multi-opérateurs, passerelles réglementées supplémentaires, GNN, publications |
 

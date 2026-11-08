@@ -1,6 +1,6 @@
 # Product Backlog
 
-MoSCoW priority: **M** (Must), **S** (Should), **C** (Could), **W** (Won't, V1).
+MoSCoW priority: **M** (Must), **S** (Should), **C** (Could), **W** (Won't, MVP 0.1).
 
 ## Epics
 
@@ -36,10 +36,10 @@ MoSCoW priority: **M** (Must), **S** (Should), **C** (Could), **W** (Won't, V1).
 | US-17 | E6 | As a judge, I want an online demo | Render deployment reachable | S | 5 | Partial (render.yaml written, not deployed) |
 | US-18 | E6 | As a judge, I want an OpenAPI spec | Valid `api/openapi.yaml`, importable into APIMatic | S | 3 | Done (api/openapi.json, JSON not YAML) |
 | US-19 | E6 | As the team, I want a video under 3 min | Video hosted, subtitled | M | 5 | Not done (script ready: docs/submission/demo-script.md) |
-| US-20 | E3 | Graph-based relational analysis (GNN) | — | W | 13 | Won't (V1) |
-| US-21 | E6 | Kubernetes deployment | — | W | 8 | Won't (V1) |
-| US-22 | E1 | Multi-validator network | — | W | 13 | Won't (V1) |
+| US-20 | E3 | Graph-based relational analysis (GNN) | — | W | 13 | Won't (MVP 0.1) |
+| US-21 | E6 | Kubernetes deployment | — | W | 8 | Won't (MVP 0.1) |
+| US-22 | E1 | Multi-validator network | — | W | 13 | Won't (MVP 0.1) |
 
-**V1 total (M + S)**: 78 story points + 3 points of setup tasks (S0) = **81 points**.
+**MVP 0.1 total (M + S)**: 78 story points + 3 points of setup tasks (S0) = **81 points**.
 
-Status as of Nov 7, 2026 (end of S0). Remaining V1 work: real PayPal Sandbox (US-11/13), online deployment (US-17), video (US-19).
+Status as of Nov 7, 2026 (end of S0). Remaining MVP 0.1 work: real PayPal Sandbox (US-11/13), online deployment (US-17), video (US-19).

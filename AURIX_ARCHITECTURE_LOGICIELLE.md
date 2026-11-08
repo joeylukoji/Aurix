@@ -1,4 +1,4 @@
-# AURIX — Architecture logicielle (V1 testnet)
+# AURIX — Architecture logicielle (MVP 0.1 testnet)
 
 *Document technique pour le PayPal AI Hackathon 2026 — 7 novembre 2026*
 
@@ -103,7 +103,7 @@ stateDiagram-v2
 
 - Le contrôle du temps utilise la **hauteur de bloc** et le **temps protocolaire**, jamais l'horloge d'un service externe.
 - Un séquestre ne quitte l'état `LOCKED` qu'une seule fois : pas de double libération, pas de libération après remboursement.
-- **[Proposition]** Condition de libération en V1 : approbation explicite de l'émetteur ou d'un arbitre désigné à la création. Une condition plus riche (lecture d'une preuve de paiement ancrée) peut venir ensuite.
+- **[Proposition]** Condition de libération en MVP 0.1 : approbation explicite de l'émetteur ou d'un arbitre désigné à la création. Une condition plus riche (lecture d'une preuve de paiement ancrée) peut venir ensuite.
 
 ### 3.3 API Gateway / orchestration (Java 21 + Spring Boot)
 
@@ -160,7 +160,7 @@ Content-Type: application/json
 ```
 
 - Le champ `advisory_only: true` est constant : la réponse n'a aucun effet sur le consensus.
-- Modèle V1 recommandé : LightGBM (référence tabulaire) + SHAP pour les motifs. L'analyse relationnelle par graphes (PyTorch Geometric) est une extension.
+- Modèle MVP 0.1 recommandé : LightGBM (référence tabulaire) + SHAP pour les motifs. L'analyse relationnelle par graphes (PyTorch Geometric) est une extension.
 - Si le service est indisponible, la passerelle affiche « analyse indisponible » et laisse l'utilisateur décider : l'IA n'est jamais bloquante pour le protocole.
 
 ### 3.5 Connecteur PayPal (dans la passerelle)
@@ -292,7 +292,7 @@ flowchart LR
 | --- | --- |
 | Développement | Docker Compose : chain, gateway, guardian, indexer, postgres, redis, web |
 | Démo hackathon | Services applicatifs sur Render ; vérifier que le noeud de chaîne peut y tourner comme service Docker persistant |
-| Cible | Kubernetes (hors périmètre de la V1) |
+| Cible | Kubernetes (hors périmètre de le MVP 0.1) |
 
 **Variables d'environnement [Proposition]** (dans `.env.example`, sans valeurs) :
 
@@ -334,7 +334,7 @@ REDIS_URL=
 
 À décider selon la capacité de l'équipe :
 
-| Élément | Cible v1.1 | Variante V1 réaliste |
+| Élément | Cible v1.1 | Variante MVP 0.1 réaliste |
 | --- | --- | --- |
 | Services applicatifs | Spring Boot + FastAPI | **FastAPI seul** (passerelle + IA) |
 | Modèle de risque | PyTorch Geometric (GNN) | **LightGBM + SHAP** ; GNN en feuille de route |

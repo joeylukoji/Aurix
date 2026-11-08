@@ -1,4 +1,4 @@
-# AURIX — Software Architecture (V1 testnet)
+# AURIX — Software Architecture (MVP 0.1 testnet)
 
 *Technical document for the PayPal AI Hackathon 2026 — November 7, 2026*
 
@@ -103,7 +103,7 @@ stateDiagram-v2
 
 - Time is checked using **block height** and **protocol time**, never an external service's clock.
 - An escrow leaves the `LOCKED` state only once: no double release, no release after refund.
-- **[Proposal]** V1 release condition: explicit approval by the sender or by an arbiter designated at creation. A richer condition (reading an anchored payment proof) can come later.
+- **[Proposal]** MVP 0.1 release condition: explicit approval by the sender or by an arbiter designated at creation. A richer condition (reading an anchored payment proof) can come later.
 
 ### 3.3 API Gateway / orchestration (Java 21 + Spring Boot)
 
@@ -160,7 +160,7 @@ Content-Type: application/json
 ```
 
 - The `advisory_only: true` field is constant: the response has no effect on consensus.
-- Recommended V1 model: LightGBM (tabular baseline) + SHAP for reasons. Graph-based relational analysis (PyTorch Geometric) is an extension.
+- Recommended MVP 0.1 model: LightGBM (tabular baseline) + SHAP for reasons. Graph-based relational analysis (PyTorch Geometric) is an extension.
 - If the service is unavailable, the gateway shows "analysis unavailable" and lets the user decide: the AI never blocks the protocol.
 
 ### 3.5 PayPal connector (in the gateway)
@@ -294,7 +294,7 @@ flowchart LR
 | --- | --- |
 | Development | Docker Compose: chain, gateway, guardian, indexer, postgres, redis, web |
 | Hackathon demo | Application services on Render; check that the chain node can run there as a persistent Docker service |
-| Target | Kubernetes (out of V1 scope) |
+| Target | Kubernetes (out of MVP 0.1 scope) |
 
 **Environment variables [Proposal]** (in `.env.example`, without values):
 
@@ -336,7 +336,7 @@ REDIS_URL=
 
 To be decided based on team capacity:
 
-| Item | v1.1 target | Realistic V1 variant |
+| Item | v1.1 target | Realistic MVP 0.1 variant |
 | --- | --- | --- |
 | Application services | Spring Boot + FastAPI | **FastAPI only** (gateway + AI) |
 | Risk model | PyTorch Geometric (GNN) | **LightGBM + SHAP**; GNN on the roadmap |

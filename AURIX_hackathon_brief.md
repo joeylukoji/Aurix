@@ -32,7 +32,7 @@ The thesis: a digital currency that is useful at scale must combine verifiabilit
 
 ---
 
-## 3. Three V1 features and a common thread
+## 3. Three MVP 0.1 features and a common thread
 
 | Module | What the judges see | What runs |
 | --- | --- | --- |
@@ -175,7 +175,7 @@ Acknowledged limits: AUR's market value is not guaranteed; open code does not re
 
 | Status | Content |
 | --- | --- |
-| In the demo (V1, testnet) | AUR wallet and transfers, Smart Money, Neural Guardian, PayPal Sandbox, explorer and history |
+| In the demo (MVP 0.1, testnet) | AUR wallet and transfers, Smart Money, Neural Guardian, PayPal Sandbox, explorer and history |
 | Positioning | Demonstration testnet; AUR has no real monetary value |
 | Roadmap | Multi-operator, additional regulated gateways, GNN, publications |
 

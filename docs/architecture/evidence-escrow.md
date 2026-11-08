@@ -1,8 +1,8 @@
-# AURIX V1.5 — Escrow à preuves (Evidence-Released USD Escrow)
+# AURIX MVP 0.2 — Escrow à preuves (Evidence-Released USD Escrow)
 
 **Statut :** spécification proposée, **non implémentée**
 **Date :** 2026-11-08
-**Position :** version intermédiaire entre la V1 (hackathon) et la V2 complète
+**Position :** version intermédiaire entre le MVP 0.1 (hackathon) et le MVP 0.3 complète
 ([`mscfa.md`](mscfa.md) : MSCFA complet + escrow USD on-chain, §14 bis).
 
 ---
@@ -73,7 +73,7 @@ flowchart LR
 
 ### Pourquoi « intermédiaire »
 
-| | V1 (hackathon) | **V1.5 escrow à preuves** | V2 |
+| | MVP 0.1 (hackathon) | **MVP 0.2 escrow à preuves** | MVP 0.3 |
 | --- | --- | --- | --- |
 | Escrow | AUR, sur la chaîne | **USD chez PayPal, libéré par les preuves** | USD, condition enregistrée sur la chaîne (`MsgCreateFiatEscrow`) |
 | Qui décide | Émetteur / arbitre | **Règle déterministe sur preuves signées**, rejouable par le vérificateur | La chaîne (consensus BFT) |
@@ -81,8 +81,8 @@ flowchart LR
 | Changement de la chaîne | — | **Aucun** (réutilise `MsgAnchorProof`) | Nouveaux messages protobuf |
 | Vérificateur | Explorateur | **CLI `aurix-verify` hors ligne** | CLI + page web + révocations en ligne |
 
-Le point clé de la V1.5 : **pas besoin de modifier la chaîne pour que la décision soit vérifiable.** La règle
-est déterministe et publique ; ses entrées sont signées ; le vérificateur la rejoue. La V2 ajoute le
+Le point clé de le MVP 0.2 : **pas besoin de modifier la chaîne pour que la décision soit vérifiable.** La règle
+est déterministe et publique ; ses entrées sont signées ; le vérificateur la rejoue. Le MVP 0.3 ajoute le
 consensus BFT sur la décision elle-même.
 
 ## 5. La règle de décision
@@ -179,5 +179,5 @@ période garantie de 3 jours, réautorisation) sur la documentation PayPal offic
 
 - Les fonds restent chez PayPal : AURIX ne garantit pas leur disponibilité au-delà de ce que PayPal garantit pour une autorisation.
 - Durée maximale de 29 jours.
-- La décision est prise par un service AURIX selon une règle publique et rejouable, mais pas encore par consensus (V2).
+- La décision est prise par un service AURIX selon une règle publique et rejouable, mais pas encore par consensus (MVP 0.3).
 - Le transporteur est simulé : la démo prouve le mécanisme, pas une intégration réelle.
