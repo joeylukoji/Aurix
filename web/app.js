@@ -416,7 +416,7 @@ async function createCond() {
   const who = o.paypal_mode === "simulator" ? "PayPal simulator" : "PayPal Sandbox";
   $("cdResult").innerHTML = `<p>Conditional order <code>${esc(o.order_id)}</code> · ${esc(o.terms.amount.value)} USD · deadline ${esc(o.terms.deadline)}</p>` +
     riskHtml(o.risk, o.risk ? "ok" : "unavailable") +
-    `<ol class="steps"><li><a href="${esc(o.approve_url)}" target="_blank" rel="noopener">Open the ${who} page</a> and approve as the buyer.</li>
+    `<ol class="steps"><li><a id="cdLink" href="${esc(o.approve_url)}" target="_blank" rel="noopener">Open the ${who} page</a> and approve as the buyer.</li>
       <li>Come back and authorize: PayPal holds the funds, nothing is charged yet.</li></ol>
     <button id="cdAuth" class="primary">I approve: hold ${esc(o.terms.amount.value)} USD</button><div id="cdMsg"></div>`;
   $("cdAuth").onclick = (e) => busy(e.target, async () => {
