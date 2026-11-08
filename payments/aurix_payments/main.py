@@ -25,6 +25,7 @@ from aurix_common import crypto
 from aurix_common.clients import ChainClient, ChainError, GuardianClient, PayPalClient, PayPalError, normalize_proof
 from aurix_common.keys import load_key
 
+from . import escrow as escrow_mod
 from .config import Settings
 from .db import DB
 
@@ -49,7 +50,7 @@ class ApproveReq(BaseModel):
 
 
 def create_app(settings: Settings | None = None, chain: ChainClient | None = None,
-               guardian: GuardianClient | None = None, paypal=None) -> FastAPI:
+               guardian: GuardianClient | None = None, paypal=None, escrow_clock=None) -> FastAPI:
     s = settings or Settings()
     chain = chain or ChainClient(s.chain_url, s.chain_rest_url)
     guardian = guardian or GuardianClient(s.guardian_urls, quorum=s.guardian_quorum, pubkeys=s.guardian_pubkeys)
@@ -59,6 +60,8 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
     db = DB(s.database_path)
     gateway_key = load_key("GATEWAY", default_seed=s.gateway_seed)  # anchor signer (see config.py)
     signer_lock = threading.Lock()
+    escrow = escrow_mod.EscrowService(db, paypal, guardian, paypal_mode, escrow_mod.load_signer(),
+                                      escrow_mod.load_external_keys(), clock=escrow_clock or escrow_mod.utcnow)
 
     stop = threading.Event()
 
@@ -186,6 +189,7 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
         retry_unanchored()
         for o in db.all("SELECT order_id FROM paypal_orders WHERE status='ATTESTING'"):
             refresh_attestation(o["order_id"])
+        escrow.tick()
 
     def present(o: dict) -> dict:
         signers = json.loads(o.pop("attestations", None) or "[]")
@@ -227,6 +231,9 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
         order = order_id and db.one("SELECT * FROM paypal_orders WHERE order_id=?", order_id)
         if not order:
             return "ignored"
+        handled = escrow.on_paypal_event(event, order_id)  # evidence for evidence-released escrows (MVP 0.2)
+        if handled:
+            return handled
         settled = order["status"] in ("ATTESTING", "ANCHORED")
         if etype == "PAYMENT.CAPTURE.PENDING" and order["status"] == "CAPTURED":
             db.update_order(order_id, status="CAPTURE_PENDING")
@@ -297,6 +304,8 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
             raise HTTPException(400, "explicit approval required (confirm=true)")
         if o["status"] != "SCORED":
             raise HTTPException(409, f"order is {o['status']}")
+        if escrow.is_escrow(order_id):
+            raise HTTPException(409, "conditional order: authorize it with /api/escrow/orders/{id}/authorize")
         try:
             cap = paypal.capture(order_id)
         except PayPalError as e:
@@ -345,7 +354,9 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
             raise HTTPException(400, "invalid webhook signature")
         return {"result": await run_in_threadpool(handle_event, event)}  # invariant 6: duplicates are a 200 no-op
 
+    escrow_mod.register(app, escrow, require_paypal)
     app.state.refresh_pending = refresh_pending
+    app.state.escrow = escrow
     app.state.paypal_mode = paypal_mode
     return app
 

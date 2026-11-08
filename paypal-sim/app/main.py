@@ -4,7 +4,11 @@ credentials).
 
 Mimics the subset of the PayPal REST API that the AURIX gateway uses:
   POST /v1/oauth2/token                              client-credentials OAuth
-  POST /v2/checkout/orders                           create order (intent CAPTURE)
+  POST /v2/checkout/orders                           create order (intent CAPTURE or AUTHORIZE)
+  POST /v2/checkout/orders/{id}/authorize            authorize an approved AUTHORIZE order (funds held)
+  GET  /v2/payments/authorizations/{id}              authorization details
+  POST /v2/payments/authorizations/{id}/capture      capture held funds (later, e.g. on evidence)
+  POST /v2/payments/authorizations/{id}/void         release held funds back to the buyer
   GET  /v2/checkout/orders/{id}                      order details
   GET  /checkoutnow?token={id}                       buyer approval page (HTML)
   POST /v2/checkout/orders/{id}/capture              capture (only once APPROVED)
@@ -51,6 +55,8 @@ app = FastAPI(title="PayPal Sandbox simulator (AURIX tests only)", version="0.1.
 TOKENS: set[str] = set()
 ORDERS: dict[str, dict] = {}
 CAPTURES: dict[str, dict] = {}  # capture id -> capture resource
+AUTHORIZATIONS: dict[str, dict] = {}  # authorization id -> authorization resource
+AUTH_VALID_DAYS = 29  # PayPal: an authorization can be captured for up to 29 days (honor period 3 days)
 EVENTS: dict[str, dict] = {}  # event id -> {"event", "headers", "deliveries"}
 lock = threading.Lock()
 
@@ -102,7 +108,8 @@ def order_view(o: dict) -> dict:
     if o["status"] == "CREATED":
         links.append({"href": f"{PUBLIC_URL}/checkoutnow?token={o['id']}", "rel": "approve", "method": "GET"})
     if o["status"] == "APPROVED":
-        links.append({"href": f"{PUBLIC_URL}/v2/checkout/orders/{o['id']}/capture", "rel": "capture", "method": "POST"})
+        action = "authorize" if o["intent"] == "AUTHORIZE" else "capture"
+        links.append({"href": f"{PUBLIC_URL}/v2/checkout/orders/{o['id']}/{action}", "rel": action, "method": "POST"})
     v = {k: o[k] for k in ("id", "intent", "status", "purchase_units", "create_time")} | {"links": links}
     if o.get("payer"):
         v["payer"] = o["payer"]
@@ -118,8 +125,8 @@ async def create_order(request: Request, _: str = Depends(bearer),
             for o in ORDERS.values():
                 if o.get("request_id") == paypal_request_id:
                     return order_view(o)
-        if body.get("intent") != "CAPTURE":
-            paypal_error(422, "UNPROCESSABLE_ENTITY", "Only intent CAPTURE is simulated", "INVALID_PARAMETER_VALUE")
+        if body.get("intent") not in ("CAPTURE", "AUTHORIZE"):
+            paypal_error(422, "UNPROCESSABLE_ENTITY", "intent must be CAPTURE or AUTHORIZE", "INVALID_PARAMETER_VALUE")
         units = body.get("purchase_units") or []
         try:
             amount = units[0]["amount"]
@@ -136,7 +143,7 @@ async def create_order(request: Request, _: str = Depends(bearer),
         ctx = body.get("application_context") or {}
         ctx = ctx | ((body.get("payment_source") or {}).get("paypal") or {}).get("experience_context", {})
         oid = secrets.token_hex(8).upper()[:17]
-        ORDERS[oid] = {"return_url": ctx.get("return_url"), "cancel_url": ctx.get("cancel_url"),"id": oid, "intent": "CAPTURE", "status": "CREATED", "create_time": now(),
+        ORDERS[oid] = {"return_url": ctx.get("return_url"), "cancel_url": ctx.get("cancel_url"),"id": oid, "intent": body["intent"], "status": "CREATED", "create_time": now(),
                        "purchase_units": [{"reference_id": "default", **units[0]}], "request_id": paypal_request_id}
         return order_view(ORDERS[oid])
 
@@ -216,6 +223,9 @@ def checkout_cancel(oid: str):
 def capture(oid: str, _: str = Depends(bearer)):
     with lock:
         o = get_or_404(oid)
+        if o["intent"] != "CAPTURE":
+            paypal_error(422, "UNPROCESSABLE_ENTITY", "Order intent is AUTHORIZE: authorize it, then capture the "
+                         "authorization.", "ACTION_DOES_NOT_MATCH_INTENT")
         if o["status"] == "COMPLETED":
             paypal_error(422, "UNPROCESSABLE_ENTITY", "Order already captured.", "ORDER_ALREADY_CAPTURED")
         if o["status"] != "APPROVED":
@@ -254,7 +264,8 @@ def get_capture(cid: str, _: str = Depends(bearer)):
 
 def _emit(event_type: str, resource: dict, summary: str) -> dict:
     event = {"id": "WH-" + uuid.uuid4().hex[:20].upper(), "event_version": "1.0", "create_time": now(),
-             "resource_type": "refund" if "REFUNDED" in event_type else "capture", "event_type": event_type,
+             "resource_type": "refund" if "REFUNDED" in event_type else
+             "authorization" if "AUTHORIZATION" in event_type else "capture", "event_type": event_type,
              "summary": summary, "resource": copy.deepcopy(resource)}
     threading.Thread(target=_deliver_later, args=(event,), daemon=True).start()
     return event
@@ -288,6 +299,105 @@ def sim_deny(cid: str):
         raise HTTPException(404, "unknown capture")
     cap["status"] = "DECLINED"
     return _emit("PAYMENT.CAPTURE.DENIED", dict(cap), "Payment denied")
+
+
+# ---------------- Authorize now, capture later ----------------
+def _auth_view(a: dict) -> dict:
+    links = [{"href": f"{PUBLIC_URL}/v2/payments/authorizations/{a['id']}", "rel": "self", "method": "GET"}]
+    if a["status"] in ("CREATED", "PENDING"):
+        links += [{"href": f"{PUBLIC_URL}/v2/payments/authorizations/{a['id']}/capture", "rel": "capture", "method": "POST"},
+                  {"href": f"{PUBLIC_URL}/v2/payments/authorizations/{a['id']}/void", "rel": "void", "method": "POST"}]
+    return copy.deepcopy(a) | {"links": links}
+
+
+def _auth_or_404(aid: str) -> dict:
+    a = AUTHORIZATIONS.get(aid)
+    if not a:
+        paypal_error(404, "RESOURCE_NOT_FOUND", "The specified resource does not exist.", "INVALID_RESOURCE_ID")
+    if a["status"] == "CREATED" and a["_expires"] < time.time():
+        a["status"] = "EXPIRED"
+    return a
+
+
+@app.post("/v2/checkout/orders/{oid}/authorize", status_code=201)
+def authorize(oid: str, _: str = Depends(bearer)):
+    """Authorizes an approved AUTHORIZE order: the buyer's funds are held, nothing is captured yet."""
+    with lock:
+        o = get_or_404(oid)
+        if o["intent"] != "AUTHORIZE":
+            paypal_error(422, "UNPROCESSABLE_ENTITY", "Order intent is CAPTURE.", "ACTION_DOES_NOT_MATCH_INTENT")
+        if o["status"] == "COMPLETED":
+            paypal_error(422, "UNPROCESSABLE_ENTITY", "Order already authorized.", "ORDER_ALREADY_AUTHORIZED")
+        if o["status"] != "APPROVED":
+            paypal_error(422, "UNPROCESSABLE_ENTITY", "Payer has not yet approved the Order for payment.",
+                         "ORDER_NOT_APPROVED")
+        amount = o["purchase_units"][0]["amount"]
+        exp = time.time() + AUTH_VALID_DAYS * 86400
+        a = {"id": secrets.token_hex(9).upper()[:17], "status": "CREATED", "amount": dict(amount),
+             "create_time": now(), "_expires": exp,
+             "expiration_time": datetime.fromtimestamp(exp, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "supplementary_data": {"related_ids": {"order_id": oid}}}
+        AUTHORIZATIONS[a["id"]] = a
+        o["status"] = "COMPLETED"
+        o["purchase_units"][0]["payments"] = {"authorizations": [_public(a)]}
+    _emit("PAYMENT.AUTHORIZATION.CREATED", _public(a), f"A payment authorization was created for $ {amount['value']}")
+    return order_view(o)
+
+
+def _public(a: dict) -> dict:
+    return {k: v for k, v in a.items() if not k.startswith("_")}
+
+
+@app.get("/v2/payments/authorizations/{aid}")
+def get_authorization(aid: str, _: str = Depends(bearer)):
+    return {k: v for k, v in _auth_view(_auth_or_404(aid)).items() if not k.startswith("_")}
+
+
+@app.post("/v2/payments/authorizations/{aid}/capture", status_code=201)
+def capture_authorization(aid: str, _: str = Depends(bearer), paypal_request_id: str | None = Header(default=None)):
+    """Captures held funds; sends PAYMENT.CAPTURE.COMPLETED. Idempotent per PayPal-Request-Id."""
+    with lock:
+        a = _auth_or_404(aid)
+        if a["status"] == "CAPTURED" and paypal_request_id and a.get("_capture_request_id") == paypal_request_id:
+            return CAPTURES[a["_capture_id"]]
+        if a["status"] != "CREATED":
+            issue = {"CAPTURED": "AUTHORIZATION_ALREADY_CAPTURED", "VOIDED": "AUTHORIZATION_VOIDED",
+                     "EXPIRED": "AUTHORIZATION_EXPIRED"}.get(a["status"], "INVALID_STATE")
+            paypal_error(422, "UNPROCESSABLE_ENTITY", f"Authorization is {a['status']}.", issue)
+        oid = a["supplementary_data"]["related_ids"]["order_id"]
+        cap = {"id": secrets.token_hex(9).upper()[:17], "status": "COMPLETED", "amount": dict(a["amount"]),
+               "final_capture": True, "create_time": now(),
+               "supplementary_data": {"related_ids": {"order_id": oid, "authorization_id": aid}}}
+        a.update(status="CAPTURED", _capture_id=cap["id"], _capture_request_id=paypal_request_id)
+        CAPTURES[cap["id"]] = cap
+    _emit("PAYMENT.CAPTURE.COMPLETED", cap, f"Payment completed for $ {cap['amount']['value']} USD")
+    return cap
+
+
+@app.post("/v2/payments/authorizations/{aid}/void", status_code=204)
+def void_authorization(aid: str, _: str = Depends(bearer)):
+    """Releases held funds back to the buyer; sends PAYMENT.AUTHORIZATION.VOIDED."""
+    with lock:
+        a = _auth_or_404(aid)
+        if a["status"] == "VOIDED":
+            return None  # idempotent
+        if a["status"] != "CREATED":
+            issue = {"CAPTURED": "AUTHORIZATION_ALREADY_CAPTURED", "EXPIRED": "AUTHORIZATION_EXPIRED"}.get(
+                a["status"], "INVALID_STATE")
+            paypal_error(422, "UNPROCESSABLE_ENTITY", f"Authorization is {a['status']}.", issue)
+        a["status"] = "VOIDED"
+    _emit("PAYMENT.AUTHORIZATION.VOIDED", _public(a), "A payment authorization was voided")
+    return None
+
+
+@app.post("/sim/authorizations/{aid}/expire")
+def sim_expire(aid: str):
+    """Simulator-only: make an authorization expire now (to test the 29-day limit)."""
+    a = AUTHORIZATIONS.get(aid)
+    if not a:
+        raise HTTPException(404, "unknown authorization")
+    a["_expires"] = 0
+    return _public(_auth_or_404(aid))
 
 
 # ---------------- Webhooks ----------------

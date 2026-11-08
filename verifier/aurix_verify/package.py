@@ -5,6 +5,7 @@ Layout of aurix-proof-<order_id>.zip:
   manifest.sig.json        AURIX signature of the manifest
   terms.json               escrow terms signed by AURIX at order creation   (+ signatures/terms.json)
   attestations/<id>.json   one per attestation                              (+ signatures/<id>.json)
+  receipts.json            when AURIX received each attestation             (+ signatures/receipts.json)
   decision.json            the decision and the hashes of its inputs        (+ signatures/decision.json)
   trust/public-keys.json   keys declared by the issuer
   trust/trust-metadata.json  which sources are real or simulated
@@ -34,10 +35,19 @@ def _dump(obj) -> bytes:
     return json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True).encode() + b"\n"
 
 
+def receipts_doc(order_id: str, received: list[tuple[dict, str]]) -> dict:
+    """AURIX's record of when it received each attestation (an attestation cannot carry that itself:
+    a carrier signs before AURIX sees it). The decision replay only uses evidence received in time."""
+    return {"schema": "aurix.receipts", "schema_version": "1.0", "order_id": order_id,
+            "receipts": sorted(({"attestation_hash": digest(a), "received_at": t} for a, t in received),
+                               key=lambda r: (r["received_at"], r["attestation_hash"]))}
+
+
 def build_package(*, terms: dict, terms_sig: dict, attestations: list[tuple[dict, dict]],
-                  decision: dict | None, decision_sig: dict | None, keys: dict, trust_metadata: dict,
+                  receipts: dict, receipts_sig: dict, decision: dict | None, decision_sig: dict | None, keys: dict, trust_metadata: dict,
                   signer: crypto.Signer, created_at: str) -> bytes:
     files: dict[str, bytes] = {"terms.json": _dump(terms), "signatures/terms.json": _dump(terms_sig),
+                               "receipts.json": _dump(receipts), "signatures/receipts.json": _dump(receipts_sig),
                                "trust/public-keys.json": _dump(keys),
                                "trust/trust-metadata.json": _dump(trust_metadata)}
     for att, sig in attestations:
@@ -183,7 +193,14 @@ def verify_package(files: dict[str, bytes], trusted_keys: dict | None = None) ->
     if "shipment.delivered" not in types and "payment.voided" not in types:
         anomalies.append({"class": 1, "code": "missing_delivery", "detail": order_id})
 
-    # 5. Replay the decision.
+    # 5. Replay the decision with the evidence AURIX had received at decision time.
+    receipts = load("receipts.json") if "receipts.json" in listed else None
+    receipts_ok = receipts is not None and check(receipts, "signatures/receipts.json", "aurix") == crypto.VALID
+    received_at = {r["attestation_hash"]: crypto.parse_time(r["received_at"])
+                   for r in (receipts or {}).get("receipts", [])} if receipts_ok else {}
+    for e in evidence:
+        if digest(e.attestation) not in received_at:
+            errors.append(f"no AURIX receipt for attestation {e.attestation.get('attestation_id')}")
     replay = None
     if "decision.json" in listed:
         decision = load("decision.json")
@@ -191,7 +208,7 @@ def verify_package(files: dict[str, bytes], trusted_keys: dict | None = None) ->
         if decision and terms and terms_ok:
             at = crypto.parse_time(decision["decided_at"])
             known = [e for e in evidence
-                     if crypto.parse_time(e.attestation.get("timestamps", {}).get("aurix_received_at")) <= at]
+                     if digest(e.attestation) in received_at and received_at[digest(e.attestation)] <= at]
             out = decide(terms, known, decision["decided_at"])
             same_inputs = sorted(digest(a) for a in out.inputs) == sorted(decision.get("inputs", []))
             replay = {"recorded": decision.get("decision"), "replayed": out.decision,

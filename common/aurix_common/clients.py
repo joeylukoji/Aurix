@@ -225,8 +225,11 @@ class PayPalClient:
             self._token = r.json()["access_token"]
         return {"Authorization": f"Bearer {self._token}", "Content-Type": "application/json"}
 
-    def create_order(self, amount_usd: str, description: str) -> dict:
-        body = {"intent": "CAPTURE", "purchase_units": [
+    def create_order(self, amount_usd: str, description: str, intent: str = "CAPTURE") -> dict:
+        """intent CAPTURE (pay now) or AUTHORIZE (hold the funds, capture or void later)."""
+        if intent not in ("CAPTURE", "AUTHORIZE"):
+            raise ValueError("intent must be CAPTURE or AUTHORIZE")
+        body = {"intent": intent, "purchase_units": [
             {"amount": {"currency_code": "USD", "value": amount_usd}, "description": description[:127]}]}
         r = self.http.post("/v2/checkout/orders", json=body,
                            headers=self._headers() | {"PayPal-Request-Id": str(uuid.uuid4())})
@@ -234,6 +237,26 @@ class PayPalClient:
 
     def capture(self, order_id: str) -> dict:
         return self._json(self.http.post(f"/v2/checkout/orders/{order_id}/capture", headers=self._headers()))
+
+    def authorize(self, order_id: str) -> dict:
+        """Authorizes an approved AUTHORIZE order (funds held); returns the order with its authorization."""
+        return self._json(self.http.post(f"/v2/checkout/orders/{order_id}/authorize", headers=self._headers()))
+
+    def get_authorization(self, authorization_id: str) -> dict:
+        return self._json(self.http.get(f"/v2/payments/authorizations/{authorization_id}", headers=self._headers()))
+
+    def capture_authorization(self, authorization_id: str, request_id: str) -> dict:
+        """Captures held funds. request_id makes retries idempotent (PayPal-Request-Id)."""
+        return self._json(self.http.post(f"/v2/payments/authorizations/{authorization_id}/capture",
+                                         json={"final_capture": True},
+                                         headers=self._headers() | {"PayPal-Request-Id": request_id}))
+
+    def void_authorization(self, authorization_id: str, request_id: str) -> None:
+        """Releases held funds back to the buyer (204 No Content)."""
+        r = self.http.post(f"/v2/payments/authorizations/{authorization_id}/void",
+                           headers=self._headers() | {"PayPal-Request-Id": request_id})
+        if r.status_code >= 400:
+            self._json(r)
 
     def refund(self, capture_id: str) -> dict:
         """Full refund of a capture (Payments v2). The order becomes REFUNDED on the webhook."""

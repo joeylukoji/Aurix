@@ -17,4 +17,12 @@ def test_anchor_key_seed_refused_in_production(tmp_path, monkeypatch):
     with pytest.raises(KeyConfigError, match="GATEWAY"):
         create_app(s)
     monkeypatch.setenv("GATEWAY_MNEMONIC", MNEMONIC)
-    assert create_app(s).state.paypal_mode in ("disabled", "sandbox", "simulator")
+    monkeypatch.delenv("ESCROW_KEY_FILE", raising=False)
+    with pytest.raises(KeyConfigError, match="ESCROW_KEY_FILE"):  # escrow signing key: no dev seed either
+        create_app(s)
+    kf = tmp_path / "escrow.key"
+    kf.write_text("11" * 32)
+    monkeypatch.setenv("ESCROW_KEY_FILE", str(kf))
+    app = create_app(s)
+    assert app.state.paypal_mode in ("disabled", "sandbox", "simulator")
+    assert app.state.escrow.keys["keys"] == app.state.escrow.keys["keys"][:1]  # no dev carrier in production

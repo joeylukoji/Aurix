@@ -1,7 +1,7 @@
 """Builds realistic packages for the tests: AURIX key, demo carrier key, arbiter key."""
 from aurix_verify import crypto
 from aurix_verify.jcs import digest
-from aurix_verify.package import build_package
+from aurix_verify.package import build_package, receipts_doc
 from aurix_verify.rule import RULE_ID, decide, Evidence
 
 T0 = "2026-11-08T08:00:00Z"
@@ -53,19 +53,25 @@ def signed(a, signer=None):
     return a, signer.sign(a, a["timestamps"]["attested_at"])
 
 
-def package(t=None, items=None, decided_at="2026-11-10T09:00:00Z", decision_override=None, key_doc=None):
+def package(t=None, items=None, decided_at="2026-11-10T09:00:00Z", decision_override=None, key_doc=None,
+            received=None):
     t = t or terms()
     items = items if items is not None else [signed(att("payment.authorized")),
                                              signed(att("shipment.delivered", when="2026-11-10T08:00:00Z"))]
     kd = key_doc or keys()
     reg = crypto.KeyRegistry(kd)
     ev = [Evidence(a, s["key_id"], reg.role(s["key_id"]), reg.verify(a, s)) for a, s in items]
-    out = decide(t, ev, decided_at)
+    rec = received or {}  # attestation_id -> received_at (default: when it was attested)
+    when = [(a, rec.get(a["attestation_id"], a["timestamps"]["attested_at"])) for a, _ in items]
+    at = crypto.parse_time(decided_at)
+    out = decide(t, [e for e, (_, w) in zip(ev, when) if crypto.parse_time(w) <= at], decided_at)
+    receipts = receipts_doc(t["order_id"], when)
     decision = {"schema": "aurix.escrow-decision", "schema_version": "1.0", "order_id": t["order_id"],
                 "rule": RULE_ID, "decision": decision_override or out.decision,
                 "inputs": sorted(digest(a) for a in out.inputs), "decided_at": decided_at,
                 "deadline": t["deadline"], "reasons": out.reasons}
     meta = {"sources": {"paypal": {"type": "real"}, "aurix_demo_delivery": {"type": "simulated"}}}
-    return build_package(terms=t, terms_sig=AURIX.sign(t, T0), attestations=items, decision=decision,
+    return build_package(terms=t, terms_sig=AURIX.sign(t, T0), attestations=items, receipts=receipts,
+                         receipts_sig=AURIX.sign(receipts, decided_at), decision=decision,
                          decision_sig=AURIX.sign(decision, decided_at), keys=kd, trust_metadata=meta,
                          signer=AURIX, created_at=decided_at)

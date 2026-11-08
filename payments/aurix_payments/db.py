@@ -16,6 +16,14 @@ CREATE TABLE IF NOT EXISTS paypal_orders (
 CREATE TABLE IF NOT EXISTS webhook_events (
   event_id TEXT PRIMARY KEY, event_type TEXT, order_id TEXT, signature_valid INTEGER,
   received_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS escrow_terms (
+  order_id TEXT PRIMARY KEY REFERENCES paypal_orders(order_id), terms TEXT NOT NULL, terms_sig TEXT NOT NULL,
+  authorization_id TEXT, decision TEXT, decision_doc TEXT, decision_sig TEXT, last_eval TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS evidence (
+  attestation_id TEXT PRIMARY KEY, order_id TEXT NOT NULL, provider TEXT NOT NULL, provider_event_id TEXT NOT NULL,
+  event_type TEXT NOT NULL, attestation TEXT NOT NULL, signature TEXT NOT NULL, received_at TEXT NOT NULL,
+  UNIQUE (provider, provider_event_id));
 CREATE TABLE IF NOT EXISTS risk_scores (
   id INTEGER PRIMARY KEY AUTOINCREMENT, context TEXT, ref TEXT, score REAL, level TEXT,
   reasons TEXT, model_version TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
@@ -76,6 +84,17 @@ class DB:
         if risk:
             self.exec("INSERT INTO risk_scores(context, ref, score, level, reasons, model_version) VALUES (?,?,?,?,?,?)",
                       context, ref, risk["risk_score"], risk["level"], json.dumps(risk["reasons"]), risk["model_version"])
+
+    def insert_evidence(self, attestation_id, order_id, provider, provider_event_id, event_type, attestation,
+                        signature, received_at) -> bool:
+        """Idempotent by attestation id and by (provider, provider_event_id). False if already stored."""
+        try:
+            self.exec("INSERT INTO evidence(attestation_id, order_id, provider, provider_event_id, event_type,"
+                      " attestation, signature, received_at) VALUES (?,?,?,?,?,?,?,?)", attestation_id, order_id,
+                      provider, provider_event_id, event_type, attestation, signature, received_at)
+            return True
+        except sqlite3.IntegrityError:
+            return False
 
     def update_order(self, order_id: str, **fields):
         cols = ", ".join(f"{k}=?" for k in fields)

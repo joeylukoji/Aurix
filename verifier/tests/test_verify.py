@@ -216,3 +216,19 @@ def test_cli(tmp_path, capsys):
     assert "VALID" in capsys.readouterr().out
     p.write_bytes(rewrite(package(), "decision.json", lambda b: b.replace(b"RELEASE", b"VOID")))
     assert main([str(p), "--keys", str(k)]) == 1
+
+
+def test_late_received_delivery_does_not_invalidate_an_honest_void():
+    """Carrier attests on time but AURIX only receives it after voiding at the deadline: VOID stays valid."""
+    items = [signed(att("payment.authorized")), signed(att("shipment.delivered", when="2026-11-15T20:00:00Z"))]
+    data = package(items=items, decided_at="2026-11-16T00:00:01Z",
+                   received={"att_shipment_delivered_1": "2026-11-16T03:00:00Z"})
+    r = verify_package(files_of(data), keys())
+    assert r["result"] == "VALID", r["errors"]
+    assert r["decision"]["recorded"] == "VOID" == r["decision"]["replayed"]
+
+
+def test_missing_receipts_are_reported():
+    data = rewrite(package(), "receipts.json", lambda b: b.replace(b'"receipts": [', b'"receipts": [], "x": ['))
+    r = verify_package(files_of(data), keys())
+    assert r["result"] == "INVALID"
