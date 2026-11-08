@@ -2,9 +2,12 @@
 
 **Module :** Multi-Source Cryptographic Financial Attestation (MSCFA)
 **Version :** 1.0 (intégration) — basée sur le cahier des charges technique MSCFA v1.0
-**Statut :** spécification proposée, **non implémentée**
+**Statut :** spécification proposée pour **AURIX V2** (après le hackathon), **non implémentée**
 **Date :** 2026-11-08
 
+> **Décision (2026-11-08) : MSCFA est reporté à la V2.** Il ne fait pas partie de la soumission du hackathon ;
+> il y est présenté comme prochaine étape. Le découpage en lots du §14 sert de plan pour la V2.
+>
 > Ce document adapte le cahier des charges MSCFA v1.0 au code AURIX **existant**. Il précise ce qui est
 > réutilisé, ce qui est nouveau, les écarts assumés par rapport au cahier initial, et un découpage
 > compatible avec l'échéance du hackathon (12 novembre 2026).
@@ -376,12 +379,14 @@ Reprennent intégralement le cahier v1.0 §14. Spécifiques à l'intégration :
 
 ---
 
-## 14. Planning et périmètre hackathon
+## 14. Planning V2
 
 Le cahier v1.0 estime 5 à 10 jours. Il reste **4 jours** avant la soumission, et d'autres tâches
 critiques sont ouvertes (identifiants PayPal Sandbox, déploiement Render, vidéo, Devpost). D'où deux lots :
 
-### Lot H — démonstration hackathon (≈ 2,5 jours)
+### Lot H — premier incrément V2 (≈ 2,5 jours)
+
+*Initialement prévu pour le hackathon ; reporté en V2. Les dates ci-dessous sont indicatives.*
 
 | Jour | Contenu | Critère de sortie |
 | --- | --- | --- |
@@ -392,7 +397,7 @@ critiques sont ouvertes (identifiants PayPal Sandbox, déploiement Render, vidé
 À couper en premier si retard : page web de vérification (garder le CLI), contrôles de cohérence 6-8,
 chiffrement du payload brut (ne pas le stocker du tout à la place).
 
-### Lot P — après le hackathon
+### Lot P — suite de la V2
 
 Attestation Builder, rotation automatisée des clés, `MsgAnchorEvidence` (horodatage BFT des manifestes),
 contrôles de cohérence restants, portage Go éventuel, transporteur réel, divulgation sélective.

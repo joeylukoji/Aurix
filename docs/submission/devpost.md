@@ -43,6 +43,7 @@ Cosmos SDK module wiring, PayPal Orders v2 and webhook verification, and how to 
 
 ## What's next for AURIX
 
+- **V2: multi-source financial attestation (MSCFA).** Combine signed evidence from PayPal, the AURIX chain and other organisations (e.g. carriers) into a portable proof package that anyone can verify offline, without access to the merchant's PayPal account.
 - Connect the real PayPal Sandbox (credentials) and remove the simulator.
 - Public online demo on Render.
 - Multiple validators, an indexer with PostgreSQL/Redis, Kubernetes.

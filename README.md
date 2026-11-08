@@ -247,4 +247,4 @@ Backlog, user stories, Definition of Done and ceremonies: [`docs/scrum/`](docs/s
 
 - Demonstration testnet: **AUR has no real monetary value**.
 - The 4 validators run on one machine, operated by one team: real BFT consensus, not yet independent multi-operator decentralisation. The multi-operator package (`networks/aurix-testnet-2`) and the attestor service are ready and tested locally, but need real outside operators to be launched (see [`docs/planning/decentralization.md`](docs/planning/decentralization.md)).
-- Roadmap: multiple validators, additional regulated gateways, GNN, Kubernetes.
+- Roadmap (V2): **MSCFA**, multi-source cryptographic financial attestation, i.e. portable proof packages verifiable by a third party ([`docs/architecture/mscfa.md`](docs/architecture/mscfa.md)); multiple validators, additional regulated gateways, GNN, Kubernetes.
