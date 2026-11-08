@@ -408,6 +408,9 @@ contrôles de cohérence restants, portage Go éventuel, transporteur réel, div
 
 ## 14 bis. Escrow USD conditionnel (V2, livré avec MSCFA)
 
+> Une version intermédiaire combinant escrow USD et MSCFA réduit, sans modification de la chaîne,
+> est décrite dans [`evidence-escrow.md`](evidence-escrow.md) (V1.5).
+
 **Décision (2026-11-08) :** l'escrow en USD est construit en V2, avec MSCFA. Pour le hackathon, l'escrow
 Smart Money reste en AUR et est présenté comme le mécanisme, pas comme un escrow PayPal.
 
