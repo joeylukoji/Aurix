@@ -11,7 +11,7 @@ AURIX is a testnet monetary protocol where an AI assesses a payment **before** i
 
 ## Table of contents
 
-- [MVP 0.1 features](#mvp-01-features)
+- [Features](#features)
 - [Architecture](#architecture)
 - [Tech stack](#tech-stack)
 - [Repository layout](#repository-layout)
@@ -24,7 +24,7 @@ AURIX is a testnet monetary protocol where an AI assesses a payment **before** i
 
 ---
 
-## MVP 0.1 features
+## Features
 
 | Module | Description |
 | --- | --- |
@@ -32,6 +32,8 @@ AURIX is a testnet monetary protocol where an AI assesses a payment **before** i
 | **Smart Money** | Finite-state escrow: lock, release on condition, refund at deadline |
 | **Neural Guardian** | Advisory risk score with explained reasons (SHAP) before confirmation |
 | **PayPal connector** | USD payment via PayPal Orders API (local simulator now, Sandbox next), signed and idempotent webhook, tracking proof anchored on AURIX once **k-of-n independent attestors** confirmed the capture at PayPal |
+| **Conditional USD payment** (MVP 0.2) | PayPal holds the funds (authorize); AURIX captures only on a carrier's signed delivery evidence before the deadline, or voids. Signed, exportable proof package verifiable offline or in the browser (decision replayed). Optional arbiter |
+| **AI advisor** (MVP 0.2) | Gemma 4 explains a conditional payment and briefs the arbiter. Advisory only: it never decides |
 
 ## Architecture
 

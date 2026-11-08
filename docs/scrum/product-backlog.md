@@ -39,6 +39,10 @@ MoSCoW priority: **M** (Must), **S** (Should), **C** (Could), **W** (Won't, MVP 
 | US-20 | E3 | Graph-based relational analysis (GNN) | — | W | 13 | Won't (MVP 0.1) |
 | US-21 | E6 | Kubernetes deployment | — | W | 8 | Won't (MVP 0.1) |
 | US-22 | E1 | Multi-validator network | — | W | 13 | Won't (MVP 0.1) |
+| US-23 | E2 | As a buyer, I want to pay in USD only when the delivery is attested | PayPal authorization; capture on signed carrier evidence before the deadline, void otherwise; signed decision | M | 13 | Done (MVP 0.2, simulator-tested) |
+| US-24 | E2 | As anyone, I want to verify a payment proof without access to AURIX or PayPal | Offline CLI and in-browser verifier; decision replayed; a modified byte is detected | M | 8 | Done (MVP 0.2) |
+| US-25 | E3 | As a buyer or arbiter, I want an AI to explain a conditional payment | Gemma 4 explanation and arbiter brief, advisory only, template fallback | S | 5 | Done (MVP 0.2; real Gemma 4 not yet tested) |
+| US-26 | E2 | As an arbiter, I want to hold and decide a disputed payment | Signed HOLD/UNHOLD/RELEASE/VOID; demo arbiter in dev only | S | 3 | Done (MVP 0.2) |
 
 **MVP 0.1 total (M + S)**: 78 story points + 3 points of setup tasks (S0) = **81 points**.
 
