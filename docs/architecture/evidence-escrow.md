@@ -1,6 +1,6 @@
 # AURIX MVP 0.2 — Escrow à preuves (Evidence-Released USD Escrow)
 
-**Statut :** implémenté sur la branche `MVP_0.1` (testé avec le simulateur PayPal ; à valider sur la PayPal Sandbox réelle). Conseiller IA (Gemma 4, consultatif) et boutons d'arbitre ajoutés (§7 bis). Reste : test avec un vrai Gemma 4, vérification dans le navigateur, déploiement Render.
+**Statut :** implémenté sur la branche `MVP_0.1` et revu (revue complète du 2026-11-08, constats corrigés). Testé de bout en bout avec le simulateur PayPal et la vraie chaîne. Reste : validation sur la PayPal Sandbox réelle, test avec un vrai modèle Gemma 4, déploiement Render.
 **Date :** 2026-11-08
 **Position :** version intermédiaire entre le MVP 0.1 (hackathon) et le MVP 0.3 complète
 ([`mscfa.md`](mscfa.md) : MSCFA complet + escrow USD on-chain, §14 bis).
@@ -47,7 +47,12 @@ Un acheteur commande un article à 120 USD, livraison sous 7 jours.
 Variantes à montrer :
 - **Pas de livraison avant la date limite** : décision `VOID`, l'autorisation est annulée, l'acheteur n'est pas débité.
 - **Attestation falsifiée** (signature invalide ou montant différent) : rejetée, pas de capture, anomalie dans le dossier.
-- **Litige** : l'arbitre bloque la libération avant la date limite ; décision `HOLD`, puis `RELEASE` ou `VOID` par l'arbitre.
+- **Litige** : l'arbitre bloque la libération avant la date limite ; décision `HOLD`, puis `RELEASE` ou `VOID` par l'arbitre,
+  toujours avant la date limite. Un blocage encore en place à la date limite se termine en `VOID` : l'acheteur est
+  remboursé plutôt que de laisser les fonds bloqués au-delà de l'autorisation PayPal.
+
+Ajouts au périmètre initial, décidés pendant le développement : une échéance en minutes pour la démo
+(désactivée en production) et le vérificateur dans le navigateur (`web/verify.js`, prévu en MVP 0.3, avancé).
 
 ## 4. Architecture
 
@@ -90,16 +95,18 @@ consensus BFT sur la décision elle-même.
 Fonction pure, versionnée (`rule = "delivery-attested/1"`), partagée par `payments` et `aurix-verify` :
 
 ```text
-decide(order, attestations, now) ->
-  if arbiter_hold présent et non levé           -> HOLD
-  if arbiter_decision présente                  -> arbiter_decision (RELEASE | VOID)
-  if now > order.deadline                       -> VOID
-  d = attestation shipment.delivered valide où :
-        signature vérifiée avec une clé enregistrée pour ce transporteur, non révoquée
-        d.order_id == order.order_id
-        d.event_time <= order.deadline
-  if d existe et payment.authorized existe
-     et montant/devise == ceux de la commande   -> RELEASE
+decide(terms, evidence, now) ->
+  # une preuve ne compte que si sa signature est valide, sa clé a le bon rôle, et
+  # operation_id == provider_reference.order_id (si présent) == terms.order_id
+  a = dernière action de l'arbitre désigné, signée et REÇUE par AURIX avant la date limite
+  if a == RELEASE ou VOID                       -> a
+  if a == HOLD : if now > deadline -> VOID  sinon -> HOLD
+  auth = payment.authorized (clé AURIX) au montant et à la devise exacts des termes
+  d = shipment.delivered du transporteur convenu (clé source:<transporteur>), avec
+        event_time <= deadline, event_time <= now,
+        et REÇUE par AURIX (reçu signé) <= deadline
+  if auth et d                                  -> RELEASE
+  if now > deadline                             -> VOID
   sinon                                         -> WAIT
 ```
 
@@ -107,11 +114,19 @@ Règles : montants en décimal (jamais de `float`) ; références comparées exa
 montant ou de date) ; la décision et ses entrées (hash de chaque attestation) sont signées par AURIX et
 ajoutées au dossier.
 
+Pourquoi l'heure de **réception** : l'heure d'un événement est déclarée par celui qui signe et peut être
+antidatée ; l'heure à laquelle AURIX a reçu la preuve est enregistrée dans un reçu signé (`receipts.json`). Une
+livraison réellement survenue avant la date limite mais évaluée après (le poller passe toutes les quelques
+secondes) donne `RELEASE` si AURIX l'a reçue à temps. Pour la même raison, la validité d'une clé est vérifiée à
+l'heure de réception, et non à la date `created_at` choisie par le signataire.
+
 ## 6. Formats
 
 Attestations au format `aurix.financial-attestation` v1.0 décrit dans [`mscfa.md`](mscfa.md) §6, limité à :
-`payment.authorized`, `shipment.delivered`, `payment.captured` (avec référence à la `PaymentProof` on-chain),
-`payment.voided`, `arbiter.decision`.
+`payment.authorized`, `shipment.delivered`, `payment.captured`, `payment.anchored`, `payment.voided`,
+`arbiter.decision`. La référence à la `PaymentProof` on-chain est portée par `payment.anchored` (source
+`aurix_chain`, méthode `aurix_chain_kofn_attestation`), émise une fois la preuve confirmée par k attestors :
+`payment.captured` est émis plus tôt, à la réception du webhook, quand la preuve n'existe pas encore.
 
 Décision :
 
@@ -171,20 +186,25 @@ Code : `payments/aurix_payments/advisor.py`.
 - Une attestation de livraison sans signature valide d'une clé enregistrée est rejetée et journalisée.
 - Capture et void sont idempotents (clé d'idempotence PayPal = `order_id + decision`) ; une décision `RELEASE`
   ne peut jamais être suivie d'un `VOID`, et inversement (machine à états testée).
-- Une capture n'est présentée comme `CAPTURED` qu'après le webhook PayPal signé ; `CONFIRMED` après l'attestation k-sur-n.
+- Statuts, comme pour le paiement immédiat existant : `CAPTURED` dès la réponse authentifiée de l'API PayPal,
+  `CONFIRMED` à la réception du webhook signé, `ANCHORED` une fois la preuve confirmée par k attestors. Seul
+  `ANCHORED` (et l'attestation `payment.anchored`) vaut preuve de paiement dans l'interface et le dossier.
+- Les identifiants d'attestation externes sont contraints (`[A-Za-z0-9_-]{1,64}`, préfixe `att_` réservé à AURIX).
+- Les appels au conseiller IA sont limités (langue sur liste fermée, débit par commande et global, un avis
+  conservé par type). L'API n'a pas de comptes utilisateurs sur le testnet : limite déclarée dans le Devpost.
 - Le dossier exporté ne contient ni données personnelles du payeur ni payload brut (seulement son hash).
 
 ## 9. Critères d'acceptation
 
-- [ ] Une commande conditionnelle crée une autorisation PayPal ; l'acheteur n'est pas débité.
-- [ ] Une livraison attestée et valide déclenche la capture, puis l'ancrage k-sur-n.
-- [ ] Sans livraison avant la date limite, l'autorisation est annulée.
-- [ ] Une attestation falsifiée ou incohérente est rejetée et n'entraîne aucune capture.
-- [ ] L'arbitre peut bloquer puis trancher avant la date limite.
-- [ ] `aurix-verify` revérifie le dossier hors ligne et obtient la même décision en rejouant la règle.
-- [ ] Une modification d'un octet du dossier est détectée.
-- [ ] La source simulée est signalée dans l'interface, le dossier et le rapport.
-- [ ] `payments` garde son comportement actuel pour les commandes non conditionnelles (non-régression).
+- [x] Une commande conditionnelle crée une autorisation PayPal ; l'acheteur n'est pas débité. — `test_escrow.py::test_delivery_evidence_releases_the_payment`
+- [x] Une livraison attestée et valide déclenche la capture, puis l'ancrage k-sur-n. — e2e `demo-journey.js` sur la vraie chaîne (2 attestors)
+- [x] Sans livraison avant la date limite, l'autorisation est annulée. — `test_no_evidence_before_deadline_voids_the_authorization`, e2e `E2E_VOID=1`
+- [x] Une attestation falsifiée ou incohérente est rejetée et n'entraîne aucune capture. — `test_forged_or_misattributed_evidence_is_refused`, `test_review_fixes.py`
+- [x] L'arbitre peut bloquer puis trancher avant la date limite. — `test_arbiter_hold_then_void`, `test_arbiter_hold_still_in_place_at_deadline_voids`
+- [x] `aurix-verify` revérifie le dossier hors ligne et obtient la même décision en rejouant la règle. — `verifier/tests`, e2e (CLI) et parité Python/JS
+- [x] Une modification d'un octet du dossier est détectée. — `test_one_byte_change_is_detected`, bouton « Tamper » (e2e)
+- [x] La source simulée est signalée dans l'interface, le dossier et le rapport. — interface, `trust-metadata.json`, limites du rapport
+- [x] `payments` garde son comportement actuel pour les commandes non conditionnelles (non-régression). — suites `payments` et `gateway` existantes vertes
 
 ## 10. Effort estimé
 
