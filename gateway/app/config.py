@@ -15,6 +15,9 @@ class Settings:
     # Internal services the gateway routes to.
     indexer_url: str = field(default_factory=lambda: _env("INDEXER_URL", "http://localhost:8086"))
     payments_url: str = field(default_factory=lambda: _env("PAYMENTS_URL", "http://localhost:8085"))
+    # Browser-facing URL of the SIMULATED carrier (demo buttons of the conditional payment), announced in
+    # /api/health so the wallet works whatever the ports or host; empty = the wallet's config.json value.
+    delivery_public_url: str = field(default_factory=lambda: _env("DELIVERY_PUBLIC_URL", ""))
     guardian_url: str = field(default_factory=lambda: _env("GUARDIAN_URL", "http://localhost:8000"))
     # H3 quorum: comma separated Guardian URLs (falls back to GUARDIAN_URL), how many valid signed scores
     # are required for quorum_met, and an optional allowlist of guardian pubkeys (33-byte compressed hex).

@@ -132,6 +132,7 @@ wait_for delivery-sim "http://127.0.0.1:$DELIVERY_PORT/health"
 CHAIN_RPC_URL="http://127.0.0.1:$RPC_PORT" CHAIN_REST_URL="http://127.0.0.1:$REST_PORT" \
 GUARDIAN_URLS="$GUARDIAN_URLS" GUARDIAN_QUORUM=$GUARDIAN_QUORUM DATABASE_URL="sqlite:///$RUN_DIR/gateway.db" \
 INDEXER_URL="http://127.0.0.1:$INDEXER_PORT" PAYMENTS_URL="http://127.0.0.1:$PAYMENTS_PORT" \
+DELIVERY_PUBLIC_URL="http://localhost:$DELIVERY_PORT" \
   start gateway "$ROOT/gateway" .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port "$GATEWAY_PORT"
 wait_for gateway "http://127.0.0.1:$GATEWAY_PORT/api/health"
 CHAIN_ID=$(curl -fsS "http://127.0.0.1:$RPC_PORT/status" | jq -r .result.node_info.network)

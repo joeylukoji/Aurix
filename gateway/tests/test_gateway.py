@@ -317,3 +317,9 @@ def test_evidence_escrow_through_the_gateway(paypal_env):
     assert z.headers["content-disposition"].endswith(f'aurix-proof-{oid}.zip"')
     rep = verify_package(read_zip(z.content), c.get("/api/escrow/keys").json())
     assert rep["result"] == "VALID", rep["errors"]
+
+
+def test_health_announces_the_simulated_carrier_url(chain_urls, tmp_path, monkeypatch):
+    monkeypatch.setenv("DELIVERY_PUBLIC_URL", "http://localhost:18087")
+    c = make(chain_urls, tmp_path)
+    assert c.get("/api/health").json()["delivery_url"] == "http://localhost:18087"

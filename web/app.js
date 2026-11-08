@@ -295,7 +295,8 @@ async function createOrder() {
 // ---------- Conditional USD payment (evidence-released escrow, MVP 0.2) ----------
 let escrowAdvisor = null; // {enabled, model, demo_arbiter} from payments
 const CD_FINAL = ["ANCHORED", "VOIDED", "AUTH_FAILED", "DENIED", "CANCELLED"];
-const deliveryUrl = () => (C.config?.delivery || "").replace(/\/+$/, "");
+// The gateway announces where the simulated carrier is (deployment-specific); config.json is the fallback.
+const deliveryUrl = () => (C.health?.delivery_url || C.config?.delivery || "").replace(/\/+$/, "");
 async function refreshCond() { if (C.gatewayOk && !escrowAdvisor) escrowAdvisor = await api("/api/escrow/advisor").catch(() => null);
   const demo = document.querySelector('#cdDays option[data-demo]'); if (demo) demo.hidden = !escrowAdvisor?.demo_arbiter;
   if (C.gatewayOk) set("condGrid", (await api("/api/escrow/orders")).map((o) => ({

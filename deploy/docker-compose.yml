@@ -215,6 +215,8 @@ services:
       CHAIN_REST_URL: http://chain0:1317
       INDEXER_URL: http://indexer:8086
       PAYMENTS_URL: http://payments:8085
+      # Where the browser reaches the SIMULATED carrier (wallet demo buttons).
+      DELIVERY_PUBLIC_URL: ${DELIVERY_PUBLIC_URL:-http://localhost:8087}
       # H3 quorum for the advisory risk score of AUR transfers/escrows.
       GUARDIAN_URLS: ${GUARDIAN_URLS:-http://guardian:8000,http://guardian2:8000}
       GUARDIAN_QUORUM: ${GUARDIAN_QUORUM:-2}

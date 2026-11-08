@@ -113,9 +113,12 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
             paypal_mode = payments.get("/health", timeout=3).json().get("paypal_mode", "unknown")
         except (httpx.HTTPError, ValueError):
             paypal_mode = "unavailable"
-        return {"status": "ok", "paypal_mode": paypal_mode,
-                "guardians": len(guardian.urls) if hasattr(guardian, "urls") else 1,
-                "guardian_quorum": getattr(guardian, "quorum", 1)}
+        out = {"status": "ok", "paypal_mode": paypal_mode,
+               "guardians": len(guardian.urls) if hasattr(guardian, "urls") else 1,
+               "guardian_quorum": getattr(guardian, "quorum", 1)}
+        if s.delivery_public_url:
+            out["delivery_url"] = s.delivery_public_url
+        return out
 
     @app.get("/api/chain/status")
     def chain_status():

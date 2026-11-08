@@ -81,6 +81,7 @@ All images honour `PORT`, which Render sets for web services.
 | `DELIVERY_SIM_KEY_FILE` | delivery-sim | dev seed (refused in production) | Ed25519 seed (hex) of the simulated carrier |
 | `AURIX_SECRETS_DIR` | compose | `./secrets` (i.e. `deploy/secrets/`) | host folder mounted read-only at `/run/aurix-secrets`; see [`secrets/README.md`](secrets/README.md) |
 | `ADVISOR_LLM_URL` / `ADVISOR_LLM_MODEL` / `ADVISOR_LLM_API_KEY` | payments | empty / `gemma4:e4b` / empty | AI advisor (advisory only), any OpenAI-compatible endpoint; empty URL = template text |
+| `DELIVERY_PUBLIC_URL` | gateway | empty (`config.json` value) | browser-facing URL of delivery-sim, announced in `/api/health` |
 | `DELIVERY_CORS_ORIGINS` | delivery-sim (compose) | `*` | origins allowed to call the demo carrier; set to the wallet's origin when hosted |
 | `PORT` | all HTTP images | 8080 / 8000 / 8090 / 8087 | listen port |
 
