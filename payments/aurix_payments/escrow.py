@@ -13,32 +13,34 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import re
 import uuid
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Callable, Mapping
+from typing import Callable
 
 import httpx
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import Response
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from aurix_common.clients import PayPalError
-from aurix_common.keys import KeyConfigError, is_production
 from aurix_verify import crypto
+from aurix_verify.attestation import make_attestation
 from aurix_verify.jcs import digest
 from aurix_verify.package import build_package, read_zip, receipts_doc, verify_package
 
+from aurix_verify.rule import RELEASE, RULE_ID, VOID, WAIT, Evidence, decide
+
 from .advisor import Advisor, facts
-from aurix_verify.rule import HOLD, RELEASE, RULE_ID, VOID, WAIT, Evidence, decide
+# DEV_CARRIER, load_signer and load_external_keys are re-exported for main.py and the tests.
+from .escrow_keys import (DEMO_CARRIER, DEV_ARBITER, DEV_CARRIER, dev_key_entry, load_external_keys,  # noqa: F401
+                          load_signer)
 
 log = logging.getLogger("aurix.escrow")
 
-DEMO_CARRIER = "aurix_demo_delivery"
 MAX_DEADLINE_DAYS = 29  # lifetime of a PayPal authorization
 FINAL = {RELEASE, VOID}
 LANGS = {"French", "English", "Spanish", "Portuguese", "German", "Swahili"}  # advisor output languages
@@ -50,8 +52,23 @@ ADVICE_MIN_INTERVAL = 5.0    # seconds between advisor calls for one order
 ADVICE_PER_MINUTE = 30       # advisor calls per minute for the whole service
 
 
-def utcnow() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+utcnow = crypto.utcnow
+
+
+class Status:
+    """Order states of an escrow (paypal_orders.status); see the EscrowService docstring for transitions."""
+    SCORED, AUTHORIZING, AUTHORIZED = "SCORED", "AUTHORIZING", "AUTHORIZED"
+    RELEASING, VOIDING = "RELEASING", "VOIDING"
+    CAPTURED, CAPTURE_PENDING, DENIED = "CAPTURED", "CAPTURE_PENDING", "DENIED"
+    ANCHORED, VOIDED, AUTH_FAILED = "ANCHORED", "VOIDED", "AUTH_FAILED"
+
+
+class EscrowError(Exception):
+    """A refused escrow operation (business rule), mapped to an HTTP status once, in register()."""
+
+    def __init__(self, status: int, detail: str):
+        super().__init__(detail)
+        self.status, self.detail = status, detail
 
 
 def _raw_hash(raw) -> str | None:
@@ -59,51 +76,6 @@ def _raw_hash(raw) -> str | None:
     if raw is None:
         return None
     return "sha256:" + hashlib.sha256(json.dumps(raw, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-
-
-def _dev_seed(label: str) -> bytes:
-    return hashlib.sha256(label.encode()).digest()
-
-
-def load_signer(env: Mapping[str, str] | None = None) -> crypto.Signer:
-    """ESCROW_KEY_FILE (hex 32-byte Ed25519 seed) > ESCROW_SEED / built-in dev seed (refused in production)."""
-    env = os.environ if env is None else env
-    key_id = env.get("ESCROW_KEY_ID", "aurix-escrow-dev-1")
-    path = env.get("ESCROW_KEY_FILE", "").strip()
-    if path:
-        try:
-            with open(path) as f:
-                return crypto.Signer.from_seed(key_id, bytes.fromhex(f.read().strip()))
-        except (OSError, ValueError) as e:
-            raise KeyConfigError(f"ESCROW_KEY_FILE {path}: {e}") from None
-    if is_production(env):
-        raise KeyConfigError("ESCROW_KEY_FILE is required when AURIX_ENV=production")
-    log.warning("escrow signing key from a dev seed — never use on a public network")
-    return crypto.Signer.from_seed(key_id, _dev_seed(env.get("ESCROW_SEED", "aurix-dev-escrow")))
-
-
-def dev_key_entry(signer: crypto.Signer, role: str, owner: str, source_type: str = "real") -> dict:
-    return {"key_id": signer.key_id, "alg": crypto.ALG, "public_key": signer.public_key, "role": role,
-            "owner": owner, "source_type": source_type, "valid_from": "2026-01-01T00:00:00Z",
-            "valid_until": None, "revoked_at": None, "revocation_reason": None}
-
-
-DEV_CARRIER = crypto.Signer.from_seed("aurix-demo-delivery-dev-1", _dev_seed("aurix-dev-delivery"))
-DEV_ARBITER = crypto.Signer.from_seed("aurix-arbiter-dev-1", _dev_seed("aurix-dev-arbiter"))
-
-
-def load_external_keys(env: Mapping[str, str] | None = None) -> list[dict]:
-    """Keys of the sources and arbiters AURIX accepts (ESCROW_TRUSTED_KEYS_FILE, a public-keys.json).
-    Without it, outside production: the dev demo carrier and dev arbiter."""
-    env = os.environ if env is None else env
-    path = env.get("ESCROW_TRUSTED_KEYS_FILE", "").strip()
-    if path:
-        with open(path) as f:
-            return json.load(f)["keys"]
-    if is_production(env):
-        return []
-    return [dev_key_entry(DEV_CARRIER, f"source:{DEMO_CARRIER}", "AURIX demo carrier (simulated)", "simulated"),
-            dev_key_entry(DEV_ARBITER, "arbiter", "AURIX demo arbiter")]
 
 
 class EscrowOrderReq(BaseModel):
@@ -188,23 +160,13 @@ class EscrowService:
         if provider == "paypal":
             st, envr = self.paypal_source
             source_type, environment = source_type or st, environment or envr
-        att = {"schema": "aurix.financial-attestation", "schema_version": "1.0",
-               "attestation_id": "att_" + hashlib.sha256(f"{provider}|{provider_event_id}".encode()).hexdigest()[:20],
-               "operation_id": order_id,
-               "source": {"provider": provider, "source_type": source_type or "real",
-                          "environment": environment or "testnet", "provider_event_id": provider_event_id,
-                          "provider_reference": {"order_id": order_id, **refs}, "verification_method": method,
-                          "verified_by": "aurix-payments", "verification_status": "verified"},
-               "event": {"type": etype},
-               "timestamps": {"source_event_time": source_event_time or now, "aurix_received_at": now,
-                              "attested_at": now},
-               "provenance": {"connector_id": "aurix-payments/0.2",
-                              "raw_payload_hash": _raw_hash(raw)}}
-        if provider_status:
-            att["event"]["provider_status"] = provider_status
-        if amount:
-            att["event"]["amount"] = {"value": str(amount.get("value")),
-                                      "currency": str(amount.get("currency_code") or amount.get("currency"))}
+        att = make_attestation(
+            attestation_id="att_" + hashlib.sha256(f"{provider}|{provider_event_id}".encode()).hexdigest()[:20],
+            operation_id=order_id, provider=provider, provider_event_id=provider_event_id, event_type=etype,
+            source_type=source_type or "real", environment=environment or "testnet", verification_method=method,
+            refs=refs, provider_status=provider_status, amount=amount, verified_by="aurix-payments",
+            source_event_time=source_event_time or now, aurix_received_at=now, attested_at=now,
+            provenance={"connector_id": "aurix-payments/0.2", "raw_payload_hash": _raw_hash(raw)})
         return self._store(att, self.signer.sign(att, now), now)
 
     def evidence(self, order_id: str) -> list[tuple[dict, dict, str]]:
@@ -229,61 +191,61 @@ class EscrowService:
             if amount <= 0 or amount.as_tuple().exponent < -2:
                 raise InvalidOperation
         except InvalidOperation:
-            raise HTTPException(422, "amount_usd must be a positive amount with at most 2 decimals")
+            raise EscrowError(422, "amount_usd must be a positive amount with at most 2 decimals")
         if req.deadline_minutes is not None:
             if not self.demo_arbiter:  # demo features are off in production
-                raise HTTPException(422, "deadline_minutes is a demo option, disabled in production")
+                raise EscrowError(422, "deadline_minutes is a demo option, disabled in production")
             if not 1 <= req.deadline_minutes <= 24 * 60:
-                raise HTTPException(422, "deadline_minutes must be between 1 and 1440")
+                raise EscrowError(422, "deadline_minutes must be between 1 and 1440")
         elif not 1 <= req.deadline_days <= MAX_DEADLINE_DAYS:
-            raise HTTPException(422, f"deadline_days must be between 1 and {MAX_DEADLINE_DAYS} "
+            raise EscrowError(422, f"deadline_days must be between 1 and {MAX_DEADLINE_DAYS} "
                                      "(a PayPal authorization lasts at most 29 days)")
         if not any(k.get("role") == f"source:{req.carrier}" for k in self.keys["keys"]):
-            raise HTTPException(422, f"unknown carrier {req.carrier!r}: no registered key")
+            raise EscrowError(422, f"unknown carrier {req.carrier!r}: no registered key")
         if req.arbiter_key_id and self.registry.role(req.arbiter_key_id) != "arbiter":
-            raise HTTPException(422, f"unknown arbiter key {req.arbiter_key_id!r}")
+            raise EscrowError(422, f"unknown arbiter key {req.arbiter_key_id!r}")
         value = f"{amount:.2f}"
         order = self.paypal.create_order(value, req.description, intent="AUTHORIZE")
         risk = self.guardian.score(context="paypal_order", sender=req.payer or "anonymous", recipient="merchant",
                                    amount=float(amount), currency="USD")
         created = self.clock()
         span = timedelta(minutes=req.deadline_minutes) if req.deadline_minutes else timedelta(days=req.deadline_days)
-        deadline = (crypto.parse_time(created) + span).strftime("%Y-%m-%dT%H:%M:%SZ")
+        deadline = crypto.format_time(crypto.parse_time(created) + span)
         terms = {"schema": "aurix.escrow-terms", "schema_version": "1.0", "order_id": order["id"],
                  "amount": {"value": value, "currency": "USD"}, "deadline": deadline, "rule": RULE_ID,
                  "condition": "delivery-attested", "carrier": req.carrier, "arbiter_key_id": req.arbiter_key_id,
                  "created_at": created}
         self.db.exec("INSERT INTO paypal_orders(order_id, amount_usd, payer, description, status, risk_score,"
                      " risk_level, simulated) VALUES (?,?,?,?,?,?,?,?)", order["id"], value, req.payer,
-                     req.description, "SCORED", risk and risk["risk_score"], risk and risk["level"],
+                     req.description, Status.SCORED, risk and risk["risk_score"], risk and risk["level"],
                      int(self.paypal_mode == "simulator"))
         self.db.save_risk("paypal_order", order["id"], risk)
         self.db.exec("INSERT INTO escrow_terms(order_id, terms, terms_sig) VALUES (?,?,?)", order["id"],
                      json.dumps(terms), json.dumps(self.signer.sign(terms, created)))
         approve = next((l["href"] for l in order.get("links", []) if l["rel"] in ("approve", "payer-action")), None)
-        return {"order_id": order["id"], "status": "SCORED", "terms": terms, "approve_url": approve, "risk": risk,
+        return {"order_id": order["id"], "status": Status.SCORED, "terms": terms, "approve_url": approve, "risk": risk,
                 "advisory_only": True, "paypal_mode": self.paypal_mode}
 
     def authorize(self, order_id: str, confirm: bool) -> dict:
         """After the buyer approved on PayPal: hold the funds. Nothing is captured."""
         if not confirm:
-            raise HTTPException(400, "explicit approval required (confirm=true)")
+            raise EscrowError(400, "explicit approval required (confirm=true)")
         self._order(order_id)
         cur = self.db.exec("UPDATE paypal_orders SET status='AUTHORIZING' WHERE order_id=? AND status='SCORED'",
                            order_id)
         if cur.rowcount != 1:  # a concurrent confirm already started (or the order moved on)
-            raise HTTPException(409, f"order is {self._order(order_id)['status']}")
+            raise EscrowError(409, f"order is {self._order(order_id)['status']}")
         try:
             res = self.paypal.authorize(order_id)
         except Exception:
-            self.db.update_order(order_id, status="SCORED")  # nothing held: the buyer may approve again
+            self.db.update_order(order_id, status=Status.SCORED)  # nothing held: the buyer may approve again
             raise
         auth = res["purchase_units"][0]["payments"]["authorizations"][0]
-        status = "AUTHORIZED" if auth.get("status") in ("CREATED", "PENDING") else "AUTH_FAILED"
+        status = Status.AUTHORIZED if auth.get("status") in ("CREATED", "PENDING") else Status.AUTH_FAILED
         self.db.update_order(order_id, status=status,
-                             last_error=None if status == "AUTHORIZED" else f"authorization {auth.get('status')}")
+                             last_error=None if status == Status.AUTHORIZED else f"authorization {auth.get('status')}")
         self.db.exec("UPDATE escrow_terms SET authorization_id=? WHERE order_id=?", auth["id"], order_id)
-        if status == "AUTHORIZED":
+        if status == Status.AUTHORIZED:
             self.attest(order_id, "payment.authorized", provider="paypal", provider_event_id=f"authorization:{auth['id']}",
                         refs={"authorization_id": auth["id"]}, method="paypal_api_authenticated",
                         provider_status=auth.get("status"), amount=auth.get("amount"),
@@ -294,38 +256,38 @@ class EscrowService:
         """An attestation signed by an external source (carrier) or an arbiter."""
         src, event, ts = att.get("source"), att.get("event"), att.get("timestamps")
         if att.get("schema") != "aurix.financial-attestation" or not all(isinstance(x, dict) for x in (src, event, ts)):
-            raise HTTPException(422, "unsupported attestation: schema, source, event and timestamps are required")
+            raise EscrowError(422, "unsupported attestation: schema, source, event and timestamps are required")
         aid, peid = att.get("attestation_id"), src.get("provider_event_id")
         if not isinstance(aid, str) or not ID_RE.match(aid):
-            raise HTTPException(422, "attestation_id must be 1-64 characters among A-Z a-z 0-9 _ -")
+            raise EscrowError(422, "attestation_id must be 1-64 characters among A-Z a-z 0-9 _ -")
         if aid.startswith("att_"):
-            raise HTTPException(422, "attestation ids starting with att_ are reserved for AURIX")
+            raise EscrowError(422, "attestation ids starting with att_ are reserved for AURIX")
         if not isinstance(peid, str) or not 0 < len(peid) <= MAX_EVENT_ID:
-            raise HTTPException(422, f"source.provider_event_id is required (at most {MAX_EVENT_ID} characters)")
+            raise EscrowError(422, f"source.provider_event_id is required (at most {MAX_EVENT_ID} characters)")
         if not isinstance(sig, dict) or not isinstance(sig.get("key_id"), str):
-            raise HTTPException(422, "signature block with key_id required")
+            raise EscrowError(422, "signature block with key_id required")
         verdict = self.registry.verify(att, sig)
         if verdict != crypto.VALID:
             log.warning("evidence refused (%s): %s", verdict, aid)
-            raise HTTPException(422, f"signature {verdict}")
+            raise EscrowError(422, f"signature {verdict}")
         received = self.clock()
         if not self.registry.valid_at(sig["key_id"], crypto.parse_time(received)):
             # created_at is the signer's claim; the key must be valid now, when AURIX receives the evidence
-            raise HTTPException(422, "signing key is not valid at reception time")
+            raise EscrowError(422, "signing key is not valid at reception time")
         role = self.registry.role(sig["key_id"]) or ""
         etype, provider = event.get("type", ""), src.get("provider")
         if role.startswith("source:"):
             if provider != role.removeprefix("source:") or not str(etype).startswith("shipment."):
-                raise HTTPException(422, f"a {role} key may only attest shipment events of {role[7:]}")
+                raise EscrowError(422, f"a {role} key may only attest shipment events of {role[7:]}")
         elif role == "arbiter":
             if etype != "arbiter.decision" or provider != "arbiter":
-                raise HTTPException(422, "an arbiter key may only attest arbiter.decision with provider 'arbiter'")
+                raise EscrowError(422, "an arbiter key may only attest arbiter.decision with provider 'arbiter'")
         else:
-            raise HTTPException(422, f"keys with role {role!r} cannot submit evidence")
+            raise EscrowError(422, f"keys with role {role!r} cannot submit evidence")
         order_id = att.get("operation_id")
         terms = self._terms(order_id if isinstance(order_id, str) else None)
         if role == "arbiter" and terms.get("arbiter_key_id") != sig["key_id"]:
-            raise HTTPException(403, "this key is not the arbiter of this order")
+            raise EscrowError(403, "this key is not the arbiter of this order")
         stored = self._store(att, sig, received)
         result = self.evaluate(order_id) if stored else None
         return {"result": "stored" if stored else "duplicate", "evaluation": result}
@@ -338,7 +300,7 @@ class EscrowService:
             terms = json.loads(row["terms"])
             if row["decision"]:
                 return {"decision": row["decision"], "final": True}
-            if o["status"] != "AUTHORIZED":
+            if o["status"] != Status.AUTHORIZED:
                 return {"decision": WAIT, "final": False, "reasons": [f"order is {o['status']}"]}
             now = self.clock()
             out = decide(terms, self._as_rule_evidence(self.evidence(order_id), until=now), now)
@@ -354,7 +316,7 @@ class EscrowService:
                                json.dumps(self.signer.sign(doc, now)), order_id)
             if cur.rowcount != 1:  # someone else decided first
                 return {"decision": self._terms_row(order_id)["decision"], "final": True}
-            self.db.update_order(order_id, status="RELEASING" if out.decision == RELEASE else "VOIDING")
+            self.db.update_order(order_id, status=Status.RELEASING if out.decision == RELEASE else Status.VOIDING)
         self.execute(order_id)
         return {"decision": out.decision, "final": True, "reasons": out.reasons}
 
@@ -363,25 +325,25 @@ class EscrowService:
         thread may both get here; network errors are retried by tick()."""
         with self.lock:
             o = self._order(order_id)
-            if o["status"] not in ("RELEASING", "VOIDING"):
+            if o["status"] not in (Status.RELEASING, Status.VOIDING):
                 return  # already carried out by another thread
             auth_id = self._terms_row(order_id)["authorization_id"]
             try:
-                if o["status"] == "RELEASING":
+                if o["status"] == Status.RELEASING:
                     self._capture(order_id, auth_id)
                 else:
                     self._void(order_id, auth_id)
             except PayPalError as e:
-                done = {"RELEASING": "AUTHORIZATION_ALREADY_CAPTURED", "VOIDING": "AUTHORIZATION_VOIDED"}[o["status"]]
+                done = {Status.RELEASING: "AUTHORIZATION_ALREADY_CAPTURED", Status.VOIDING: "AUTHORIZATION_VOIDED"}[o["status"]]
                 if e.issue == done:  # a previous attempt succeeded but its result was lost: same outcome
-                    if o["status"] == "VOIDING":
+                    if o["status"] == Status.VOIDING:
                         self._mark_voided(order_id, auth_id)
                     else:
                         self.db.update_order(order_id, last_error="capture already done at PayPal; "
                                                                   "waiting for its webhook")
                 elif e.issue in ("AUTHORIZATION_EXPIRED", "AUTHORIZATION_VOIDED", "AUTHORIZATION_ALREADY_CAPTURED",
                                  "INVALID_STATE") or e.status == 422:
-                    self.db.update_order(order_id, status="AUTH_FAILED", last_error=f"PayPal: {e.issue}")
+                    self.db.update_order(order_id, status=Status.AUTH_FAILED, last_error=f"PayPal: {e.issue}")
                     log.warning("escrow %s: PayPal refused %s: %s", order_id, o["status"], e.issue)
                 else:
                     self.db.update_order(order_id, last_error=f"PayPal error, retrying: {e.issue}")
@@ -392,20 +354,20 @@ class EscrowService:
 
     def _capture(self, order_id: str, auth_id: str) -> None:
         cap = self.paypal.capture_authorization(auth_id, request_id=f"aurix-{order_id}-release")
-        status = {"COMPLETED": "CAPTURED", "PENDING": "CAPTURE_PENDING"}.get(cap.get("status"), "DENIED")
+        status = {"COMPLETED": Status.CAPTURED, "PENDING": Status.CAPTURE_PENDING}.get(cap.get("status"), Status.DENIED)
         amt = cap.get("amount") or {}
         self.db.update_order(order_id, status=status, capture_id=cap["id"],
                              capture_amount=amt.get("value"), capture_currency=amt.get("currency_code"),
-                             last_error=None if status != "DENIED" else f"capture {cap.get('status')}")
+                             last_error=None if status != Status.DENIED else f"capture {cap.get('status')}")
 
     def _void(self, order_id: str, auth_id: str) -> None:
         self.paypal.void_authorization(auth_id, request_id=f"aurix-{order_id}-void")
         self._mark_voided(order_id, auth_id)
 
     def _mark_voided(self, order_id: str, auth_id: str) -> None:
-        self.db.update_order(order_id, status="VOIDED", last_error=None)
+        self.db.update_order(order_id, status=Status.VOIDED, last_error=None)
         self.attest(order_id, "payment.voided", provider="paypal", provider_event_id=f"void:{auth_id}",
-                    refs={"authorization_id": auth_id}, method="paypal_api_authenticated", provider_status="VOIDED")
+                    refs={"authorization_id": auth_id}, method="paypal_api_authenticated", provider_status=Status.VOIDED)
 
     def on_paypal_event(self, event: dict, order_id: str | None) -> str | None:
         """Verified PayPal webhook events of escrow orders. Returns a result, or None if not handled here."""
@@ -420,8 +382,8 @@ class EscrowService:
             return "authorization recorded"
         if etype == "PAYMENT.AUTHORIZATION.VOIDED":
             with self.lock:
-                if self._order(order_id)["status"] in ("VOIDING", "AUTHORIZED"):
-                    self.db.update_order(order_id, status="VOIDED")
+                if self._order(order_id)["status"] in (Status.VOIDING, Status.AUTHORIZED):
+                    self.db.update_order(order_id, status=Status.VOIDED)
             self.attest(order_id, "payment.voided", provider="paypal", provider_event_id=f"void:{r.get('id')}",
                         refs={"authorization_id": r.get("id")}, method="paypal_webhook_signature",
                         provider_status=r.get("status"), raw=r)
@@ -439,7 +401,7 @@ class EscrowService:
     def record_anchor(self, order_id: str) -> None:
         """Once the payment proof is CONFIRMED on chain by k-of-n attestors, add it as evidence."""
         o = self._order(order_id)
-        if o["status"] != "ANCHORED" or not o.get("proof_hash"):
+        if o["status"] != Status.ANCHORED or not o.get("proof_hash"):
             return
         signers = json.loads(o.get("attestations") or "[]")
         self.attest(order_id, "payment.anchored", provider="aurix_chain", provider_event_id=f"proof:{o['proof_hash']}",
@@ -455,13 +417,13 @@ class EscrowService:
                              " ON o.order_id=t.order_id WHERE o.status IN"
                              " ('AUTHORIZED','RELEASING','VOIDING','ANCHORED')"):
             try:
-                if r["status"] == "AUTHORIZED" and r["decision"] in FINAL:
+                if r["status"] == Status.AUTHORIZED and r["decision"] in FINAL:
                     # decision recorded but the process stopped before the status changed: resume it
-                    self.db.update_order(r["order_id"], status="RELEASING" if r["decision"] == RELEASE else "VOIDING")
+                    self.db.update_order(r["order_id"], status=Status.RELEASING if r["decision"] == RELEASE else Status.VOIDING)
                     self.execute(r["order_id"])
-                elif r["status"] == "AUTHORIZED":
+                elif r["status"] == Status.AUTHORIZED:
                     self.evaluate(r["order_id"])
-                elif r["status"] == "ANCHORED":
+                elif r["status"] == Status.ANCHORED:
                     self.record_anchor(r["order_id"])
                 else:
                     self.execute(r["order_id"])
@@ -472,13 +434,13 @@ class EscrowService:
     def _order(self, order_id: str) -> dict:
         o = self.db.one("SELECT * FROM paypal_orders WHERE order_id=?", order_id)
         if not o or not self._terms_row(order_id):
-            raise HTTPException(404, "escrow order not found")
+            raise EscrowError(404, "escrow order not found")
         return o
 
     def _terms(self, order_id: str | None) -> dict:
         row = order_id and self._terms_row(order_id)
         if not row:
-            raise HTTPException(404, "escrow order not found")
+            raise EscrowError(404, "escrow order not found")
         return json.loads(row["terms"])
 
     def view(self, order_id: str) -> dict:
@@ -517,23 +479,23 @@ class EscrowService:
     def _advice_gate(self, order_id: str, lang: str) -> None:
         """Allowlisted language (it goes into the system prompt) and rate limits (each call costs a model run)."""
         if lang not in LANGS:
-            raise HTTPException(422, f"lang must be one of {sorted(LANGS)}")
+            raise EscrowError(422, f"lang must be one of {sorted(LANGS)}")
         now = time.monotonic()
         with self.lock:
             recent = [t for t in self._advice_calls if now - t < 60]
             if len(recent) >= ADVICE_PER_MINUTE:
-                raise HTTPException(429, "too many advisor requests; try again in a minute")
+                raise EscrowError(429, "too many advisor requests; try again in a minute")
             if now - self._advice_last.get(order_id, -1e9) < ADVICE_MIN_INTERVAL:
-                raise HTTPException(429, "advisor already asked for this order a moment ago")
+                raise EscrowError(429, "advisor already asked for this order a moment ago")
             n = self.db.one("SELECT COUNT(*) AS n FROM advisories WHERE order_id=?", order_id)["n"]
             if n >= ADVICE_PER_ORDER:
-                raise HTTPException(429, "advisor limit reached for this order")
+                raise EscrowError(429, "advisor limit reached for this order")
             self._advice_calls = recent + [now]
             self._advice_last[order_id] = now
 
     def explain(self, order_id: str, audience: str, lang: str) -> dict:
         if audience not in AUDIENCES:
-            raise HTTPException(422, f"audience must be one of {sorted(AUDIENCES)}")
+            raise EscrowError(422, f"audience must be one of {sorted(AUDIENCES)}")
         self._terms(order_id)
         self._advice_gate(order_id, lang)
         return self._save_advice(order_id, f"explanation-{audience}",
@@ -541,7 +503,7 @@ class EscrowService:
 
     def arbiter_brief(self, order_id: str, lang: str) -> dict:
         if not self._terms(order_id).get("arbiter_key_id"):
-            raise HTTPException(409, "this order has no arbiter")
+            raise EscrowError(409, "this order has no arbiter")
         self._advice_gate(order_id, lang)
         return self._save_advice(order_id, "arbiter-brief", self.advisor.arbiter_brief(self._facts(order_id), lang))
 
@@ -549,22 +511,19 @@ class EscrowService:
         """Dev/demo only: the server holds the demo arbiter's key and signs on the arbiter's click. In a real
         deployment the arbiter signs with their own key, outside AURIX, and posts to /api/escrow/evidence."""
         if not self.demo_arbiter:
-            raise HTTPException(404, "the demo arbiter is disabled")
+            raise EscrowError(404, "the demo arbiter is disabled")
         action = action.upper()
         if action not in ("HOLD", "UNHOLD", "RELEASE", "VOID"):
-            raise HTTPException(422, "action must be HOLD, UNHOLD, RELEASE or VOID")
+            raise EscrowError(422, "action must be HOLD, UNHOLD, RELEASE or VOID")
         terms = self._terms(order_id)
         if terms.get("arbiter_key_id") != DEV_ARBITER.key_id:
-            raise HTTPException(409, "the demo arbiter is not the arbiter of this order")
+            raise EscrowError(409, "the demo arbiter is not the arbiter of this order")
         now = self.clock()
         n = uuid.uuid4().hex[:12]  # unique even for two quick clicks
-        att = {"schema": "aurix.financial-attestation", "schema_version": "1.0",
-               "attestation_id": f"arb_{order_id}_{n}", "operation_id": order_id,
-               "source": {"provider": "arbiter", "source_type": "simulated", "environment": "demo",
-                          "provider_event_id": f"arbiter:{order_id}:{n}", "provider_reference": {"order_id": order_id},
-                          "verification_method": "ed25519_arbiter_key", "verification_status": "verified"},
-               "event": {"type": "arbiter.decision", "action": action},
-               "timestamps": {"source_event_time": now, "attested_at": now}}
+        att = make_attestation(attestation_id=f"arb_{order_id}_{n}", operation_id=order_id, provider="arbiter",
+                               provider_event_id=f"arbiter:{order_id}:{n}", event_type="arbiter.decision",
+                               action=action, source_type="simulated", environment="demo",
+                               verification_method="ed25519_arbiter_key", source_event_time=now, attested_at=now)
         return self.add_evidence(att, DEV_ARBITER.sign(att, now))
 
     def proof_package(self, order_id: str, with_advisories: bool = True) -> bytes:
@@ -596,6 +555,10 @@ class EscrowService:
 
 
 def register(app: FastAPI, svc: EscrowService, require_paypal: Callable[[], None]) -> None:
+    @app.exception_handler(EscrowError)
+    def _escrow_error(_: Request, e: EscrowError):
+        return JSONResponse(status_code=e.status, content={"detail": e.detail})
+
     @app.post("/api/escrow/orders")
     def create_escrow(req: EscrowOrderReq):
         require_paypal()

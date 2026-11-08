@@ -16,13 +16,14 @@ from __future__ import annotations
 import hashlib
 import os
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime
 
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from aurix_verify import crypto
+from aurix_verify.attestation import make_attestation
 
 PROVIDER = "aurix_demo_delivery"
 PAYMENTS_URL = os.environ.get("PAYMENTS_URL", "http://localhost:8085").rstrip("/")
@@ -50,18 +51,16 @@ http = httpx.Client(timeout=15)
 
 
 def now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return crypto.utcnow()
 
 
 def attestation(order_id: str, etype: str, status: str, when: str, tracking: str) -> dict:
     eid = f"{etype}:{order_id}:{tracking}"
-    return {"schema": "aurix.financial-attestation", "schema_version": "1.0",
-            "attestation_id": "dlv_" + hashlib.sha256(eid.encode()).hexdigest()[:20], "operation_id": order_id,
-            "source": {"provider": PROVIDER, "source_type": "simulated", "environment": "demo",
-                       "provider_event_id": eid, "provider_reference": {"order_id": order_id, "tracking": tracking},
-                       "verification_method": "ed25519_source_key", "verification_status": "verified"},
-            "event": {"type": etype, "provider_status": status},
-            "timestamps": {"source_event_time": when, "attested_at": now()}}
+    return make_attestation(attestation_id="dlv_" + hashlib.sha256(eid.encode()).hexdigest()[:20],
+                            operation_id=order_id, provider=PROVIDER, provider_event_id=eid, event_type=etype,
+                            provider_status=status, source_type="simulated", environment="demo",
+                            verification_method="ed25519_source_key", refs={"tracking": tracking},
+                            source_event_time=when, attested_at=now())
 
 
 def send(order_id: str, etype: str, status: str, when: str | None, forge: bool) -> dict:

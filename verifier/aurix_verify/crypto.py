@@ -4,7 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
@@ -21,6 +21,17 @@ def b64(b: bytes) -> str:
 
 def unb64(s: str) -> bytes:
     return base64.b64decode(s, validate=True)
+
+
+TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"  # UTC, second precision, "Z" (CODING_STANDARDS §2)
+
+
+def format_time(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).strftime(TIME_FORMAT)
+
+
+def utcnow() -> str:
+    return format_time(datetime.now(timezone.utc))
 
 
 def parse_time(s: str | None) -> datetime | None:

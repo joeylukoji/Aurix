@@ -221,7 +221,7 @@ def verify_package(files: dict[str, bytes], trusted_keys: dict | None = None) ->
             for e in evidence:
                 rec = received_at.get(digest(e.attestation))
                 if rec is not None and rec <= at:
-                    e.received_at = rec.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    e.received_at = crypto.format_time(rec)
                     known.append(e)
             out = decide(terms, known, decision["decided_at"])
             same_inputs = sorted(digest(a) for a in out.inputs) == sorted(decision.get("inputs", []))

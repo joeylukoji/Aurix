@@ -10,6 +10,7 @@ from aurix_payments import escrow as E
 from aurix_payments.config import Settings
 from aurix_payments.main import create_app
 from aurix_verify import crypto
+from aurix_verify.attestation import make_attestation
 from aurix_verify.package import read_zip, verify_package
 
 from .conftest import SIM
@@ -59,14 +60,10 @@ def authorized_order(c, sim, amount="120.00", **extra):
 
 
 def carrier_attestation(oid, when, signer=E.DEV_CARRIER, provider=E.DEMO_CARRIER, n=1, etype="shipment.delivered"):
-    a = {"schema": "aurix.financial-attestation", "schema_version": "1.0", "attestation_id": f"dlv_{oid}_{n}",
-         "operation_id": oid,
-         "source": {"provider": provider, "source_type": "simulated", "environment": "demo",
-                    "provider_event_id": f"DLV-{oid}-{n}", "provider_reference": {"order_id": oid,
-                                                                                  "tracking": f"TRK{n}"},
-                    "verification_method": "ed25519_source_key", "verification_status": "verified"},
-         "event": {"type": etype, "provider_status": "DELIVERED"},
-         "timestamps": {"source_event_time": when, "attested_at": when}}
+    a = make_attestation(attestation_id=f"dlv_{oid}_{n}", operation_id=oid, provider=provider,
+                         provider_event_id=f"DLV-{oid}-{n}", event_type=etype, provider_status="DELIVERED",
+                         source_type="simulated", environment="demo", verification_method="ed25519_source_key",
+                         refs={"tracking": f"TRK{n}"}, source_event_time=when, attested_at=when)
     return {"attestation": a, "signature": signer.sign(a, when)}
 
 

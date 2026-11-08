@@ -266,3 +266,21 @@ def test_expired_key_with_backdated_signature_is_rejected_by_receipt_time():
                    decided_at="2026-11-10T09:00:00Z")
     r = verify_package(files_of(data), kd)
     assert r["result"] == "INVALID" and any("key not valid when received" in x for x in r["errors"])
+
+
+def test_make_attestation_shape_and_optional_parts():
+    from aurix_verify.attestation import make_attestation
+    a = make_attestation(attestation_id="x1", operation_id="O1", provider="p", provider_event_id="e1",
+                         event_type="shipment.delivered", source_type="simulated", environment="demo",
+                         verification_method="m", source_event_time="2026-11-08T10:00:00Z",
+                         attested_at="2026-11-08T10:00:01Z")
+    assert a["source"]["provider_reference"] == {"order_id": "O1"}
+    assert "verified_by" not in a["source"] and "provenance" not in a and "amount" not in a["event"]
+    assert list(a["timestamps"]) == ["source_event_time", "attested_at"]
+    b = make_attestation(attestation_id="x2", operation_id="O1", provider="paypal", provider_event_id="e2",
+                         event_type="payment.authorized", source_type="real", environment="sandbox",
+                         verification_method="m", source_event_time="t", attested_at="t", aurix_received_at="t",
+                         amount={"value": "1.00", "currency_code": "USD"}, verified_by="aurix-payments",
+                         provenance={"raw_payload_hash": None})
+    assert b["event"]["amount"] == {"value": "1.00", "currency": "USD"} and b["source"]["verified_by"]
+    canonicalize(b)  # signable: no floats

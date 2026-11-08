@@ -1,5 +1,6 @@
 """Builds realistic packages for the tests: AURIX key, demo carrier key, arbiter key."""
 from aurix_verify import crypto
+from aurix_verify.attestation import make_attestation
 from aurix_verify.jcs import digest
 from aurix_verify.package import build_package, receipts_doc
 from aurix_verify.rule import RULE_ID, decide, Evidence
@@ -32,19 +33,14 @@ def att(kind, order_id="ORDER-1", amount="120.00", when="2026-11-09T10:00:00Z", 
     src = {"payment.authorized": ("paypal", "real", "sandbox", "paypal_webhook_signature"),
            "shipment.delivered": ("aurix_demo_delivery", "simulated", "demo", "ed25519_source_key"),
            "arbiter.decision": ("arbiter", "real", "demo", "ed25519_arbiter_key")}[kind]
-    a = {"schema": "aurix.financial-attestation", "schema_version": "1.0",
-         "attestation_id": f"att_{kind.replace('.', '_')}_{n}", "operation_id": order_id,
-         "source": {"provider": src[0], "source_type": src[1], "environment": src[2],
-                    "provider_event_id": f"EV-{kind}-{n}", "provider_reference": {"order_id": order_id},
-                    "verification_method": src[3], "verification_status": "verified"},
-         "event": {"type": kind},
-         "timestamps": {"source_event_time": when, "aurix_received_at": when, "attested_at": when},
-         "provenance": {"connector_id": "test", "raw_payload_hash": "sha256:" + "0" * 64}}
-    if kind == "payment.authorized":
-        a["event"].update(provider_status="CREATED", amount={"value": amount, "currency": "USD"})
-    if action:
-        a["event"]["action"] = action
-    return a
+    return make_attestation(
+        attestation_id=f"att_{kind.replace('.', '_')}_{n}", operation_id=order_id, provider=src[0],
+        provider_event_id=f"EV-{kind}-{n}", event_type=kind, source_type=src[1], environment=src[2],
+        verification_method=src[3], action=action,
+        provider_status="CREATED" if kind == "payment.authorized" else None,
+        amount={"value": amount, "currency": "USD"} if kind == "payment.authorized" else None,
+        source_event_time=when, aurix_received_at=when, attested_at=when,
+        provenance={"connector_id": "test", "raw_payload_hash": "sha256:" + "0" * 64})
 
 
 def signed(a, signer=None):

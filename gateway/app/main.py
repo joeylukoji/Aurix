@@ -245,8 +245,8 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
                                headers=headers, timeout=30)
         except httpx.HTTPError as e:
             return JSONResponse(status_code=503, content={"detail": f"{name} service unavailable: {type(e).__name__}"})
-        keep = {k: v for k, v in r.headers.items() if k.lower() == "content-disposition"}  # proof downloads
-        return Response(content=r.content, status_code=r.status_code, headers=keep,
+        passthrough = {k: v for k, v in r.headers.items() if k.lower() == "content-disposition"}  # downloads
+        return Response(content=r.content, status_code=r.status_code, headers=passthrough,
                         media_type=r.headers.get("content-type", "application/json"))
 
     # Proxied routes are documented in api/indexer.openapi.json and api/payments.openapi.json.
