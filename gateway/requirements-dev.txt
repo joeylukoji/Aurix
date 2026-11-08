@@ -4,3 +4,5 @@ pytest==8.3.4
 python-multipart==0.0.20
 # The integration tests run the indexer (PostgreSQL) and payments services in-process.
 -r ../indexer/requirements.txt
+# payments (loaded in-process by the integration tests) imports the shared verifier.
+-e ../verifier

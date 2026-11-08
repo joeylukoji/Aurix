@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Starts the full AURIX stack without Docker: aurixd chain, guardian, paypal-sim, payments, indexer
+# Starts the full AURIX stack without Docker: aurixd chain, guardian, paypal-sim, payments, delivery-sim, indexer
 # (PostgreSQL), gateway.
 # Ports: set PORT_OFFSET (added to defaults) or each port explicitly:
 #   RPC_PORT(26657) REST_PORT(1317) GRPC_PORT(9090) P2P_PORT(26656) PROM_PORT(26660, metrics)
@@ -24,7 +24,7 @@ RPC_PORT=${RPC_PORT:-$((26657+OFF))}; REST_PORT=${REST_PORT:-$((1317+OFF))}
 GRPC_PORT=${GRPC_PORT:-$((9090+OFF))}; P2P_PORT=${P2P_PORT:-$((26656+OFF))}; PROM_PORT=${PROM_PORT:-$((26660+OFF))}
 GUARDIAN_PORT=${GUARDIAN_PORT:-$((8000+OFF))}; SIM_PORT=${SIM_PORT:-$((8090+OFF))}
 GATEWAY_PORT=${GATEWAY_PORT:-$((8080+OFF))}
-PAYMENTS_PORT=${PAYMENTS_PORT:-$((8085+OFF))}; INDEXER_PORT=${INDEXER_PORT:-$((8086+OFF))}; PG_PORT=${PG_PORT:-$((5432+OFF))}
+PAYMENTS_PORT=${PAYMENTS_PORT:-$((8085+OFF))}; DELIVERY_PORT=${DELIVERY_PORT:-$((8087+OFF))}; INDEXER_PORT=${INDEXER_PORT:-$((8086+OFF))}; PG_PORT=${PG_PORT:-$((5432+OFF))}
 ATTESTORS=${ATTESTORS:-0}; ATTESTOR_PORT=${ATTESTOR_PORT:-$((8095+OFF))}
 ATTESTOR_SEED_PREFIX=${ATTESTOR_SEED_PREFIX:-aurix-dev-attestor-}
 GUARDIANS=${GUARDIANS:-1}; GUARDIAN_SEED_PREFIX=${GUARDIAN_SEED_PREFIX:-aurix-dev-guardian-}
@@ -76,7 +76,7 @@ if [[ -n "${ANCHOR_THRESHOLD:-}" ]]; then INIT_ENV+=(ANCHOR_THRESHOLD="$ANCHOR_T
 if [[ -n "${PENDING_TTL_BLOCKS:-}" ]]; then INIT_ENV+=(PENDING_TTL_BLOCKS="$PENDING_TTL_BLOCKS"); fi
 env "${INIT_ENV[@]}" AURIXD=$BIN VALIDATORS=$VALIDATORS PORT_STEP=$STEP RPC_PORT=$RPC_PORT REST_PORT=$REST_PORT \
   GRPC_PORT=$GRPC_PORT P2P_PORT=$P2P_PORT PROM_PORT=$PROM_PORT "$ROOT/chain/scripts/init-localnet.sh"
-for d in guardian paypal-sim gateway payments indexer; do venv "$ROOT/$d"; done
+for d in guardian paypal-sim gateway payments indexer delivery-sim; do venv "$ROOT/$d"; done
 if [[ -z "${INDEXER_DATABASE_URL:-}" ]]; then
   INDEXER_DATABASE_URL=$(RUN_DIR=$RUN_DIR PG_PORT=$PG_PORT "$ROOT/scripts/pg-up.sh"); log "PostgreSQL up: $INDEXER_DATABASE_URL"
 fi
@@ -125,6 +125,10 @@ PAYPAL_CLIENT_SECRET=sim-client-secret PAYPAL_WEBHOOK_ID=SIM-WEBHOOK-ID \
   start payments "$ROOT/payments" .venv/bin/uvicorn aurix_payments.main:app --host 127.0.0.1 --port "$PAYMENTS_PORT"
 wait_for indexer "http://127.0.0.1:$INDEXER_PORT/health"
 wait_for payments "http://127.0.0.1:$PAYMENTS_PORT/health"
+# SIMULATED carrier for the evidence-released escrow (MVP 0.2): signs delivery events with its own key
+PAYMENTS_URL="http://127.0.0.1:$PAYMENTS_PORT" \
+  start delivery-sim "$ROOT/delivery-sim" .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port "$DELIVERY_PORT"
+wait_for delivery-sim "http://127.0.0.1:$DELIVERY_PORT/health"
 CHAIN_RPC_URL="http://127.0.0.1:$RPC_PORT" CHAIN_REST_URL="http://127.0.0.1:$REST_PORT" \
 GUARDIAN_URLS="$GUARDIAN_URLS" GUARDIAN_QUORUM=$GUARDIAN_QUORUM DATABASE_URL="sqlite:///$RUN_DIR/gateway.db" \
 INDEXER_URL="http://127.0.0.1:$INDEXER_PORT" PAYMENTS_URL="http://127.0.0.1:$PAYMENTS_PORT" \

@@ -1,7 +1,7 @@
 """AURIX API Gateway: the single public edge of the AURIX services.
 
 It serves the wallet API (account reads, tx preparation with the advisory Neural Guardian score,
-broadcast, dev faucet) and routes /api/explorer/* to the indexer service and /api/paypal/* to the
+broadcast, dev faucet) and routes /api/explorer/* to the indexer service and /api/paypal/* and /api/escrow/* to the
 payments service. It holds no authority over AUR balances: balances are always read from the chain,
 and every AUR movement is a transaction signed by the user's own key.
 """
@@ -245,7 +245,8 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
                                headers=headers, timeout=30)
         except httpx.HTTPError as e:
             return JSONResponse(status_code=503, content={"detail": f"{name} service unavailable: {type(e).__name__}"})
-        return Response(content=r.content, status_code=r.status_code,
+        keep = {k: v for k, v in r.headers.items() if k.lower() == "content-disposition"}  # proof downloads
+        return Response(content=r.content, status_code=r.status_code, headers=keep,
                         media_type=r.headers.get("content-type", "application/json"))
 
     # Proxied routes are documented in api/indexer.openapi.json and api/payments.openapi.json.
@@ -257,6 +258,12 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
     async def paypal_proxy(path: str, request: Request):
         body = await request.body()
         return await run_in_threadpool(forward, payments, "payments", request, f"/api/paypal/{path}", body)
+
+    @app.api_route("/api/escrow/{path:path}", methods=["GET", "POST"], include_in_schema=False)
+    async def escrow_proxy(path: str, request: Request):
+        """Evidence-released USD escrow (MVP 0.2), owned by the payments service."""
+        body = await request.body()
+        return await run_in_threadpool(forward, payments, "payments", request, f"/api/escrow/{path}", body)
 
     @app.get("/api/proofs/{h}")
     def proof_normalised(h: str):

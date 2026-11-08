@@ -1,0 +1,101 @@
+"""AURIX demo carrier — a SIMULATED delivery company, for demos and tests only.
+
+It stands for an organisation independent of PayPal and of AURIX: it signs its own delivery events with its
+own Ed25519 key and sends them to the AURIX escrow (payments /api/escrow/evidence). Every attestation says
+source_type "simulated": it must never be presented as a real carrier.
+
+  POST /ship/{order_id}       shipment.shipped   (informational)
+  POST /deliver/{order_id}    shipment.delivered (the evidence that releases an escrow)
+       ?when=<ISO time>       backdate/postdate the event (deadline scenarios)
+       ?forge=true            sign with a key AURIX does not know (must be refused)
+  GET  /key                   this carrier's public key entry (for the AURIX trust registry)
+  GET  /health
+"""
+from __future__ import annotations
+
+import hashlib
+import os
+import secrets
+from datetime import datetime, timezone
+
+import httpx
+from fastapi import FastAPI, HTTPException
+
+from aurix_verify import crypto
+
+PROVIDER = "aurix_demo_delivery"
+PAYMENTS_URL = os.environ.get("PAYMENTS_URL", "http://localhost:8085").rstrip("/")
+KEY_ID = os.environ.get("DELIVERY_SIM_KEY_ID", "aurix-demo-delivery-dev-1")
+
+
+def _load_signer() -> crypto.Signer:
+    path = os.environ.get("DELIVERY_SIM_KEY_FILE", "").strip()
+    if path:
+        with open(path) as f:
+            return crypto.Signer.from_seed(KEY_ID, bytes.fromhex(f.read().strip()))
+    if os.environ.get("AURIX_ENV", "").lower() == "production":
+        raise SystemExit("DELIVERY_SIM_KEY_FILE is required when AURIX_ENV=production")
+    # Same dev seed as payments' built-in demo carrier entry (aurix_payments.escrow.DEV_CARRIER).
+    return crypto.Signer.from_seed(KEY_ID, hashlib.sha256(os.environ.get("DELIVERY_SIM_SEED",
+                                                                         "aurix-dev-delivery").encode()).digest())
+
+
+SIGNER = _load_signer()
+app = FastAPI(title="AURIX demo carrier (SIMULATED)", version="0.2.0")
+http = httpx.Client(timeout=15)
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def attestation(order_id: str, etype: str, status: str, when: str, tracking: str) -> dict:
+    eid = f"{etype}:{order_id}:{tracking}"
+    return {"schema": "aurix.financial-attestation", "schema_version": "1.0",
+            "attestation_id": "dlv_" + hashlib.sha256(eid.encode()).hexdigest()[:20], "operation_id": order_id,
+            "source": {"provider": PROVIDER, "source_type": "simulated", "environment": "demo",
+                       "provider_event_id": eid, "provider_reference": {"order_id": order_id, "tracking": tracking},
+                       "verification_method": "ed25519_source_key", "verification_status": "verified"},
+            "event": {"type": etype, "provider_status": status},
+            "timestamps": {"source_event_time": when, "attested_at": now()}}
+
+
+def send(order_id: str, etype: str, status: str, when: str | None, forge: bool) -> dict:
+    if when:
+        try:
+            datetime.fromisoformat(when.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(422, "when must be an ISO 8601 time")
+    tracking = "TRK" + hashlib.sha256(order_id.encode()).hexdigest()[:10].upper()
+    att = attestation(order_id, etype, status, when or now(), tracking)
+    signer = crypto.Signer.from_seed("unregistered-key", secrets.token_bytes(32)) if forge else SIGNER
+    sig = signer.sign(att, att["timestamps"]["attested_at"])
+    try:
+        r = http.post(f"{PAYMENTS_URL}/api/escrow/evidence", json={"attestation": att, "signature": sig})
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"AURIX payments unreachable: {type(e).__name__}")
+    body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {"detail": r.text}
+    return {"sent": att, "aurix_status": r.status_code, "aurix_response": body, "simulated": True}
+
+
+@app.post("/ship/{order_id}")
+def ship(order_id: str, when: str | None = None):
+    return send(order_id, "shipment.shipped", "IN_TRANSIT", when, False)
+
+
+@app.post("/deliver/{order_id}")
+def deliver(order_id: str, when: str | None = None, forge: bool = False):
+    return send(order_id, "shipment.delivered", "DELIVERED", when, forge)
+
+
+@app.get("/key")
+def key():
+    return {"key_id": SIGNER.key_id, "alg": crypto.ALG, "public_key": SIGNER.public_key,
+            "role": f"source:{PROVIDER}", "owner": "AURIX demo carrier (simulated)", "source_type": "simulated",
+            "valid_from": "2026-01-01T00:00:00Z", "valid_until": None, "revoked_at": None, "revocation_reason": None}
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "provider": PROVIDER, "simulated": True, "key_id": SIGNER.key_id,
+            "fingerprint": crypto.fingerprint(SIGNER.public_key)}

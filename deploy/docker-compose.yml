@@ -99,6 +99,23 @@ services:
       retries: 6
       start_period: 10s
     restart: unless-stopped
+  # SIMULATED carrier for the evidence-released USD escrow (MVP 0.2). Signs delivery events with its own key.
+  delivery-sim:
+    build:
+      context: ..
+      dockerfile: delivery-sim/Dockerfile
+    environment:
+      PAYMENTS_URL: http://payments:8085
+      AURIX_ENV: ${AURIX_ENV:-}
+      DELIVERY_SIM_KEY_FILE: ${DELIVERY_SIM_KEY_FILE:-}
+    ports: ["8087:8087"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8087/health',timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
   # PostgreSQL for the indexer (explorer read model; rebuildable from the chain at any time).
   postgres:
     image: postgres:16-alpine
@@ -155,6 +172,9 @@ services:
       PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-sim-client-id}
       PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-sim-client-secret}
       PAYPAL_WEBHOOK_ID: ${PAYPAL_WEBHOOK_ID:-SIM-WEBHOOK-ID}
+      # Evidence-released escrow (MVP 0.2): Ed25519 signing key and trusted source/arbiter keys.
+      ESCROW_KEY_FILE: ${ESCROW_KEY_FILE:-}
+      ESCROW_TRUSTED_KEYS_FILE: ${ESCROW_TRUSTED_KEYS_FILE:-}
     volumes: ["payments-data:/data"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8085/health',timeout=4)"]

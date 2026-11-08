@@ -1,7 +1,8 @@
-# Build context: repository root (needs common/ and payments/).
+# Build context: repository root (needs common/, verifier/ and payments/).
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY common /srv/common
+COPY verifier /srv/verifier
 WORKDIR /srv/payments
 COPY payments/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \

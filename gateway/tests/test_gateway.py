@@ -289,3 +289,31 @@ def test_bad_amounts(paypal_env):
     c, _ = paypal_env
     for v in ("-1", "abc", "1.234"):
         assert c.post("/api/paypal/orders", json={"amount_usd": v}).status_code == 422
+
+
+def test_evidence_escrow_through_the_gateway(paypal_env):
+    """MVP 0.2: conditional USD order -> PayPal authorization -> signed delivery -> capture -> proof package."""
+    from aurix_payments.escrow import DEMO_CARRIER, DEV_CARRIER
+    from aurix_verify.package import read_zip, verify_package
+    c, sim = paypal_env
+    o = c.post("/api/escrow/orders", json={"amount_usd": "40.00", "deadline_days": 3}).json()
+    oid = o["order_id"]
+    sim.post(f"/sim/orders/{oid}/approve")
+    assert c.post(f"/api/escrow/orders/{oid}/authorize", json={"confirm": True}).json()["status"] == "AUTHORIZED"
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    att = {"schema": "aurix.financial-attestation", "schema_version": "1.0", "attestation_id": f"dlv_{oid}",
+           "operation_id": oid,
+           "source": {"provider": DEMO_CARRIER, "source_type": "simulated", "environment": "demo",
+                      "provider_event_id": f"DLV-{oid}", "provider_reference": {"order_id": oid},
+                      "verification_method": "ed25519_source_key", "verification_status": "verified"},
+           "event": {"type": "shipment.delivered"}, "timestamps": {"source_event_time": now, "attested_at": now}}
+    r = c.post("/api/escrow/evidence", json={"attestation": att, "signature": DEV_CARRIER.sign(att, now)}).json()
+    assert r["evaluation"]["decision"] == "RELEASE"
+    end = time.time() + 30
+    while c.get(f"/api/escrow/orders/{oid}").json()["status"] != "ANCHORED":
+        assert time.time() < end, c.get(f"/api/escrow/orders/{oid}").json()
+        time.sleep(0.2)
+    z = c.get(f"/api/escrow/orders/{oid}/proof")
+    assert z.headers["content-disposition"].endswith(f'aurix-proof-{oid}.zip"')
+    rep = verify_package(read_zip(z.content), c.get("/api/escrow/keys").json())
+    assert rep["result"] == "VALID", rep["errors"]
