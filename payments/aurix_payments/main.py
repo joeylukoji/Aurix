@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from aurix_common import crypto
 from aurix_common.clients import ChainClient, ChainError, GuardianClient, PayPalClient, PayPalError, normalize_proof
-from aurix_common.keys import load_key
+from aurix_common.keys import is_production, load_key
 
 from . import escrow as escrow_mod
 from .config import Settings
@@ -50,7 +50,8 @@ class ApproveReq(BaseModel):
 
 
 def create_app(settings: Settings | None = None, chain: ChainClient | None = None,
-               guardian: GuardianClient | None = None, paypal=None, escrow_clock=None) -> FastAPI:
+               guardian: GuardianClient | None = None, paypal=None, escrow_clock=None,
+               advisor=None) -> FastAPI:
     s = settings or Settings()
     chain = chain or ChainClient(s.chain_url, s.chain_rest_url)
     guardian = guardian or GuardianClient(s.guardian_urls, quorum=s.guardian_quorum, pubkeys=s.guardian_pubkeys)
@@ -61,7 +62,9 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
     gateway_key = load_key("GATEWAY", default_seed=s.gateway_seed)  # anchor signer (see config.py)
     signer_lock = threading.Lock()
     escrow = escrow_mod.EscrowService(db, paypal, guardian, paypal_mode, escrow_mod.load_signer(),
-                                      escrow_mod.load_external_keys(), clock=escrow_clock or escrow_mod.utcnow)
+                                      escrow_mod.load_external_keys(), clock=escrow_clock or escrow_mod.utcnow,
+                                      advisor=advisor,
+                                      demo_arbiter=not is_production(os.environ))
 
     stop = threading.Event()
 

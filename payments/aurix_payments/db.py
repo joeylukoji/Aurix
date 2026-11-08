@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS evidence (
   attestation_id TEXT PRIMARY KEY, order_id TEXT NOT NULL, provider TEXT NOT NULL, provider_event_id TEXT NOT NULL,
   event_type TEXT NOT NULL, attestation TEXT NOT NULL, signature TEXT NOT NULL, received_at TEXT NOT NULL,
   UNIQUE (provider, provider_event_id));
+CREATE TABLE IF NOT EXISTS advisories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, order_id TEXT NOT NULL, kind TEXT NOT NULL, doc TEXT NOT NULL,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS risk_scores (
   id INTEGER PRIMARY KEY AUTOINCREMENT, context TEXT, ref TEXT, score REAL, level TEXT,
   reasons TEXT, model_version TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);

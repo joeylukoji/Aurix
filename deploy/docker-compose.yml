@@ -175,6 +175,11 @@ services:
       # Evidence-released escrow (MVP 0.2): Ed25519 signing key and trusted source/arbiter keys.
       ESCROW_KEY_FILE: ${ESCROW_KEY_FILE:-}
       ESCROW_TRUSTED_KEYS_FILE: ${ESCROW_TRUSTED_KEYS_FILE:-}
+      # AI advisor (advisory only): Gemma 4 via an OpenAI-compatible endpoint, e.g. Ollama on the host
+      # (http://host.docker.internal:11434/v1). Empty = template text, no model.
+      ADVISOR_LLM_URL: ${ADVISOR_LLM_URL:-}
+      ADVISOR_LLM_MODEL: ${ADVISOR_LLM_MODEL:-gemma4:e4b}
+      ADVISOR_LLM_API_KEY: ${ADVISOR_LLM_API_KEY:-}
     volumes: ["payments-data:/data"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8085/health',timeout=4)"]

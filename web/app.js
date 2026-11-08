@@ -293,9 +293,11 @@ async function createOrder() {
 }
 
 // ---------- Conditional USD payment (evidence-released escrow, MVP 0.2) ----------
+let escrowAdvisor = null; // {enabled, model, demo_arbiter} from payments
 const CD_FINAL = ["ANCHORED", "VOIDED", "AUTH_FAILED", "DENIED", "CANCELLED"];
 const deliveryUrl = () => (C.config?.delivery || "").replace(/\/+$/, "");
-async function refreshCond() { if (C.gatewayOk) set("condGrid", (await api("/api/escrow/orders")).map((o) => ({
+async function refreshCond() { if (C.gatewayOk && !escrowAdvisor) escrowAdvisor = await api("/api/escrow/advisor").catch(() => null);
+  if (C.gatewayOk) set("condGrid", (await api("/api/escrow/orders")).map((o) => ({
   order_id: o.order_id, amount_usd: o.amount_usd, status: o.status, deadline: o.terms.deadline,
   decision: o.decision?.decision || o.last_evaluation?.decision || "", evidence: o.timeline.length,
   simulated: o.simulated_sources.join(", ") }))); }
@@ -325,6 +327,7 @@ function condStatusHtml(o) {
     ${o.simulated_sources.length ? `<p class="muted">Simulated sources: ${esc(o.simulated_sources.join(", "))}. A valid signature proves who signed, not that a parcel was physically delivered.</p>` : ""}</div>`;
 }
 async function renderCond(oid) {
+  if (!escrowAdvisor) escrowAdvisor = await api("/api/escrow/advisor").catch(() => null);
   const o = await api(`/api/escrow/orders/${oid}`);
   const canDeliver = o.status === "AUTHORIZED" && deliveryUrl();
   $("cdResult").innerHTML = condStatusHtml(o) + timelineHtml(o) +
@@ -333,10 +336,46 @@ async function renderCond(oid) {
     (o.status === "AUTHORIZED" && !deliveryUrl() ? `<p class="muted">No demo carrier configured ("delivery" in config.json).</p>` : "") +
     (o.status !== "SCORED" ? `<button id="cdProof">Download proof package</button>
       <p class="muted">Verify it anywhere, offline: <code>python -m aurix_verify aurix-proof-${esc(oid)}.zip</code></p>` : "");
+  if (o.status !== "SCORED") {
+    const hasArb = !!o.terms.arbiter_key_id, open = !CD_FINAL.includes(o.status) && !o.decision;
+    const box = document.createElement("div");
+    box.className = "card advisor";
+    box.innerHTML = `<h3>AI advisor <span class="pill">${esc(advisorLabel())}</span></h3>
+      <p class="muted">Explains and suggests. It never decides: the decision is the public rule, or the arbiter's signature.</p>
+      <label>For<select id="cdAud"><option value="buyer">the buyer</option><option value="merchant">the merchant</option><option value="auditor">an auditor</option></select></label>
+      <button id="cdExplain">Explain this payment</button>
+      ${hasArb ? `<button id="cdBrief">Brief for the arbiter</button>` : ""}
+      <div id="cdAdvice"></div>
+      ${hasArb && open && escrowAdvisor?.demo_arbiter ? `<h3>Arbiter</h3>
+        <p class="muted">Demo arbiter: in this testnet the server holds the demo arbiter's key and signs on your click.
+          A real arbiter signs with their own key, outside AURIX.</p>
+        ${["HOLD", "UNHOLD", "RELEASE", "VOID"].map((a) => `<button data-arb="${a}">${a}</button>`).join("")}` : ""}`;
+    $("cdResult").append(box);
+    $("cdExplain").onclick = (e) => busy(e.target, async () => {
+      const r = await api(`/api/escrow/orders/${oid}/explain`, { method: "POST", body: { audience: $("cdAud").value } });
+      $("cdAdvice").innerHTML = adviceHtml(r);
+    });
+    if ($("cdBrief")) $("cdBrief").onclick = (e) => busy(e.target, async () => {
+      const r = await api(`/api/escrow/orders/${oid}/arbiter-brief`, { method: "POST", body: {} });
+      $("cdAdvice").innerHTML = adviceHtml(r) + (r.inconsistencies?.length ? `<p><b>Inconsistencies</b></p><ul>${r.inconsistencies.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "")
+        + (r.questions?.length ? `<p><b>To check outside AURIX</b></p><ul>${r.questions.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "")
+        + `<p>Suggested action: <span class="pill warn">${esc(r.suggestion)}</span> ${esc(r.rationale || "")}</p><p class="muted">A suggestion only: nothing happens until the arbiter signs.</p>`;
+    });
+    box.querySelectorAll("button[data-arb]").forEach((b) => (b.onclick = (e) => busy(e.target, async () => {
+      const r = await api(`/api/escrow/orders/${oid}/demo-arbiter`, { method: "POST", body: { action: b.dataset.arb } });
+      toast(`Arbiter ${b.dataset.arb}: rule now says ${r.evaluation?.decision}`);
+      await followCond(oid);
+    })));
+  }
   if ($("cdDeliver")) $("cdDeliver").onclick = (e) => busy(e.target, () => carrier(oid, false));
   if ($("cdForge")) $("cdForge").onclick = (e) => busy(e.target, () => carrier(oid, true));
   if ($("cdProof")) $("cdProof").onclick = (e) => busy(e.target, () => downloadProof(oid));
   return o;
+}
+const advisorLabel = () => escrowAdvisor?.enabled ? `model ${escrowAdvisor.model}` : "template (no model configured)";
+function adviceHtml(r) {
+  return `<blockquote class="advice">${esc(r.text)}</blockquote>
+    <p class="muted">${r.generated_by === "llm" ? `Written by ${esc(r.model)}` : "Template text (no AI model reachable)"} · advisory only, may contain errors · saved in the proof package.</p>`;
 }
 async function carrier(oid, forge) {
   const r = await fetch(`${deliveryUrl()}/deliver/${encodeURIComponent(oid)}${forge ? "?forge=true" : ""}`, { method: "POST" });

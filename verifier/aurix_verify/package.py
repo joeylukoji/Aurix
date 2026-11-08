@@ -9,6 +9,7 @@ Layout of aurix-proof-<order_id>.zip:
   decision.json            the decision and the hashes of its inputs        (+ signatures/decision.json)
   trust/public-keys.json   keys declared by the issuer
   trust/trust-metadata.json  which sources are real or simulated
+  advisory/<kind>.json     optional AI advisor texts: integrity-protected, never used by the rule
 """
 from __future__ import annotations
 
@@ -44,8 +45,9 @@ def receipts_doc(order_id: str, received: list[tuple[dict, str]]) -> dict:
 
 
 def build_package(*, terms: dict, terms_sig: dict, attestations: list[tuple[dict, dict]],
-                  receipts: dict, receipts_sig: dict, decision: dict | None, decision_sig: dict | None, keys: dict, trust_metadata: dict,
-                  signer: crypto.Signer, created_at: str) -> bytes:
+                  receipts: dict, receipts_sig: dict, decision: dict | None, decision_sig: dict | None,
+                  keys: dict, trust_metadata: dict, signer: crypto.Signer, created_at: str,
+                  advisories: dict[str, dict] | None = None) -> bytes:
     files: dict[str, bytes] = {"terms.json": _dump(terms), "signatures/terms.json": _dump(terms_sig),
                                "receipts.json": _dump(receipts), "signatures/receipts.json": _dump(receipts_sig),
                                "trust/public-keys.json": _dump(keys),
@@ -54,6 +56,8 @@ def build_package(*, terms: dict, terms_sig: dict, attestations: list[tuple[dict
         aid = att["attestation_id"]
         files[f"attestations/{aid}.json"] = _dump(att)
         files[f"signatures/{aid}.json"] = _dump(sig)
+    for kind, doc in (advisories or {}).items():
+        files[f"advisory/{kind}.json"] = _dump(doc)
     if decision is not None:
         files["decision.json"] = _dump(decision)
         files["signatures/decision.json"] = _dump(decision_sig)
@@ -234,11 +238,21 @@ def verify_package(files: dict[str, bytes], trusted_keys: dict | None = None) ->
                                   "it is not a real organisation's system.")
         if s.get("environment") == "sandbox":
             limitations.append(f"Source '{s['provider']}' runs in a sandbox environment: no real money moved.")
+    advisories = []
+    for path in sorted(p for p in listed if p.startswith("advisory/")):
+        a = load(path) or {}
+        advisories.append({"file": path, "model": a.get("model"), "generated_by": a.get("generated_by"),
+                           "generated_at": a.get("generated_at")})
+    if advisories:
+        limitations.append("AI advisor texts (advisory/) are included for information only: the decision rule "
+                           "does not use them, and they may contain errors.")
     if trusted_keys is None:
         limitations.append("Keys were taken from the package itself; pass the issuer's published keys "
                            "(--keys) to check who the issuer is.")
-    return _report(order_id, "valid" if integrity_ok else "invalid", signatures, source_verification,
-                   consistency, list(sources.values()), replay, errors, anomalies, trust_source, limitations)
+    r = _report(order_id, "valid" if integrity_ok else "invalid", signatures, source_verification,
+                consistency, list(sources.values()), replay, errors, anomalies, trust_source, limitations)
+    r["advisories"] = advisories
+    return r
 
 
 def _report(order_id, integrity, signatures, source_verification, consistency, sources, replay, errors,

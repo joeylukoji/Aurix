@@ -28,7 +28,9 @@ from aurix_common.clients import PayPalError
 from aurix_common.keys import KeyConfigError, is_production
 from aurix_verify import crypto
 from aurix_verify.jcs import digest
-from aurix_verify.package import build_package, receipts_doc
+from aurix_verify.package import build_package, read_zip, receipts_doc, verify_package
+
+from .advisor import Advisor, facts
 from aurix_verify.rule import HOLD, RELEASE, RULE_ID, VOID, WAIT, Evidence, decide
 
 log = logging.getLogger("aurix.escrow")
@@ -107,6 +109,15 @@ class ConfirmReq(BaseModel):
     confirm: bool = False
 
 
+class ExplainReq(BaseModel):
+    audience: str = "buyer"
+    lang: str = "French"
+
+
+class ArbiterActionReq(BaseModel):
+    action: str
+
+
 class EvidenceReq(BaseModel):
     attestation: dict
     signature: dict
@@ -122,8 +133,11 @@ class EscrowService:
     """
 
     def __init__(self, db, paypal, guardian, paypal_mode: str, signer: crypto.Signer,
-                 external_keys: list[dict], clock: Callable[[], str] = utcnow, chain=None):
+                 external_keys: list[dict], clock: Callable[[], str] = utcnow, chain=None,
+                 advisor: Advisor | None = None, demo_arbiter: bool = False):
         self.db, self.paypal, self.guardian = db, paypal, guardian
+        self.advisor = advisor or Advisor()
+        self.demo_arbiter = demo_arbiter
         self.paypal_mode, self.signer, self.clock, self.chain = paypal_mode, signer, clock, chain
         own = dev_key_entry(signer, "aurix", "AURIX escrow service")
         self.keys = {"keys": [own] + [k for k in external_keys if k["key_id"] != signer.key_id]}
@@ -426,7 +440,48 @@ class EscrowService:
                 "last_error": o.get("last_error"), "paypal_mode": self.paypal_mode,
                 "simulated_sources": sorted({t["provider"] for t in timeline if t["source_type"] == "simulated"})}
 
-    def proof_package(self, order_id: str) -> bytes:
+    # ---------------- AI advisor (advisory only, never part of the rule) ----------------
+    def _facts(self, order_id: str) -> dict:
+        report = verify_package(read_zip(self.proof_package(order_id, with_advisories=False)), self.keys)
+        return facts(self.view(order_id), report)
+
+    def _save_advice(self, order_id: str, kind: str, advice) -> dict:
+        doc = advice.as_dict() | {"kind": kind, "order_id": order_id, "generated_at": self.clock()}
+        self.db.exec("INSERT INTO advisories(order_id, kind, doc) VALUES (?,?,?)", order_id, kind, json.dumps(doc))
+        return doc
+
+    def explain(self, order_id: str, audience: str, lang: str) -> dict:
+        return self._save_advice(order_id, f"explanation-{audience}",
+                                 self.advisor.explain(self._facts(order_id), audience, lang))
+
+    def arbiter_brief(self, order_id: str, lang: str) -> dict:
+        if not self._terms(order_id).get("arbiter_key_id"):
+            raise HTTPException(409, "this order has no arbiter")
+        return self._save_advice(order_id, "arbiter-brief", self.advisor.arbiter_brief(self._facts(order_id), lang))
+
+    def demo_arbiter_action(self, order_id: str, action: str) -> dict:
+        """Dev/demo only: the server holds the demo arbiter's key and signs on the arbiter's click. In a real
+        deployment the arbiter signs with their own key, outside AURIX, and posts to /api/escrow/evidence."""
+        if not self.demo_arbiter:
+            raise HTTPException(404, "the demo arbiter is disabled")
+        action = action.upper()
+        if action not in ("HOLD", "UNHOLD", "RELEASE", "VOID"):
+            raise HTTPException(422, "action must be HOLD, UNHOLD, RELEASE or VOID")
+        terms = self._terms(order_id)
+        if terms.get("arbiter_key_id") != DEV_ARBITER.key_id:
+            raise HTTPException(409, "the demo arbiter is not the arbiter of this order")
+        now = self.clock()
+        n = len([1 for a, _, _ in self.evidence(order_id) if a["event"]["type"] == "arbiter.decision"]) + 1
+        att = {"schema": "aurix.financial-attestation", "schema_version": "1.0",
+               "attestation_id": f"arb_{order_id}_{n}", "operation_id": order_id,
+               "source": {"provider": "arbiter", "source_type": "simulated", "environment": "demo",
+                          "provider_event_id": f"arbiter:{order_id}:{n}", "provider_reference": {"order_id": order_id},
+                          "verification_method": "ed25519_arbiter_key", "verification_status": "verified"},
+               "event": {"type": "arbiter.decision", "action": action},
+               "timestamps": {"source_event_time": now, "attested_at": now}}
+        return self.add_evidence(att, DEV_ARBITER.sign(att, now))
+
+    def proof_package(self, order_id: str, with_advisories: bool = True) -> bytes:
         self._order(order_id)
         row = self._terms_row(order_id)
         terms = json.loads(row["terms"])
@@ -444,7 +499,14 @@ class EscrowService:
                              receipts_sig=self.signer.sign(receipts, now),
                              decision=json.loads(row["decision_doc"]) if row["decision_doc"] else None,
                              decision_sig=json.loads(row["decision_sig"]) if row["decision_sig"] else None,
-                             keys=self.keys, trust_metadata=meta, signer=self.signer, created_at=now)
+                             keys=self.keys, trust_metadata=meta, signer=self.signer, created_at=now,
+                             advisories=self._latest_advisories(order_id) if with_advisories else None)
+
+    def _latest_advisories(self, order_id: str) -> dict:
+        out = {}
+        for r in self.db.all("SELECT kind, doc FROM advisories WHERE order_id=? ORDER BY id", order_id):
+            out[r["kind"]] = json.loads(r["doc"])  # latest of each kind wins
+        return out
 
 
 def register(app: FastAPI, svc: EscrowService, require_paypal: Callable[[], None]) -> None:
@@ -480,6 +542,25 @@ def register(app: FastAPI, svc: EscrowService, require_paypal: Callable[[], None
     def proof(order_id: str):
         return Response(svc.proof_package(order_id), media_type="application/zip",
                         headers={"Content-Disposition": f'attachment; filename="aurix-proof-{order_id}.zip"'})
+
+    @app.post("/api/escrow/orders/{order_id}/explain")
+    def explain(order_id: str, req: ExplainReq):
+        """AI explanation in plain language (Gemma 4 by default). Advisory only."""
+        return svc.explain(order_id, req.audience, req.lang)
+
+    @app.post("/api/escrow/orders/{order_id}/arbiter-brief")
+    def arbiter_brief(order_id: str, req: ExplainReq):
+        """AI brief for the arbiter: summary, inconsistencies, questions, suggested action. The arbiter decides."""
+        return svc.arbiter_brief(order_id, req.lang)
+
+    @app.post("/api/escrow/orders/{order_id}/demo-arbiter")
+    def demo_arbiter(order_id: str, req: ArbiterActionReq):
+        return svc.demo_arbiter_action(order_id, req.action)
+
+    @app.get("/api/escrow/advisor")
+    def advisor_info():
+        return {"enabled": svc.advisor.enabled, "model": svc.advisor.cfg.model if svc.advisor.enabled else "template",
+                "demo_arbiter": svc.demo_arbiter}
 
     @app.get("/api/escrow/keys")
     def keys():

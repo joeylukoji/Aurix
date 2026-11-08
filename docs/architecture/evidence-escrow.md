@@ -1,6 +1,6 @@
 # AURIX MVP 0.2 — Escrow à preuves (Evidence-Released USD Escrow)
 
-**Statut :** implémenté sur la branche `MVP_0.1` (testé avec le simulateur PayPal ; à valider sur la PayPal Sandbox réelle). Reste : arbitre dans l'interface, vérification dans le navigateur, déploiement Render.
+**Statut :** implémenté sur la branche `MVP_0.1` (testé avec le simulateur PayPal ; à valider sur la PayPal Sandbox réelle). Conseiller IA (Gemma 4, consultatif) et boutons d'arbitre ajoutés (§7 bis). Reste : test avec un vrai Gemma 4, vérification dans le navigateur, déploiement Render.
 **Date :** 2026-11-08
 **Position :** version intermédiaire entre le MVP 0.1 (hackathon) et le MVP 0.3 complète
 ([`mscfa.md`](mscfa.md) : MSCFA complet + escrow USD on-chain, §14 bis).
@@ -135,10 +135,35 @@ ne prouve pas la remise physique du colis ; les fonds ont été gérés par PayP
 | `payments/aurix_payments/` (**fait**) | Module `escrow.py` : commandes conditionnelles (`deadline`, `arbiter`, transporteur), attestations signées, règle partagée avec `aurix_verify`, décision signée et finale, capture ou void idempotents avec réessai dans le `poller()` existant, export du dossier ; routes `/api/escrow/*` (aussi via le gateway) |
 | `delivery-sim/` (nouveau, **fait**, port 8087) | Petit service FastAPI : `POST /ship/{order_id}`, `POST /deliver/{order_id}`, signature Ed25519 avec clé démo distincte ; `source_type = simulated` |
 | `verifier/` (nouveau, **fait**) | `python -m aurix_verify proof.zip` : empreintes, signatures, clés, **rejeu de la règle** ; aucune dépendance aux services. `payments` importe ce même paquet (JCS, signatures, règle) : le vérificateur rejoue exactement le code qui a décidé |
-| `web/` (**fait**, sauf boutons arbitre) | Onglet « Conditional (USD) » : création, autorisation, état et raisons de la règle, frise des preuves (réel/simulé, signature), boutons du transporteur simulé (livraison, livraison falsifiée), téléchargement du dossier |
+| `web/` (**fait**) | Onglet « Conditional (USD) » : création, autorisation, état et raisons de la règle, frise des preuves (réel/simulé, signature), boutons du transporteur simulé (livraison, livraison falsifiée), conseiller IA (explication, brief arbitre), boutons d'arbitre de démo, téléchargement du dossier |
 | `deploy/`, `scripts/` (**fait**, sauf Render) | Service `delivery-sim` dans `docker-compose.yml` et `dev-up.sh`, secrets `ESCROW_KEY_FILE`, `ESCROW_TRUSTED_KEYS_FILE`, `DELIVERY_SIM_KEY_FILE` ; `verifier` et `delivery-sim` dans `test-all.sh` |
 
 Aucune modification de `chain/`.
+
+## 7 bis. Conseiller IA (Gemma 4, consultatif)
+
+**Principe : l'IA explique et suggère, elle ne décide jamais.** La décision reste la règle déterministe
+`delivery-attested/1`, que `aurix-verify` rejoue ; un LLM n'y entre pas (ses réponses ne sont pas reproductibles).
+Code : `payments/aurix_payments/advisor.py`.
+
+| Fonction | Route | Ce que fait le modèle | Ce qu'il ne fait pas |
+| --- | --- | --- | --- |
+| Explication en clair | `POST /api/escrow/orders/{id}/explain` `{audience: buyer\|merchant\|auditor, lang}` | Résume ce qui s'est passé, pourquoi la règle a décidé, les limites (sources simulées, signature ≠ livraison physique) | Modifier l'état ou la décision |
+| Assistant de l'arbitre | `POST /api/escrow/orders/{id}/arbiter-brief` | JSON : résumé, incohérences, questions à vérifier hors AURIX, **suggestion** `HOLD/RELEASE/VOID/NONE` | Agir : seule l'action **signée** de l'arbitre compte |
+
+- **Modèle** : Gemma 4 par défaut (`ADVISOR_LLM_MODEL=gemma4:e4b`) via tout point d'accès compatible OpenAI
+  (`ADVISOR_LLM_URL`) : Ollama en local (`http://localhost:11434/v1`), vLLM, ou l'endpoint compatible OpenAI de
+  Google AI Studio (`ADVISOR_LLM_API_KEY`). Sans modèle joignable : texte généré par gabarit, signalé comme tel.
+- **Données envoyées** : uniquement des champs structurés du dossier (types d'événements, sources, statuts de
+  vérification, montants, dates, anomalies). Ni identité du payeur, ni payload brut, ni texte libre du transporteur.
+- **Injection de prompt** : les faits sont passés comme données, le prompt système interdit de les suivre comme
+  instructions ; la sortie n'est qu'affichée (échappée), jamais réinjectée dans la règle.
+- **Traçabilité** : chaque texte est enregistré et exporté dans le dossier (`advisory/<kind>.json`, protégé par le
+  manifeste signé) avec le modèle effectivement utilisé ; le vérificateur l'affiche comme « consultatif, non utilisé
+  par la règle ».
+- **Arbitre de démo** : `POST /api/escrow/orders/{id}/demo-arbiter` signe avec la clé d'arbitre de démo détenue par
+  le serveur, uniquement hors production (`AURIX_ENV≠production`). Un vrai arbitre signe avec sa propre clé et
+  dépose son attestation sur `/api/escrow/evidence`.
 
 ## 8. Sécurité
 
