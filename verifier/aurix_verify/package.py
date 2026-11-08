@@ -215,8 +215,14 @@ def verify_package(files: dict[str, bytes], trusted_keys: dict | None = None) ->
     if "decision.json" in listed:
         decision = load("decision.json")
         dec_ok = check(decision, "signatures/decision.json", "aurix") == crypto.VALID
-        if decision and terms and terms_ok:
-            at = crypto.parse_time(decision["decided_at"])
+        decided = decision.get("decided_at") if isinstance(decision, dict) else None
+        try:
+            at = crypto.parse_time(decided) if isinstance(decided, str) else None
+        except ValueError:
+            at = None
+        if decision is not None and at is None:
+            errors.append("decision.json: decided_at missing or not a valid time")
+        if decision and terms and terms_ok and at is not None:
             known = []
             for e in evidence:
                 rec = received_at.get(digest(e.attestation))

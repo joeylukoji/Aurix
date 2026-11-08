@@ -257,8 +257,9 @@
     if ("decision.json" in listed) {
       const decision = load("decision.json");
       const decOk = (await check(decision, "signatures/decision.json", "aurix")) === VALID;
-      if (decision && terms && termsOk) {
-        const at = t(decision.decided_at);
+      const at = decision && typeof decision.decided_at === "string" ? t(decision.decided_at) : NaN;
+      if (decision && Number.isNaN(at)) errors.push("decision.json: decided_at missing or not a valid time");
+      if (decision && terms && termsOk && !Number.isNaN(at)) {
         const known = evidence.filter((e) => dig.get(e) in receivedAt && receivedAt[dig.get(e)] <= at)
           .map((e) => ({ ...e, received_at: new Date(receivedAt[dig.get(e)]).toISOString().replace(/\.\d{3}Z$/, "Z") }));
         const out = decide(terms, known, decision.decided_at);

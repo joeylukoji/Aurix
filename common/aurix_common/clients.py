@@ -238,6 +238,9 @@ class PayPalClient:
     def capture(self, order_id: str) -> dict:
         return self._json(self.http.post(f"/v2/checkout/orders/{order_id}/capture", headers=self._headers()))
 
+    def get_order(self, order_id: str) -> dict:
+        return self._json(self.http.get(f"/v2/checkout/orders/{order_id}", headers=self._headers()))
+
     def authorize(self, order_id: str) -> dict:
         """Authorizes an approved AUTHORIZE order (funds held); returns the order with its authorization."""
         return self._json(self.http.post(f"/v2/checkout/orders/{order_id}/authorize", headers=self._headers()))

@@ -141,3 +141,47 @@ def test_delivery_received_after_the_deadline_does_not_release(tmp_path, monkeyp
     r = c.post("/api/escrow/evidence", json=carrier_attestation(oid, terms["created_at"])).json()
     assert r["evaluation"]["decision"] == "VOID"
     assert any("received by AURIX after the deadline" in x for x in r["evaluation"]["reasons"])
+
+
+def test_order_left_authorizing_is_recovered_from_paypal(tmp_path, monkeypatch):
+    c, sim, clock = setup(tmp_path, monkeypatch)
+    oid = c.post("/api/escrow/orders", json={"amount_usd": "30.00"}).json()["order_id"]
+    sim.post(f"/sim/orders/{oid}/approve")
+    svc = c.app.state.escrow
+    svc.paypal.authorize(oid)  # PayPal held the funds, then the process stopped before recording it
+    svc.db.exec("UPDATE paypal_orders SET status='AUTHORIZING', updated_at=datetime('now','-5 minutes')"
+                " WHERE order_id=?", oid)
+    c.app.state.refresh_pending()
+    o = c.get(f"/api/escrow/orders/{oid}").json()
+    assert o["status"] == "AUTHORIZED" and o["authorization_id"]
+    assert "payment.authorized" in [t["type"] for t in o["timeline"]]
+
+
+def test_order_left_authorizing_without_authorization_goes_back_to_scored(tmp_path, monkeypatch):
+    c, sim, _ = setup(tmp_path, monkeypatch)
+    oid = c.post("/api/escrow/orders", json={"amount_usd": "30.00"}).json()["order_id"]
+    svc = c.app.state.escrow
+    svc.db.exec("UPDATE paypal_orders SET status='AUTHORIZING', updated_at=datetime('now','-5 minutes')"
+                " WHERE order_id=?", oid)
+    c.app.state.refresh_pending()
+    assert c.get(f"/api/escrow/orders/{oid}").json()["status"] == "SCORED"
+
+
+def test_recent_authorizing_order_is_left_alone(tmp_path, monkeypatch):
+    c, sim, _ = setup(tmp_path, monkeypatch)
+    oid = c.post("/api/escrow/orders", json={"amount_usd": "30.00"}).json()["order_id"]
+    c.app.state.escrow.db.exec("UPDATE paypal_orders SET status='AUTHORIZING', updated_at=CURRENT_TIMESTAMP"
+                               " WHERE order_id=?", oid)
+    c.app.state.refresh_pending()  # an authorize call may still be in flight
+    assert c.get(f"/api/escrow/orders/{oid}").json()["status"] == "AUTHORIZING"
+
+
+def test_per_order_advisor_cap_is_reached(tmp_path, monkeypatch):
+    c, sim, _ = advisor_setup(tmp_path, monkeypatch, FakeGemma("ok"))
+    oid = authorized_order(c, sim)
+    svc = c.app.state.escrow
+    codes = []
+    for _ in range(E.ADVICE_PER_ORDER + 1):
+        svc._advice_last.clear()  # skip the 5-second spacing
+        codes.append(c.post(f"/api/escrow/orders/{oid}/explain", json={}).status_code)
+    assert codes[:-1] == [200] * E.ADVICE_PER_ORDER and codes[-1] == 429

@@ -111,7 +111,7 @@ services:
       DELIVERY_SIM_KEY_FILE: ${DELIVERY_SIM_KEY_FILE:-}
       # Only the wallet's origin needs to call the demo carrier; "*" is fine on a local machine.
       CORS_ORIGINS: ${DELIVERY_CORS_ORIGINS:-*}
-    volumes: ["${AURIX_SECRETS_DIR:-./secrets}:/run/aurix-secrets:ro"]
+    volumes: ["${AURIX_SECRETS_DIR:-./secrets}/delivery-sim:/run/aurix-secrets:ro"]
     ports: ["8087:8087"]
     depends_on:
       payments: { condition: service_healthy }
@@ -179,7 +179,7 @@ services:
       PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-sim-client-secret}
       PAYPAL_WEBHOOK_ID: ${PAYPAL_WEBHOOK_ID:-SIM-WEBHOOK-ID}
       # Evidence-released escrow (MVP 0.2): Ed25519 signing key and trusted source/arbiter keys, as paths
-      # inside the container (files from AURIX_SECRETS_DIR, mounted read-only at /run/aurix-secrets).
+      # inside the container (files from AURIX_SECRETS_DIR/payments, mounted read-only at /run/aurix-secrets).
       ESCROW_KEY_FILE: ${ESCROW_KEY_FILE:-}
       ESCROW_TRUSTED_KEYS_FILE: ${ESCROW_TRUSTED_KEYS_FILE:-}
       # AI advisor (advisory only): Gemma 4 via an OpenAI-compatible endpoint, e.g. Ollama on the host
@@ -187,7 +187,7 @@ services:
       ADVISOR_LLM_URL: ${ADVISOR_LLM_URL:-}
       ADVISOR_LLM_MODEL: ${ADVISOR_LLM_MODEL:-gemma4:e4b}
       ADVISOR_LLM_API_KEY: ${ADVISOR_LLM_API_KEY:-}
-    volumes: ["payments-data:/data", "${AURIX_SECRETS_DIR:-./secrets}:/run/aurix-secrets:ro"]
+    volumes: ["payments-data:/data", "${AURIX_SECRETS_DIR:-./secrets}/payments:/run/aurix-secrets:ro"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8085/health',timeout=4)"]
       interval: 10s

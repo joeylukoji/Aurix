@@ -35,7 +35,11 @@ def utcnow() -> str:
 
 
 def parse_time(s: str | None) -> datetime | None:
-    return datetime.fromisoformat(s.replace("Z", "+00:00")) if s else None
+    """ISO 8601 to an aware datetime; a time without zone is taken as UTC (so comparisons never mix kinds)."""
+    if not s:
+        return None
+    dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 def public_key_b64(priv: Ed25519PrivateKey) -> str:

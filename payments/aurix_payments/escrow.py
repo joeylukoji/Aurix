@@ -47,7 +47,7 @@ LANGS = {"French", "English", "Spanish", "Portuguese", "German", "Swahili"}  # a
 AUDIENCES = {"buyer", "merchant", "auditor"}
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")  # attestation ids become file names in the proof package
 MAX_EVENT_ID = 200
-ADVICE_PER_ORDER = 10        # advisor calls kept per order (oldest of the same kind is replaced)
+ADVICE_PER_ORDER = 10        # advisor calls allowed per order (one stored row per kind)
 ADVICE_MIN_INTERVAL = 5.0    # seconds between advisor calls for one order
 ADVICE_PER_MINUTE = 30       # advisor calls per minute for the whole service
 
@@ -124,6 +124,8 @@ class EscrowService:
         self.demo_arbiter = demo_arbiter
         self._advice_calls: list[float] = []
         self._advice_last: dict[str, float] = {}
+        self._advice_count: dict[str, int] = {}  # advisor calls per order since start (cost bound)
+        self._order_locks: dict[str, threading.Lock] = {}
         self.paypal_mode, self.signer, self.clock, self.chain = paypal_mode, signer, clock, chain
         own = dev_key_entry(signer, "aurix", "AURIX escrow service")
         self.keys = {"keys": [own] + [k for k in external_keys if k["key_id"] != signer.key_id]}
@@ -231,16 +233,21 @@ class EscrowService:
         if not confirm:
             raise EscrowError(400, "explicit approval required (confirm=true)")
         self._order(order_id)
-        cur = self.db.exec("UPDATE paypal_orders SET status='AUTHORIZING' WHERE order_id=? AND status='SCORED'",
-                           order_id)
-        if cur.rowcount != 1:  # a concurrent confirm already started (or the order moved on)
-            raise EscrowError(409, f"order is {self._order(order_id)['status']}")
-        try:
-            res = self.paypal.authorize(order_id)
-        except Exception:
-            self.db.update_order(order_id, status=Status.SCORED)  # nothing held: the buyer may approve again
-            raise
-        auth = res["purchase_units"][0]["payments"]["authorizations"][0]
+        with self._order_lock(order_id):  # recover_authorizing() must not run during the PayPal call
+            cur = self.db.exec("UPDATE paypal_orders SET status='AUTHORIZING', updated_at=CURRENT_TIMESTAMP"
+                               " WHERE order_id=? AND status='SCORED'", order_id)
+            if cur.rowcount != 1:  # a concurrent confirm already started (or the order moved on)
+                raise EscrowError(409, f"order is {self._order(order_id)['status']}")
+            try:
+                res = self.paypal.authorize(order_id)
+            except PayPalError:
+                self.db.update_order(order_id, status=Status.SCORED)  # PayPal refused: nothing is held
+                raise
+            # on a network error the order stays AUTHORIZING; recover_authorizing() asks PayPal later
+            self._record_authorization(order_id, res["purchase_units"][0]["payments"]["authorizations"][0])
+        return self.view(order_id)
+
+    def _record_authorization(self, order_id: str, auth: dict) -> None:
         status = Status.AUTHORIZED if auth.get("status") in ("CREATED", "PENDING") else Status.AUTH_FAILED
         self.db.update_order(order_id, status=status,
                              last_error=None if status == Status.AUTHORIZED else f"authorization {auth.get('status')}")
@@ -250,7 +257,19 @@ class EscrowService:
                         refs={"authorization_id": auth["id"]}, method="paypal_api_authenticated",
                         provider_status=auth.get("status"), amount=auth.get("amount"),
                         source_event_time=auth.get("create_time"), raw=auth)
-        return self.view(order_id)
+
+    def recover_authorizing(self, order_id: str) -> None:
+        """An order left in AUTHORIZING (process stopped during the PayPal call): ask PayPal what happened.
+        Funds held at PayPal are then tracked again (and voided at the deadline); otherwise back to SCORED."""
+        with self._order_lock(order_id):
+            if self._order(order_id)["status"] != Status.AUTHORIZING:
+                return
+            o = self.paypal.get_order(order_id)
+            auths = ((o.get("purchase_units") or [{}])[0].get("payments") or {}).get("authorizations") or []
+            if auths:
+                self._record_authorization(order_id, auths[0])
+            elif o.get("status") in ("CREATED", "APPROVED"):
+                self.db.update_order(order_id, status=Status.SCORED)
 
     def add_evidence(self, att: dict, sig: dict) -> dict:
         """An attestation signed by an external source (carrier) or an arbiter."""
@@ -323,7 +342,7 @@ class EscrowService:
     def execute(self, order_id: str) -> None:
         """Carries out a recorded decision at PayPal. Idempotent and serialised: the poller and a request
         thread may both get here; network errors are retried by tick()."""
-        with self.lock:
+        with self._order_lock(order_id):  # per order: a slow PayPal call must not stall other orders
             o = self._order(order_id)
             if o["status"] not in (Status.RELEASING, Status.VOIDING):
                 return  # already carried out by another thread
@@ -381,7 +400,7 @@ class EscrowService:
                         source_event_time=r.get("create_time"), raw=r)
             return "authorization recorded"
         if etype == "PAYMENT.AUTHORIZATION.VOIDED":
-            with self.lock:
+            with self._order_lock(order_id):
                 if self._order(order_id)["status"] in (Status.VOIDING, Status.AUTHORIZED):
                     self.db.update_order(order_id, status=Status.VOIDED)
             self.attest(order_id, "payment.voided", provider="paypal", provider_event_id=f"void:{r.get('id')}",
@@ -415,8 +434,12 @@ class EscrowService:
         """Poller: evaluate waiting orders (deadlines), retry pending executions, record anchors."""
         for r in self.db.all("SELECT t.order_id, t.decision, o.status FROM escrow_terms t JOIN paypal_orders o"
                              " ON o.order_id=t.order_id WHERE o.status IN"
-                             " ('AUTHORIZED','RELEASING','VOIDING','ANCHORED')"):
+                             " ('AUTHORIZED','RELEASING','VOIDING','ANCHORED')"
+                             " OR (o.status='AUTHORIZING' AND o.updated_at < datetime('now', '-2 minutes'))"):
             try:
+                if r["status"] == Status.AUTHORIZING:
+                    self.recover_authorizing(r["order_id"])
+                    continue
                 if r["status"] == Status.AUTHORIZED and r["decision"] in FINAL:
                     # decision recorded but the process stopped before the status changed: resume it
                     self.db.update_order(r["order_id"], status=Status.RELEASING if r["decision"] == RELEASE else Status.VOIDING)
@@ -429,6 +452,10 @@ class EscrowService:
                     self.execute(r["order_id"])
             except Exception:
                 log.exception("escrow tick failed for %s", r["order_id"])
+
+    def _order_lock(self, order_id: str) -> threading.Lock:
+        with self.lock:
+            return self._order_locks.setdefault(order_id, threading.Lock())
 
     # ---------------- read side ----------------
     def _order(self, order_id: str) -> dict:
@@ -487,11 +514,11 @@ class EscrowService:
                 raise EscrowError(429, "too many advisor requests; try again in a minute")
             if now - self._advice_last.get(order_id, -1e9) < ADVICE_MIN_INTERVAL:
                 raise EscrowError(429, "advisor already asked for this order a moment ago")
-            n = self.db.one("SELECT COUNT(*) AS n FROM advisories WHERE order_id=?", order_id)["n"]
-            if n >= ADVICE_PER_ORDER:
+            if self._advice_count.get(order_id, 0) >= ADVICE_PER_ORDER:
                 raise EscrowError(429, "advisor limit reached for this order")
             self._advice_calls = recent + [now]
             self._advice_last[order_id] = now
+            self._advice_count[order_id] = self._advice_count.get(order_id, 0) + 1
 
     def explain(self, order_id: str, audience: str, lang: str) -> dict:
         if audience not in AUDIENCES:

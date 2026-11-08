@@ -51,6 +51,8 @@ def cases():
                                        received={"att_shipment_delivered_1": "2026-11-16T03:00:00Z"}), keys()),
         "expired_key_backdated": (package(items=early, key_doc=kd_exp, decided_at="2026-11-10T09:00:00Z",
                                           received={"att_shipment_delivered_1": "2026-11-10T08:00:00Z"}), kd_exp),
+        "decision_without_time": (rewrite(package(), "decision.json",
+                                          lambda b: b.replace(b'"decided_at"', b'"decided_on"')), keys()),
         "hold_at_deadline": (package(t=terms(arbiter=ARBITER.key_id), items=held, decided_at="2026-11-16T00:00:01Z"),
                              keys()),
     }

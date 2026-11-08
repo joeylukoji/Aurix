@@ -284,3 +284,12 @@ def test_make_attestation_shape_and_optional_parts():
                          provenance={"raw_payload_hash": None})
     assert b["event"]["amount"] == {"value": "1.00", "currency": "USD"} and b["source"]["verified_by"]
     canonicalize(b)  # signable: no floats
+
+
+def test_forged_decision_without_time_is_reported_not_raised():
+    for bad in (b'"decided_at": "2026-11-10T09:00:00Z"', ):
+        data = rewrite(package(), "decision.json", lambda b: b.replace(bad, b'"decided_at": 42'))
+        r = verify_package(files_of(data), keys())
+        assert r["result"] == "INVALID" and any("decided_at" in e for e in r["errors"])
+    data = rewrite(package(), "decision.json", lambda b: b.replace(b'"decided_at"', b'"decided_on"'))
+    assert verify_package(files_of(data), keys())["result"] == "INVALID"
