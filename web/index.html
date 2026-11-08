@@ -128,6 +128,13 @@
       <div id="cdResult"></div>
     </div>
     <div class="card"><h2>Conditional orders</h2><div id="condGrid" class="grid ag-theme-quartz-auto-dark"></div></div>
+    <div class="card">
+      <h2>Verify a proof package</h2>
+      <p class="muted">Runs in your browser only: nothing is uploaded. Same checks as <code>aurix-verify</code>.</p>
+      <label>Proof package (.zip)<input id="vfFile" type="file" accept=".zip,application/zip"></label>
+      <label class="check"><input id="vfKeys" type="checkbox" checked> Check against AURIX's published keys (otherwise the keys inside the package)</label>
+      <div id="vfResult"></div>
+    </div>
   </section>
 
   <section id="explorer" class="tab">
@@ -165,6 +172,7 @@
   </section>
 </main>
 <div id="toast" hidden></div>
+<script src="verify.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

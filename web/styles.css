@@ -60,3 +60,4 @@ label.check{display:flex;gap:8px;align-items:center;color:var(--text)}label.chec
 .timeline{margin:12px 0;padding-left:20px;display:grid;gap:8px}.timeline .pill{margin-left:4px}
 .check{display:flex;align-items:center;gap:8px}.check input{width:auto;margin:0}
 .advisor{margin-top:12px}.advisor h3{margin:8px 0}.advice{margin:8px 0;padding:8px 12px;border-left:3px solid var(--blue);white-space:pre-wrap}
+.kv{border-collapse:collapse;margin:8px 0}.kv th{text-align:left;padding:2px 12px 2px 0;font-weight:600}.kv td{padding:2px 0}

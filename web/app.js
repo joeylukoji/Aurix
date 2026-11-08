@@ -342,6 +342,7 @@ async function renderCond(oid) {
       <button id="cdDeliver" class="primary">Carrier: report delivery</button><button id="cdForge">Send a forged delivery</button>` : "") +
     (o.status === "AUTHORIZED" && !deliveryUrl() ? `<p class="muted">No demo carrier configured ("delivery" in config.json).</p>` : "") +
     (o.status !== "SCORED" ? `<button id="cdProof">Download proof package</button>
+      <button id="cdVerify">Verify in browser</button><button id="cdTamper">Tamper one byte &amp; verify</button><div id="cdReport"></div>
       <p class="muted">Verify it anywhere, offline: <code>python -m aurix_verify aurix-proof-${esc(oid)}.zip</code></p>` : "");
   if (o.status !== "SCORED") {
     const hasArb = !!o.terms.arbiter_key_id, open = !CD_FINAL.includes(o.status) && !o.decision;
@@ -377,6 +378,15 @@ async function renderCond(oid) {
   if ($("cdDeliver")) $("cdDeliver").onclick = (e) => busy(e.target, () => carrier(oid, false));
   if ($("cdForge")) $("cdForge").onclick = (e) => busy(e.target, () => carrier(oid, true));
   if ($("cdProof")) $("cdProof").onclick = (e) => busy(e.target, () => downloadProof(oid));
+  if ($("cdVerify")) $("cdVerify").onclick = (e) => busy(e.target, async () => {
+    clearTimeout(renderCond.timer);
+    $("cdReport").innerHTML = await verifyFiles(await fetchProofFiles(oid), true, "");
+  });
+  if ($("cdTamper")) $("cdTamper").onclick = (e) => busy(e.target, async () => {
+    clearTimeout(renderCond.timer);
+    const t = tamper(await fetchProofFiles(oid));
+    $("cdReport").innerHTML = await verifyFiles(t.files, true, `<p class="muted">The payment amount in <code>${esc(t.path)}</code> was changed by one digit.</p>`);
+  });
   return o;
 }
 const advisorLabel = () => escrowAdvisor?.enabled ? `model ${escrowAdvisor.model}` : "template (no model configured)";
@@ -400,6 +410,42 @@ async function followCond(oid, tries = 120) {
     await new Promise((r) => setTimeout(r, 500));
   }
 }
+// ---------- in-browser verification (web/verify.js, a port of aurix-verify) ----------
+function reportHtml(r, note = "") {
+  const ok = r.result === "VALID";
+  const row = (k, v) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`;
+  const d = r.decision;
+  return `<div class="risk ${ok ? "low" : "high"}"><div class="score">${ok ? "VALID" : "INVALID"} · order ${esc(r.order_id || "?")}</div>${note}
+    <table class="kv">${row("Integrity", r.integrity)}${row("Signatures", r.signatures)}${row("Sources", r.source_verification)}
+      ${row("Consistency", r.consistency)}${row("Keys", r.trust_source)}
+      ${d ? row("Decision", `recorded ${d.recorded}, replayed ${d.replayed} (${d.matches ? "match" : "MISMATCH"})`) : ""}</table>
+    ${r.sources.length ? `<p>${r.sources.map((s) => `<span class="pill ${s.type === "simulated" ? "warn" : "ok"}">${esc(s.provider)}: ${esc(s.type)}, ${esc(s.status)}</span>`).join(" ")}</p>` : ""}
+    ${r.errors.length ? `<p><b>Problems</b></p><ul>${r.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>` : ""}
+    ${r.anomalies.length ? `<p><b>Anomalies</b></p><ul>${r.anomalies.map((a) => `<li>class ${a.class}: ${esc(a.code)}</li>`).join("")}</ul>` : ""}
+    <p><b>Limitations</b></p><ul>${r.limitations.map((l) => `<li>${esc(l)}</li>`).join("")}</ul></div>`;
+}
+async function publishedKeys() { return C.gatewayOk ? api("/api/escrow/keys").catch(() => null) : null; }
+async function verifyFiles(files, useKeys, note) {
+  try { return reportHtml(await AurixVerify.verifyPackage(files, useKeys ? await publishedKeys() : null), note); }
+  catch (e) {
+    if (String(e.message) === "ED25519_UNSUPPORTED") return `<p class="muted">This browser cannot verify Ed25519 signatures (WebCrypto). Use a recent Chrome, Firefox or Safari, or <code>aurix-verify</code>.</p>`;
+    throw e;
+  }
+}
+async function fetchProofFiles(oid) {
+  const r = await fetch(`${C.gateway}/api/escrow/orders/${encodeURIComponent(oid)}/proof`);
+  if (!r.ok) throw new Error(`proof export failed (${r.status})`);
+  return AurixVerify.readZip(await r.arrayBuffer());
+}
+// Demo: change one character of the payment amount inside the package, then verify again.
+function tamper(files) {
+  const out = { ...files };
+  const p = Object.keys(out).find((k) => k.startsWith("attestations/") && new TextDecoder().decode(out[k]).includes("payment.authorized"));
+  const txt = new TextDecoder().decode(out[p]).replace(/"value": "(\d)/, (m, d) => `"value": "${(Number(d) + 1) % 10}`);
+  out[p] = new TextEncoder().encode(txt);
+  return { files: out, path: p };
+}
+
 async function downloadProof(oid) {
   const r = await fetch(`${C.gateway}/api/escrow/orders/${encodeURIComponent(oid)}/proof`);
   if (!r.ok) throw new Error(`proof export failed (${r.status})`);
@@ -584,6 +630,10 @@ function init() {
   $("escCheck").onclick = (e) => busy(e.target, checkEscrow);
   $("ppCreate").onclick = (e) => busy(e.target, createOrder);
   $("cdCreate").onclick = (e) => busy(e.target, createCond);
+  $("vfFile").onchange = (e) => busy(e.target, async () => {
+    const f = e.target.files[0]; if (!f) return;
+    $("vfResult").innerHTML = await verifyFiles(await AurixVerify.readZip(await f.arrayBuffer()), $("vfKeys").checked, `<p class="muted">${esc(f.name)}</p>`);
+  });
   $("addNode").onclick = (e) => busy(e.target, async () => { C.addNode($("nodeRest").value, $("nodeRpc").value);
     $("nodeRest").value = $("nodeRpc").value = ""; toast("Node added: it is tried first"); renderSettings(); refreshStatus(); });
   $("saveGw").onclick = (e) => busy(e.target, async () => { const v = $("gwUrl").value.trim();

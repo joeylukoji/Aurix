@@ -117,6 +117,12 @@ async function main() {
       step('aurix-verify: VALID, decision replayed');
     } else step('aurix-verify not installed (verifier/.venv): verification skipped');
 
+    step('Conditional USD: verify in the browser, then tamper one byte -> INVALID');
+    await page.click('#cdVerify');
+    await page.waitForSelector('#cdReport >> text=VALID · order');
+    await page.click('#cdTamper');
+    await page.waitForSelector('#cdReport >> text=INVALID · order');
+
     if (process.env.E2E_VOID === '1') {
       step('Conditional USD: 2-minute demo deadline without delivery -> voided');
       await page.selectOption('#cdDays', 'm2');
