@@ -399,10 +399,66 @@ chiffrement du payload brut (ne pas le stocker du tout à la place).
 
 ### Lot P — suite de la V2
 
+**Escrow USD conditionnel** (§14 bis) : environ 2 jours, à faire après le lot H car il réutilise les attestations MSCFA.
+
 Attestation Builder, rotation automatisée des clés, `MsgAnchorEvidence` (horodatage BFT des manifestes),
 contrôles de cohérence restants, portage Go éventuel, transporteur réel, divulgation sélective.
 
 ---
+
+## 14 bis. Escrow USD conditionnel (V2, livré avec MSCFA)
+
+**Décision (2026-11-08) :** l'escrow en USD est construit en V2, avec MSCFA. Pour le hackathon, l'escrow
+Smart Money reste en AUR et est présenté comme le mécanisme, pas comme un escrow PayPal.
+
+### Principe : PayPal garde l'argent, AURIX décide quand le libérer
+
+AURIX ne détient **jamais** de fonds en USD et ne convertit jamais d'USD en AUR. Il s'appuie sur le mode
+**autorisation puis capture** des commandes PayPal (`intent = AUTHORIZE`) :
+
+```mermaid
+sequenceDiagram
+    participant A as Acheteur
+    participant P as payments
+    participant PP as PayPal
+    participant C as Chaîne (x/smartmoney)
+    participant E as evidence (MSCFA)
+    A->>P: commande conditionnelle (arbitre, date limite ≤ 29 j)
+    P->>PP: Orders v2, intent AUTHORIZE
+    A->>PP: approuve → fonds bloqués, rien n'est encaissé
+    P->>C: MsgCreateFiatEscrow {authorization_id, montant, devise, arbitre, deadline}
+    alt libération (acheteur ou arbitre)
+      A->>C: MsgReleaseFiatEscrow
+      C-->>P: événement RELEASED
+      P->>PP: capture de l'autorisation
+      PP->>P: webhook PAYMENT.CAPTURE.COMPLETED (signé)
+      P->>C: MsgAnchorProof (attestation k-sur-n comme aujourd'hui)
+    else date limite ou remboursement
+      C-->>P: événement EXPIRED / REFUNDED
+      P->>PP: void de l'autorisation
+    end
+    P->>E: événements vérifiés → attestations du dossier de preuve
+```
+
+### Exigences
+
+| ID | Exigence |
+| --- | --- |
+| FX-01 | `x/smartmoney` : nouveau type d'escrow **sans fonds** (`FiatEscrow`) : `authorization_ref`, `amount` (décimal), `currency`, `sender`, `arbiter`, `deadline`, `status ∈ {AUTHORIZED, RELEASED, CAPTURED, EXPIRED, VOIDED, REFUNDED}`. Messages `MsgCreateFiatEscrow`, `MsgReleaseFiatEscrow`, `MsgRefundFiatEscrow`. |
+| FX-02 | Mêmes règles que l'escrow AUR : libération une seule fois, par l'émetteur ou l'arbitre ; remboursement après la date limite. Machine à états déterministe, testée par invariants. |
+| FX-03 | Date limite ≤ 29 jours (durée de vie d'une autorisation PayPal) ; réautorisation après la période garantie de 3 jours gérée par `payments`. |
+| FX-04 | `payments` exécute ce que la chaîne décide : capture sur `RELEASED`, void sur `EXPIRED`/`REFUNDED`. Il ne décide jamais seul. Idempotent, avec file de réessai. |
+| FX-05 | `CAPTURED` n'est posé sur la chaîne qu'après le webhook PayPal signé **et** l'attestation k-sur-n (mécanisme `PaymentProof` existant). |
+| FX-06 | Échec PayPal (autorisation expirée, capture refusée) : statut explicite sur la chaîne et dans le dossier MSCFA ; jamais présenté comme payé. |
+| FX-07 | Chaque transition produit une attestation MSCFA (`escrow.authorized`, `escrow.released`, `payment.captured`, `escrow.voided`) reliée à l'opération. |
+| FX-08 | Simulateur PayPal : modes `AUTHORIZE`, capture et void d'autorisation, expiration simulée. |
+| FX-09 | Wallet web : onglet « Paiement conditionnel (USD) » avec date limite, arbitre et état en temps réel. |
+
+### Limites
+
+- Les fonds restent chez PayPal : AURIX ne garantit pas leur disponibilité au-delà de ce que PayPal garantit pour une autorisation.
+- Durée maximale de 29 jours : convient aux jalons courts et aux marketplaces, pas aux contrats longs.
+- L'arbitre est une adresse AURIX : le choix et la confiance dans l'arbitre restent hors protocole.
 
 ## 15. Critères d'acceptation
 
