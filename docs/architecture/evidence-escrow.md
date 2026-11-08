@@ -1,6 +1,6 @@
 # AURIX MVP 0.2 — Escrow à preuves (Evidence-Released USD Escrow)
 
-**Statut :** en cours d'implémentation (noyau `verifier/` fait : JCS, Ed25519, règle, dossier, vérificateur)
+**Statut :** implémenté sur la branche `MVP_0.1` (testé avec le simulateur PayPal ; à valider sur la PayPal Sandbox réelle). Reste : arbitre dans l'interface, vérification dans le navigateur, déploiement Render.
 **Date :** 2026-11-08
 **Position :** version intermédiaire entre le MVP 0.1 (hackathon) et le MVP 0.3 complète
 ([`mscfa.md`](mscfa.md) : MSCFA complet + escrow USD on-chain, §14 bis).
@@ -130,13 +130,13 @@ ne prouve pas la remise physique du colis ; les fonds ont été gérés par PayP
 
 | Élément | Changement |
 | --- | --- |
-| `paypal-sim/app/main.py` | Mode `AUTHORIZE`, `POST /v2/payments/authorizations/{id}/capture` et `/void`, webhooks `PAYMENT.AUTHORIZATION.CREATED` / `.VOIDED`, expiration simulée |
-| `common/aurix_common/clients.py` | `create_order(intent=…)`, `capture_authorization()`, `void_authorization()` |
-| `payments/aurix_payments/` | Commandes conditionnelles (`deadline`, `arbiter`, `condition`) ; nouveau module `evidence.py` (JCS, Ed25519, attestations, règle, export) ; boucle de décision dans le `poller()` existant ; capture ou void idempotents avec réessai |
-| `delivery-sim/` (nouveau) | Petit service FastAPI : `POST /ship/{order_id}`, `POST /deliver/{order_id}`, signature Ed25519 avec clé démo distincte ; `source_type = simulated` |
+| `paypal-sim/app/main.py` (**fait**) | Mode `AUTHORIZE`, `POST /v2/payments/authorizations/{id}/capture` et `/void`, webhooks `PAYMENT.AUTHORIZATION.CREATED` / `.VOIDED`, expiration simulée |
+| `common/aurix_common/clients.py` (**fait**) | `create_order(intent=…)`, `capture_authorization()`, `void_authorization()` |
+| `payments/aurix_payments/` (**fait**) | Module `escrow.py` : commandes conditionnelles (`deadline`, `arbiter`, transporteur), attestations signées, règle partagée avec `aurix_verify`, décision signée et finale, capture ou void idempotents avec réessai dans le `poller()` existant, export du dossier ; routes `/api/escrow/*` (aussi via le gateway) |
+| `delivery-sim/` (nouveau, **fait**, port 8087) | Petit service FastAPI : `POST /ship/{order_id}`, `POST /deliver/{order_id}`, signature Ed25519 avec clé démo distincte ; `source_type = simulated` |
 | `verifier/` (nouveau, **fait**) | `python -m aurix_verify proof.zip` : empreintes, signatures, clés, **rejeu de la règle** ; aucune dépendance aux services. `payments` importe ce même paquet (JCS, signatures, règle) : le vérificateur rejoue exactement le code qui a décidé |
-| `web/` | Onglet « Paiement conditionnel (USD) » : création, état (`AUTHORIZED → WAIT → RELEASE → CAPTURED` ou `VOID`), boutons arbitre, export du dossier |
-| `deploy/`, `scripts/` | Service `delivery-sim`, secrets `MSCFA_SIGNING_KEY_FILE` et `DELIVERY_SIM_KEY_FILE`, tests ajoutés à `test-all.sh` |
+| `web/` (**fait**, sauf boutons arbitre) | Onglet « Conditional (USD) » : création, autorisation, état et raisons de la règle, frise des preuves (réel/simulé, signature), boutons du transporteur simulé (livraison, livraison falsifiée), téléchargement du dossier |
+| `deploy/`, `scripts/` (**fait**, sauf Render) | Service `delivery-sim` dans `docker-compose.yml` et `dev-up.sh`, secrets `ESCROW_KEY_FILE`, `ESCROW_TRUSTED_KEYS_FILE`, `DELIVERY_SIM_KEY_FILE` ; `verifier` et `delivery-sim` dans `test-all.sh` |
 
 Aucune modification de `chain/`.
 

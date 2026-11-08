@@ -230,7 +230,8 @@ def verify_package(files: dict[str, bytes], trusted_keys: dict | None = None) ->
     limitations = list(LIMITATIONS_ALWAYS)
     for s in sources.values():
         if s["type"] == "simulated":
-            limitations.insert(0, f"Source '{s['provider']}' is simulated (demo), not a real organisation.")
+            limitations.insert(0, f"Source '{s['provider']}' is simulated (environment '{s.get('environment')}'): "
+                                  "it is not a real organisation's system.")
         if s.get("environment") == "sandbox":
             limitations.append(f"Source '{s['provider']}' runs in a sandbox environment: no real money moved.")
     if trusted_keys is None:

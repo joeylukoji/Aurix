@@ -292,6 +292,94 @@ async function createOrder() {
   refreshOrders();
 }
 
+// ---------- Conditional USD payment (evidence-released escrow, MVP 0.2) ----------
+const CD_FINAL = ["ANCHORED", "VOIDED", "AUTH_FAILED", "DENIED", "CANCELLED"];
+const deliveryUrl = () => (C.config?.delivery || "").replace(/\/+$/, "");
+async function refreshCond() { if (C.gatewayOk) set("condGrid", (await api("/api/escrow/orders")).map((o) => ({
+  order_id: o.order_id, amount_usd: o.amount_usd, status: o.status, deadline: o.terms.deadline,
+  decision: o.decision?.decision || o.last_evaluation?.decision || "", evidence: o.timeline.length,
+  simulated: o.simulated_sources.join(", ") }))); }
+
+const SIG_LABEL = { valid: "signature valid", invalid: "signature INVALID", unknown_key: "unknown key", revoked_key: "revoked key" };
+function timelineHtml(o) {
+  if (!o.timeline.length) return `<p class="muted">No evidence yet.</p>`;
+  return `<ol class="timeline">${o.timeline.map((t) => `<li><b>${esc(t.type)}</b> · ${esc(t.provider)}
+    <span class="pill ${t.source_type === "simulated" ? "warn" : "ok"}">${esc(t.source_type)}</span>
+    <span class="pill ${t.signature === "valid" ? "ok" : "warn"}">${esc(SIG_LABEL[t.signature] || t.signature)}</span>
+    <br><span class="muted">event ${esc(t.source_event_time)} · received ${esc(t.received_at)} · ${esc(t.verification_method)}</span></li>`).join("")}</ol>`;
+}
+function condStatusHtml(o) {
+  const ev = o.last_evaluation, d = o.decision;
+  const head = {
+    SCORED: ["unavailable", "Waiting for the buyer's approval on PayPal"],
+    AUTHORIZED: ["medium", `Funds held by PayPal · rule says ${esc(ev?.decision || "WAIT")}`],
+    RELEASING: ["medium", "Evidence accepted: capturing at PayPal…"], CAPTURED: ["medium", "Captured: waiting for PayPal's signed webhook…"],
+    CONFIRMED: ["medium", "Captured: anchoring the proof…"], ATTESTING: ["medium", "Captured: proof waiting for independent attestors…"],
+    ANCHORED: ["low", "Released: captured on evidence, proof anchored"], VOIDING: ["medium", "Deadline passed: releasing the funds…"],
+    VOIDED: ["low", "Voided: the buyer was not charged"], AUTH_FAILED: ["high", "PayPal refused the operation"],
+  }[o.status] || ["unavailable", esc(o.status)];
+  const reasons = (d?.reasons || ev?.reasons || []).map((r) => `<li>${esc(r)}</li>`).join("");
+  return `<div class="risk ${head[0]}"><div class="score">${head[1]}</div>
+    <p>Order <code>${esc(o.order_id)}</code> · ${esc(o.amount_usd)} USD · deadline ${esc(o.terms.deadline)} · rule <code>${esc(o.terms.rule)}</code></p>
+    ${reasons ? `<ul>${reasons}</ul>` : ""}${o.last_error ? `<p>${esc(o.last_error)}</p>` : ""}
+    ${o.simulated_sources.length ? `<p class="muted">Simulated sources: ${esc(o.simulated_sources.join(", "))}. A valid signature proves who signed, not that a parcel was physically delivered.</p>` : ""}</div>`;
+}
+async function renderCond(oid) {
+  const o = await api(`/api/escrow/orders/${oid}`);
+  const canDeliver = o.status === "AUTHORIZED" && deliveryUrl();
+  $("cdResult").innerHTML = condStatusHtml(o) + timelineHtml(o) +
+    (canDeliver ? `<p class="muted">Demo carrier (simulated, its own signing key):</p>
+      <button id="cdDeliver" class="primary">Carrier: report delivery</button><button id="cdForge">Send a forged delivery</button>` : "") +
+    (o.status === "AUTHORIZED" && !deliveryUrl() ? `<p class="muted">No demo carrier configured ("delivery" in config.json).</p>` : "") +
+    (o.status !== "SCORED" ? `<button id="cdProof">Download proof package</button>
+      <p class="muted">Verify it anywhere, offline: <code>python -m aurix_verify aurix-proof-${esc(oid)}.zip</code></p>` : "");
+  if ($("cdDeliver")) $("cdDeliver").onclick = (e) => busy(e.target, () => carrier(oid, false));
+  if ($("cdForge")) $("cdForge").onclick = (e) => busy(e.target, () => carrier(oid, true));
+  if ($("cdProof")) $("cdProof").onclick = (e) => busy(e.target, () => downloadProof(oid));
+  return o;
+}
+async function carrier(oid, forge) {
+  const r = await fetch(`${deliveryUrl()}/deliver/${encodeURIComponent(oid)}${forge ? "?forge=true" : ""}`, { method: "POST" });
+  const b = await r.json();
+  if (b.aurix_status >= 400) toast(`AURIX refused the evidence: ${b.aurix_response?.detail || b.aurix_status}`, !forge);
+  else toast(`Delivery evidence accepted: ${b.aurix_response?.evaluation?.decision || "stored"}`);
+  await followCond(oid);
+}
+async function followCond(oid, tries = 120) {
+  let last = null;
+  for (let i = 0; i < tries; i++) {
+    const o = await renderCond(oid);
+    if (o.status !== last) { last = o.status; refreshCond().catch(() => {}); }
+    if (CD_FINAL.includes(o.status) || o.status === "AUTHORIZED" || o.status === "SCORED") break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+}
+async function downloadProof(oid) {
+  const r = await fetch(`${C.gateway}/api/escrow/orders/${encodeURIComponent(oid)}/proof`);
+  if (!r.ok) throw new Error(`proof export failed (${r.status})`);
+  const url = URL.createObjectURL(await r.blob());
+  const a = Object.assign(document.createElement("a"), { href: url, download: `aurix-proof-${oid}.zip` });
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+async function createCond() {
+  const keys = $("cdArb").checked ? (await api("/api/escrow/keys")).keys : [];
+  const arbiter = keys.find((k) => k.role === "arbiter")?.key_id || null;
+  const o = await api("/api/escrow/orders", { method: "POST", body: { amount_usd: $("cdAmt").value,
+    deadline_days: Number($("cdDays").value), arbiter_key_id: arbiter, payer: wallet?.address } });
+  const who = o.paypal_mode === "simulator" ? "PayPal simulator" : "PayPal Sandbox";
+  $("cdResult").innerHTML = `<p>Conditional order <code>${esc(o.order_id)}</code> · ${esc(o.terms.amount.value)} USD · deadline ${esc(o.terms.deadline)}</p>` +
+    riskHtml(o.risk, o.risk ? "ok" : "unavailable") +
+    `<ol class="steps"><li><a href="${esc(o.approve_url)}" target="_blank" rel="noopener">Open the ${who} page</a> and approve as the buyer.</li>
+      <li>Come back and authorize: PayPal holds the funds, nothing is charged yet.</li></ol>
+    <button id="cdAuth" class="primary">I approve: hold ${esc(o.terms.amount.value)} USD</button><div id="cdMsg"></div>`;
+  $("cdAuth").onclick = (e) => busy(e.target, async () => {
+    try { await api(`/api/escrow/orders/${o.order_id}/authorize`, { method: "POST", body: { confirm: true } }); }
+    catch (err) { $("cdMsg").innerHTML = `<p class="muted">${esc(err.message)}</p>`; return; }
+    await renderCond(o.order_id); refreshCond();
+  });
+  refreshCond();
+}
+
 // ---------- explorer ----------
 async function refreshExplorer() {
   const [blocks, txs] = await Promise.all([C.blocks(20), C.searchTxs("tx.height>0", 100)]);
@@ -401,6 +489,10 @@ function init() {
     { field: "risk_level", headerName: "Risk" }, { field: "anchor_height", headerName: "Proof block" },
     { headerName: "Attestations", valueGetter: (p) => { const a = p.data.attestations; return a && typeof a === "object" ? `${a.count}/${a.threshold}` : p.data.status === "ANCHORED" ? "confirmed" : ""; } },
     { field: "proof_hash", valueFormatter: (p) => short(p.value) }, { field: "simulated", headerName: "Rail", valueFormatter: (p) => (p.value ? "simulator" : "sandbox") }]);
+  grid("condGrid", [{ field: "order_id", cellClass: "lnk-cell", onCellClicked: (p) => followCond(p.value).catch((e) => toast(e.message, true)),
+    cellRenderer: (p) => `<a class="lnk">${esc(p.value)}</a>` }, { field: "amount_usd", headerName: "USD" }, { field: "status" },
+    { field: "decision" }, { field: "deadline" }, { field: "evidence", headerName: "Evidence", maxWidth: 110 },
+    { field: "simulated", headerName: "Simulated sources" }]);
   const clickQ = (field) => ({ cellClass: "lnk-cell", onCellClicked: (p) => p.value != null && search(p.value),
     cellRenderer: (p) => p.value == null ? "" : `<a class="lnk">${esc(field === "height" ? p.value : short(p.value))}</a>` });
   grid("blocksGrid", [{ field: "height", maxWidth: 110, ...clickQ("height") }, { field: "time", valueFormatter: (p) => new Date(p.value).toLocaleTimeString() },
@@ -417,7 +509,7 @@ function init() {
   document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => {
     document.querySelectorAll("nav button, .tab").forEach((x) => x.classList.remove("active"));
     b.classList.add("active"); $(b.dataset.tab).classList.add("active");
-    ({ wallet: refreshWallet, escrow: refreshEscrows, paypal: refreshOrders, explorer: refreshExplorer, settings: renderSettings })[b.dataset.tab]?.().catch((e) => toast(e.message, true));
+    ({ wallet: refreshWallet, escrow: refreshEscrows, paypal: refreshOrders, cond: refreshCond, explorer: refreshExplorer, settings: renderSettings })[b.dataset.tab]?.().catch((e) => toast(e.message, true));
   }));
   $("createWallet").onclick = () => setWallet(hex(crypto.getRandomValues(new Uint8Array(32)))); // demo account
   $("doImport").onclick = () => { const s = $("importSeed").value.trim(); if (s) setWallet(s); };
@@ -444,6 +536,7 @@ function init() {
   $("sendCheck").onclick = (e) => busy(e.target, checkSend);
   $("escCheck").onclick = (e) => busy(e.target, checkEscrow);
   $("ppCreate").onclick = (e) => busy(e.target, createOrder);
+  $("cdCreate").onclick = (e) => busy(e.target, createCond);
   $("addNode").onclick = (e) => busy(e.target, async () => { C.addNode($("nodeRest").value, $("nodeRpc").value);
     $("nodeRest").value = $("nodeRpc").value = ""; toast("Node added: it is tried first"); renderSettings(); refreshStatus(); });
   $("saveGw").onclick = (e) => busy(e.target, async () => { const v = $("gwUrl").value.trim();
@@ -462,6 +555,8 @@ function applyGateway() {
   $("ppMode").textContent = !C.gatewayOk ? "PayPal unavailable: no gateway configured (see Settings)" :
     ({ simulator: "Local PayPal simulator (tests only — no real PayPal)", sandbox: "PayPal Sandbox", disabled: "PayPal not configured" }[h.paypal_mode] || h.paypal_mode);
   $("ppCreate").disabled = !C.gatewayOk || h.paypal_mode === "disabled";
+  $("cdMode").textContent = $("ppMode").textContent;
+  $("cdCreate").disabled = $("ppCreate").disabled;
   $("faucet").hidden = !C.faucetUrl();
   $("sendCheck").textContent = C.gatewayOk || C.config.guardian ? "Check with Neural Guardian" : "Review payment";
 }

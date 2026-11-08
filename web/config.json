@@ -6,5 +6,6 @@
   ],
   "gateway": "",
   "faucet": "",
-  "guardian": ""
+  "guardian": "",
+  "delivery": "http://localhost:8087"
 }

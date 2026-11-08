@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 
 import httpx
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from aurix_verify import crypto
 
@@ -42,6 +43,9 @@ def _load_signer() -> crypto.Signer:
 
 SIGNER = _load_signer()
 app = FastAPI(title="AURIX demo carrier (SIMULATED)", version="0.2.0")
+_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",") if o.strip()]
+if _origins:  # the web wallet calls the demo carrier directly (demo buttons)
+    app.add_middleware(CORSMiddleware, allow_origins=_origins, allow_methods=["GET", "POST"], allow_headers=["*"])
 http = httpx.Client(timeout=15)
 
 
