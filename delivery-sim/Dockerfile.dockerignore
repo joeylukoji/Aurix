@@ -15,3 +15,5 @@ web/
 deploy/
 .github/
 payments/
+**/*.egg-info/
+verifier/tests/

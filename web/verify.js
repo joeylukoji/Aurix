@@ -38,10 +38,20 @@
   const t = (s) => (s ? Date.parse(s) : NaN);
 
   // ---------- zip (stored or deflate) ----------
-  async function inflateRaw(data) {
-    const ds = new DecompressionStream("deflate-raw");
-    const out = new Response(new Blob([data]).stream().pipeThrough(ds));
-    return new Uint8Array(await out.arrayBuffer());
+  // Decompresses with a hard cap: the sizes declared in the zip are attacker-controlled (zip bomb).
+  async function inflateRaw(data, limit) {
+    const reader = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw")).getReader();
+    const chunks = []; let n = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      n += value.length;
+      if (n > limit) { await reader.cancel(); throw new Error("package too large (decompressed size exceeds its declared size or the limit)"); }
+      chunks.push(value);
+    }
+    const out = new Uint8Array(n); let o = 0;
+    for (const c of chunks) { out.set(c, o); o += c.length; }
+    return out;
   }
   async function readZip(buf, maxFiles = 500, maxBytes = 5_000_000) {
     const u8 = new Uint8Array(buf), dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
@@ -65,9 +75,12 @@
       if (total > maxBytes) throw new Error("package too large");
       const lnl = dv.getUint16(off + 26, true), lxl = dv.getUint16(off + 28, true);
       const data = u8.subarray(off + 30 + lnl + lxl, off + 30 + lnl + lxl + csize);
-      if (method === 0) files[name] = data.slice();
-      else if (method === 8) files[name] = await inflateRaw(data);
+      let content;
+      if (method === 0) content = data.slice();
+      else if (method === 8) content = await inflateRaw(data, Math.min(size, maxBytes));
       else throw new Error("unsupported zip compression for " + name);
+      if (content.length !== size) throw new Error("zip entry size mismatch: " + name);
+      files[name] = content;
     }
     return files;
   }

@@ -82,3 +82,21 @@ def test_browser_verifier_matches_python(tmp_path):
     assert results["backdated_delivery"] == "VALID" and results["hold_at_deadline"] == "VALID"
     assert results["expired_key_backdated"] == "INVALID"
     assert results["tampered_byte"] == results["falsified_decision"] == results["revoked_carrier"] == "INVALID"
+
+
+@pytest.mark.skipif(not NODE, reason="node not installed")
+def test_browser_verifier_refuses_zip_bombs(tmp_path):
+    import io
+    import struct
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("manifest.json", b"0" * 20_000_000)
+    data = bytearray(buf.getvalue())
+    struct.pack_into("<I", data, data.rfind(b"PK\x01\x02") + 24, 10)  # central directory lies: 10 bytes
+    p = tmp_path / "bomb.zip"
+    p.write_bytes(bytes(data))
+    script = ("const V=require(process.argv[1]);V.readZip(require('fs').readFileSync(process.argv[2]))"
+              ".then(()=>{console.log('accepted');process.exit(1)}).catch(e=>console.log(e.message))")
+    out = subprocess.run([NODE, "-e", script, str(JS), str(p)], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0 and "too large" in out.stdout

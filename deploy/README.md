@@ -8,6 +8,7 @@ Four services:
 | `guardian` (Neural Guardian, logistic regression) | 8000 | `GET /health` | internal only |
 | `paypal-sim` (PayPal simulator) | 8090 | `GET /sim/health` | **public**: the browser is sent to its approval page |
 | `gateway` (FastAPI + web UI) | 8080 | `GET /api/health` | public; serves `web/` |
+| `delivery-sim` (SIMULATED carrier, MVP 0.2) | 8087 | `GET /health` | called by the wallet's demo buttons; signs delivery evidence for the conditional USD payment |
 
 ## Run locally (Docker Compose)
 
@@ -75,7 +76,13 @@ All images honour `PORT`, which Render sets for web services.
 | `SIM_WEBHOOK_URL` | paypal-sim | `http://localhost:8080/api/paypal/webhook` | where webhooks are POSTed |
 | `SIM_CLIENT_ID` / `SIM_CLIENT_SECRET` / `SIM_WEBHOOK_ID` | paypal-sim | `sim-client-id` / `sim-client-secret` / `SIM-WEBHOOK-ID` | must match gateway `PAYPAL_*` |
 | `SIM_WEBHOOK_DELAY` | paypal-sim | `0.5` | seconds before webhook delivery |
-| `PORT` | all HTTP images | 8080 / 8000 / 8090 | listen port |
+| `ESCROW_KEY_FILE` | payments | dev seed (refused in production) | Ed25519 seed (hex) signing escrow attestations, decisions and proof packages |
+| `ESCROW_TRUSTED_KEYS_FILE` | payments | dev carrier + dev arbiter (none in production) | `{"keys": [...]}` of the carriers and arbiters accepted as evidence signers |
+| `DELIVERY_SIM_KEY_FILE` | delivery-sim | dev seed (refused in production) | Ed25519 seed (hex) of the simulated carrier |
+| `AURIX_SECRETS_DIR` | compose | `./secrets` (i.e. `deploy/secrets/`) | host folder mounted read-only at `/run/aurix-secrets`; see [`secrets/README.md`](secrets/README.md) |
+| `ADVISOR_LLM_URL` / `ADVISOR_LLM_MODEL` / `ADVISOR_LLM_API_KEY` | payments | empty / `gemma4:e4b` / empty | AI advisor (advisory only), any OpenAI-compatible endpoint; empty URL = template text |
+| `DELIVERY_CORS_ORIGINS` | delivery-sim (compose) | `*` | origins allowed to call the demo carrier; set to the wallet's origin when hosted |
+| `PORT` | all HTTP images | 8080 / 8000 / 8090 / 8087 | listen port |
 
 ## Switching from the simulator to the real PayPal Sandbox
 

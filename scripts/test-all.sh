@@ -28,7 +28,7 @@ run guardian   bash -c "cd '$ROOT/guardian' && .venv/bin/pip install -q -r requi
 run paypal-sim bash -c "cd '$ROOT/paypal-sim' && .venv/bin/pip install -q -r requirements.txt && .venv/bin/python -m pytest -q"
 run gateway    bash -c "cd '$ROOT/gateway' && .venv/bin/pip install -q -r requirements-dev.txt && .venv/bin/python -m pytest -q"
 run payments   bash -c "cd '$ROOT/payments' && .venv/bin/pip install -q -r requirements-dev.txt && .venv/bin/python -m pytest -q"
-run verifier   bash -c "cd '$ROOT/verifier' && .venv/bin/pip install -q -e . pytest && .venv/bin/python -m pytest -q"
+run verifier   bash -c "cd '$ROOT/verifier' && .venv/bin/pip install -q -r requirements-dev.txt && .venv/bin/python -m pytest -q"
 run delivery-sim bash -c "cd '$ROOT/delivery-sim' && .venv/bin/pip install -q -r requirements-dev.txt && .venv/bin/python -m pytest -q"
 run indexer    bash -c "cd '$ROOT/indexer' && .venv/bin/pip install -q -r requirements-dev.txt && .venv/bin/python -m pytest -q"
 run attestor   bash -c "cd '$ROOT/attestor' && .venv/bin/pip install -q -r requirements-dev.txt -r requirements.txt && .venv/bin/python -m pytest -q"

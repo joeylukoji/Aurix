@@ -69,12 +69,30 @@ jobs:
         with: { python-version: "3.12" }
       - run: pip install -r requirements.txt -r requirements-dev.txt && python -m pytest -q
         working-directory: attestor
+  verifier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: actions/setup-node@v4  # the parity tests run web/verify.js
+        with: { node-version: "22" }
+      - run: pip install -r requirements-dev.txt && python -m pytest -q
+        working-directory: verifier
+  delivery-sim:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements-dev.txt && python -m pytest -q
+        working-directory: delivery-sim
   # Everything end to end: chain scripts (slashing, k-of-n attestation, hardening, governance,
   # upgrade drill) and both browser journeys on a fresh 4-validator stack (scripts/test-all.sh).
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    needs: [chain, guardian, paypal-sim, gateway, payments, indexer, attestor]
+    needs: [chain, guardian, paypal-sim, gateway, payments, indexer, attestor, verifier, delivery-sim]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -110,6 +128,7 @@ jobs:
           - { name: attestor, context: attestor, file: attestor/Dockerfile }
           - { name: payments, context: ., file: payments/Dockerfile }
           - { name: indexer, context: ., file: indexer/Dockerfile }
+          - { name: delivery-sim, context: ., file: delivery-sim/Dockerfile }
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3

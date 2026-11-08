@@ -421,7 +421,7 @@ function reportHtml(r, note = "") {
       ${d ? row("Decision", `recorded ${d.recorded}, replayed ${d.replayed} (${d.matches ? "match" : "MISMATCH"})`) : ""}</table>
     ${r.sources.length ? `<p>${r.sources.map((s) => `<span class="pill ${s.type === "simulated" ? "warn" : "ok"}">${esc(s.provider)}: ${esc(s.type)}, ${esc(s.status)}</span>`).join(" ")}</p>` : ""}
     ${r.errors.length ? `<p><b>Problems</b></p><ul>${r.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>` : ""}
-    ${r.anomalies.length ? `<p><b>Anomalies</b></p><ul>${r.anomalies.map((a) => `<li>class ${a.class}: ${esc(a.code)}</li>`).join("")}</ul>` : ""}
+    ${r.anomalies.length ? `<p><b>Anomalies</b></p><ul>${r.anomalies.map((a) => `<li>class ${esc(a.class)}: ${esc(a.code)}</li>`).join("")}</ul>` : ""}
     <p><b>Limitations</b></p><ul>${r.limitations.map((l) => `<li>${esc(l)}</li>`).join("")}</ul></div>`;
 }
 async function publishedKeys() { return C.gatewayOk ? api("/api/escrow/keys").catch(() => null) : null; }

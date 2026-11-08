@@ -15,3 +15,5 @@ web/
 deploy/
 .github/
 delivery-sim/
+**/*.egg-info/
+verifier/tests/

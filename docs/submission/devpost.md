@@ -67,6 +67,7 @@ Cosmos SDK module wiring, PayPal Orders v2 and webhook verification, and how to 
 - The carrier in the conditional-payment demo is **simulated** (its own signing key, marked "simulated" everywhere). A valid signature proves who signed what, not that a parcel was physically delivered.
 - A PayPal authorization lasts at most 29 days, so conditional payments are limited to short deadlines.
 - The AI advisor's texts may contain errors; they are stored as advisory and never used by the decision rule.
+- The demo has no user accounts: the conditional-payment API is open on the testnet (rate-limited AI calls). Authentication of buyers, merchants and arbiters comes with a real deployment.
 
 ## Built with
 
