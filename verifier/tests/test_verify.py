@@ -52,7 +52,8 @@ def test_revoked_key_verdicts():
 # ---------- rule ----------
 def ev(items, kd=None):
     reg = crypto.KeyRegistry(kd or keys())
-    return [Evidence(a, s["key_id"], reg.role(s["key_id"]), reg.verify(a, s)) for a, s in items]
+    return [Evidence(a, s["key_id"], reg.role(s["key_id"]), reg.verify(a, s), a["timestamps"]["attested_at"])
+            for a, s in items]
 
 
 AUTH = signed(att("payment.authorized"))
@@ -232,3 +233,36 @@ def test_missing_receipts_are_reported():
     data = rewrite(package(), "receipts.json", lambda b: b.replace(b'"receipts": [', b'"receipts": [], "x": ['))
     r = verify_package(files_of(data), keys())
     assert r["result"] == "INVALID"
+
+
+def test_backdated_delivery_received_after_deadline_is_ignored():
+    """The carrier claims a time before the deadline, but AURIX received it after: no release."""
+    late = signed(att("shipment.delivered", when="2026-11-15T20:00:00Z"))
+    e = ev([AUTH, late])
+    e[1].received_at = "2026-11-16T01:00:00Z"
+    out = decide(terms(), e, "2026-11-16T02:00:00Z")
+    assert out.decision == "VOID" and any("received by AURIX after the deadline" in r for r in out.reasons)
+
+
+def test_arbiter_hold_still_in_place_at_deadline_voids():
+    t = terms(arbiter=ARBITER.key_id)
+    hold = signed(att("arbiter.decision", when="2026-11-09T12:00:00Z", action="HOLD"))
+    assert decide(t, ev([AUTH, DELIV, hold]), "2026-11-16T00:00:00Z").decision == "VOID"
+    late_release = signed(att("arbiter.decision", when="2026-11-16T01:00:00Z", n=2, action="RELEASE"))
+    assert decide(t, ev([AUTH, DELIV, hold, late_release]), "2026-11-16T02:00:00Z").decision == "VOID"
+
+
+def test_mismatched_order_references_are_ignored():
+    mixed = att("shipment.delivered", when="2026-11-10T08:00:00Z")
+    mixed["source"]["provider_reference"]["order_id"] = "ORDER-2"  # operation_id says ORDER-1
+    assert decide(terms(), ev([AUTH, signed(mixed)]), "2026-11-10T09:00:00Z").decision == "WAIT"
+
+
+def test_expired_key_with_backdated_signature_is_rejected_by_receipt_time():
+    kd = keys()
+    kd["keys"][1]["valid_until"] = "2026-11-09T00:00:00Z"  # carrier key expired before AURIX received the delivery
+    items = [signed(att("payment.authorized")), signed(att("shipment.delivered", when="2026-11-08T20:00:00Z"))]
+    data = package(items=items, key_doc=kd, received={"att_shipment_delivered_1": "2026-11-10T08:00:00Z"},
+                   decided_at="2026-11-10T09:00:00Z")
+    r = verify_package(files_of(data), kd)
+    assert r["result"] == "INVALID" and any("key not valid when received" in x for x in r["errors"])

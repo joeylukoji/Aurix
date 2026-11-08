@@ -203,16 +203,26 @@ def verify_package(files: dict[str, bytes], trusted_keys: dict | None = None) ->
     received_at = {r["attestation_hash"]: crypto.parse_time(r["received_at"])
                    for r in (receipts or {}).get("receipts", [])} if receipts_ok else {}
     for e in evidence:
-        if digest(e.attestation) not in received_at:
+        rec = received_at.get(digest(e.attestation))
+        if rec is None:
             errors.append(f"no AURIX receipt for attestation {e.attestation.get('attestation_id')}")
+        elif e.verdict == crypto.VALID and not registry.valid_at(e.key_id, rec):
+            # the signer's created_at can be chosen; the key must also be valid when AURIX received it
+            errors.append(f"attestation {e.attestation.get('attestation_id')}: key not valid when received")
+            e.verdict = crypto.INVALID
+            sig_verdicts.append(crypto.INVALID)
     replay = None
     if "decision.json" in listed:
         decision = load("decision.json")
         dec_ok = check(decision, "signatures/decision.json", "aurix") == crypto.VALID
         if decision and terms and terms_ok:
             at = crypto.parse_time(decision["decided_at"])
-            known = [e for e in evidence
-                     if digest(e.attestation) in received_at and received_at[digest(e.attestation)] <= at]
+            known = []
+            for e in evidence:
+                rec = received_at.get(digest(e.attestation))
+                if rec is not None and rec <= at:
+                    e.received_at = rec.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    known.append(e)
             out = decide(terms, known, decision["decided_at"])
             same_inputs = sorted(digest(a) for a in out.inputs) == sorted(decision.get("inputs", []))
             replay = {"recorded": decision.get("decision"), "replayed": out.decision,

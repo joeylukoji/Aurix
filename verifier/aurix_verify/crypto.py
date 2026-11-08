@@ -93,6 +93,15 @@ class KeyRegistry:
             return VALID_KEY_REVOKED_LATER if signed < revoked else REVOKED_KEY
         return VALID
 
+    def valid_at(self, key_id: str, when: datetime) -> bool:
+        """Was the key inside its validity window and not revoked at `when` (a time the verifier trusts,
+        e.g. AURIX's receipt time), as opposed to the signer's own `created_at` claim?"""
+        k = self.get(key_id)
+        if not k:
+            return False
+        start, end, revoked = (parse_time(k.get(f)) for f in ("valid_from", "valid_until", "revoked_at"))
+        return not ((start and when < start) or (end and when > end) or (revoked and when >= revoked))
+
     def role(self, key_id: str) -> str | None:
         k = self.get(key_id)
         return k and k.get("role")

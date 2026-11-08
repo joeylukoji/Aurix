@@ -60,9 +60,9 @@ def package(t=None, items=None, decided_at="2026-11-10T09:00:00Z", decision_over
                                              signed(att("shipment.delivered", when="2026-11-10T08:00:00Z"))]
     kd = key_doc or keys()
     reg = crypto.KeyRegistry(kd)
-    ev = [Evidence(a, s["key_id"], reg.role(s["key_id"]), reg.verify(a, s)) for a, s in items]
     rec = received or {}  # attestation_id -> received_at (default: when it was attested)
     when = [(a, rec.get(a["attestation_id"], a["timestamps"]["attested_at"])) for a, _ in items]
+    ev = [Evidence(a, s["key_id"], reg.role(s["key_id"]), reg.verify(a, s), w) for (a, s), (_, w) in zip(items, when)]
     at = crypto.parse_time(decided_at)
     out = decide(t, [e for e, (_, w) in zip(ev, when) if crypto.parse_time(w) <= at], decided_at)
     receipts = receipts_doc(t["order_id"], when)

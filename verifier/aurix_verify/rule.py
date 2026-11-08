@@ -22,6 +22,7 @@ class Evidence:
     key_id: str
     role: str | None  # role of the signing key in the registry: "aurix", "source:<provider>", "arbiter"
     verdict: str      # signature verdict from KeyRegistry.verify
+    received_at: str | None = None  # when AURIX received it (signed receipt); None = unknown, never trusted
 
     @property
     def type(self) -> str:
@@ -62,16 +63,28 @@ def decide(terms: dict, evidence: list[Evidence], now: str) -> Outcome:
         if e.role != role:
             reasons.append(f"{e.type} ignored: signed by a {e.role or 'unregistered'} key, {role} required")
             return False
-        if e.attestation.get("operation_id") != order_id and _refs(e.attestation).get("order_id") != order_id:
+        ref = _refs(e.attestation).get("order_id")
+        if e.attestation.get("operation_id") != order_id or (ref is not None and ref != order_id):
             reasons.append(f"{e.type} ignored: belongs to another order")
             return False
         return True
 
-    # 1. Arbiter: the latest action at or before `now` wins; a HOLD blocks the automatic rule.
+    def received_in_time(e: Evidence) -> bool:
+        """Evidence counts only if AURIX received it by the deadline: a signer's own timestamp can be backdated."""
+        rec = parse_time(e.received_at) if e.received_at else None
+        if rec is None or rec > deadline:
+            reasons.append(f"{e.type} ignored: received by AURIX after the deadline")
+            return False
+        return True
+
+    # 1. Arbiter: the latest action at or before `now`, taken and received by the deadline, wins. A HOLD
+    #    blocks the automatic rule until the deadline; a hold still in place then ends in VOID (the buyer is
+    #    refunded rather than the funds staying held past the PayPal authorization).
     arb = [e for e in evidence if e.type == "arbiter.decision" and arbiter and e.key_id == arbiter
            and trusted(e, "arbiter")
            and e.attestation.get("event", {}).get("action") in ARBITER_ACTIONS
-           and parse_time(e.attestation["timestamps"]["attested_at"]) <= at]
+           and parse_time(e.attestation["timestamps"]["attested_at"]) <= min(at, deadline)
+           and received_in_time(e)]
     arb.sort(key=lambda e: parse_time(e.attestation["timestamps"]["attested_at"]))
     if arb:
         last = arb[-1]
@@ -79,6 +92,9 @@ def decide(terms: dict, evidence: list[Evidence], now: str) -> Outcome:
         if action in (RELEASE, VOID):
             return Outcome(action, reasons + [f"arbiter decided {action}"], [last.attestation])
         if action == HOLD:
+            if at > deadline:
+                return Outcome(VOID, reasons + ["deadline passed with the arbiter's hold still in place"],
+                               [last.attestation])
             return Outcome(HOLD, reasons + ["arbiter hold in place"], [last.attestation])
 
     # 2. The payment must be authorised for exactly the agreed amount.
@@ -100,6 +116,8 @@ def decide(terms: dict, evidence: list[Evidence], now: str) -> Outcome:
             continue
         if t > at:
             continue  # not yet happened at the evaluation time
+        if not received_in_time(e):
+            continue
         deliveries.append(e)
 
     if auth_ok and deliveries:

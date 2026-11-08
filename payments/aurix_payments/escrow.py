@@ -14,7 +14,10 @@ import hashlib
 import json
 import logging
 import os
+import re
+import uuid
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Callable, Mapping
@@ -38,6 +41,13 @@ log = logging.getLogger("aurix.escrow")
 DEMO_CARRIER = "aurix_demo_delivery"
 MAX_DEADLINE_DAYS = 29  # lifetime of a PayPal authorization
 FINAL = {RELEASE, VOID}
+LANGS = {"French", "English", "Spanish", "Portuguese", "German", "Swahili"}  # advisor output languages
+AUDIENCES = {"buyer", "merchant", "auditor"}
+ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")  # attestation ids become file names in the proof package
+MAX_EVENT_ID = 200
+ADVICE_PER_ORDER = 10        # advisor calls kept per order (oldest of the same kind is replaced)
+ADVICE_MIN_INTERVAL = 5.0    # seconds between advisor calls for one order
+ADVICE_PER_MINUTE = 30       # advisor calls per minute for the whole service
 
 
 def utcnow() -> str:
@@ -140,6 +150,8 @@ class EscrowService:
         self.db, self.paypal, self.guardian = db, paypal, guardian
         self.advisor = advisor or Advisor()
         self.demo_arbiter = demo_arbiter
+        self._advice_calls: list[float] = []
+        self._advice_last: dict[str, float] = {}
         self.paypal_mode, self.signer, self.clock, self.chain = paypal_mode, signer, clock, chain
         own = dev_key_entry(signer, "aurix", "AURIX escrow service")
         self.keys = {"keys": [own] + [k for k in external_keys if k["key_id"] != signer.key_id]}
@@ -207,7 +219,7 @@ class EscrowService:
             if at and crypto.parse_time(rec) > at:
                 continue
             out.append(Evidence(a, s.get("key_id", ""), self.registry.role(s.get("key_id", "")),
-                                self.registry.verify(a, s)))
+                                self.registry.verify(a, s), rec))
         return out
 
     # ---------------- lifecycle ----------------
@@ -256,10 +268,16 @@ class EscrowService:
         """After the buyer approved on PayPal: hold the funds. Nothing is captured."""
         if not confirm:
             raise HTTPException(400, "explicit approval required (confirm=true)")
-        o = self._order(order_id)
-        if o["status"] != "SCORED":
-            raise HTTPException(409, f"order is {o['status']}")
-        res = self.paypal.authorize(order_id)
+        self._order(order_id)
+        cur = self.db.exec("UPDATE paypal_orders SET status='AUTHORIZING' WHERE order_id=? AND status='SCORED'",
+                           order_id)
+        if cur.rowcount != 1:  # a concurrent confirm already started (or the order moved on)
+            raise HTTPException(409, f"order is {self._order(order_id)['status']}")
+        try:
+            res = self.paypal.authorize(order_id)
+        except Exception:
+            self.db.update_order(order_id, status="SCORED")  # nothing held: the buyer may approve again
+            raise
         auth = res["purchase_units"][0]["payments"]["authorizations"][0]
         status = "AUTHORIZED" if auth.get("status") in ("CREATED", "PENDING") else "AUTH_FAILED"
         self.db.update_order(order_id, status=status,
@@ -274,30 +292,41 @@ class EscrowService:
 
     def add_evidence(self, att: dict, sig: dict) -> dict:
         """An attestation signed by an external source (carrier) or an arbiter."""
-        if att.get("schema") != "aurix.financial-attestation":
-            raise HTTPException(422, "unsupported attestation schema")
+        src, event, ts = att.get("source"), att.get("event"), att.get("timestamps")
+        if att.get("schema") != "aurix.financial-attestation" or not all(isinstance(x, dict) for x in (src, event, ts)):
+            raise HTTPException(422, "unsupported attestation: schema, source, event and timestamps are required")
+        aid, peid = att.get("attestation_id"), src.get("provider_event_id")
+        if not isinstance(aid, str) or not ID_RE.match(aid):
+            raise HTTPException(422, "attestation_id must be 1-64 characters among A-Z a-z 0-9 _ -")
+        if aid.startswith("att_"):
+            raise HTTPException(422, "attestation ids starting with att_ are reserved for AURIX")
+        if not isinstance(peid, str) or not 0 < len(peid) <= MAX_EVENT_ID:
+            raise HTTPException(422, f"source.provider_event_id is required (at most {MAX_EVENT_ID} characters)")
+        if not isinstance(sig, dict) or not isinstance(sig.get("key_id"), str):
+            raise HTTPException(422, "signature block with key_id required")
         verdict = self.registry.verify(att, sig)
         if verdict != crypto.VALID:
-            log.warning("evidence refused (%s): %s", verdict, att.get("attestation_id"))
+            log.warning("evidence refused (%s): %s", verdict, aid)
             raise HTTPException(422, f"signature {verdict}")
+        received = self.clock()
+        if not self.registry.valid_at(sig["key_id"], crypto.parse_time(received)):
+            # created_at is the signer's claim; the key must be valid now, when AURIX receives the evidence
+            raise HTTPException(422, "signing key is not valid at reception time")
         role = self.registry.role(sig["key_id"]) or ""
-        etype = att.get("event", {}).get("type", "")
-        provider = att.get("source", {}).get("provider")
+        etype, provider = event.get("type", ""), src.get("provider")
         if role.startswith("source:"):
-            if provider != role.removeprefix("source:") or not etype.startswith("shipment."):
+            if provider != role.removeprefix("source:") or not str(etype).startswith("shipment."):
                 raise HTTPException(422, f"a {role} key may only attest shipment events of {role[7:]}")
         elif role == "arbiter":
-            if etype != "arbiter.decision":
-                raise HTTPException(422, "an arbiter key may only attest arbiter.decision")
+            if etype != "arbiter.decision" or provider != "arbiter":
+                raise HTTPException(422, "an arbiter key may only attest arbiter.decision with provider 'arbiter'")
         else:
             raise HTTPException(422, f"keys with role {role!r} cannot submit evidence")
         order_id = att.get("operation_id")
-        terms = self._terms(order_id)
+        terms = self._terms(order_id if isinstance(order_id, str) else None)
         if role == "arbiter" and terms.get("arbiter_key_id") != sig["key_id"]:
             raise HTTPException(403, "this key is not the arbiter of this order")
-        if not att.get("source", {}).get("provider_event_id") or not att.get("attestation_id"):
-            raise HTTPException(422, "attestation_id and source.provider_event_id are required")
-        stored = self._store(att, sig)
+        stored = self._store(att, sig, received)
         result = self.evaluate(order_id) if stored else None
         return {"result": "stored" if stored else "duplicate", "evaluation": result}
 
@@ -330,33 +359,53 @@ class EscrowService:
         return {"decision": out.decision, "final": True, "reasons": out.reasons}
 
     def execute(self, order_id: str) -> None:
-        """Carries out a recorded decision at PayPal. Idempotent; network errors are retried by tick()."""
-        o = self._order(order_id)
-        row = self._terms_row(order_id)
-        auth_id = row["authorization_id"]
-        try:
-            if o["status"] == "RELEASING":
-                cap = self.paypal.capture_authorization(auth_id, request_id=f"aurix-{order_id}-release")
-                status = {"COMPLETED": "CAPTURED", "PENDING": "CAPTURE_PENDING"}.get(cap.get("status"), "DENIED")
-                amt = cap.get("amount") or {}
-                self.db.update_order(order_id, status=status, capture_id=cap["id"],
-                                     capture_amount=amt.get("value"), capture_currency=amt.get("currency_code"),
-                                     last_error=None if status != "DENIED" else f"capture {cap.get('status')}")
-            elif o["status"] == "VOIDING":
-                self.paypal.void_authorization(auth_id, request_id=f"aurix-{order_id}-void")
-                self.db.update_order(order_id, status="VOIDED")
-                self.attest(order_id, "payment.voided", provider="paypal", provider_event_id=f"void:{auth_id}",
-                            refs={"authorization_id": auth_id}, method="paypal_api_authenticated",
-                            provider_status="VOIDED")
-        except PayPalError as e:
-            if e.issue in ("AUTHORIZATION_EXPIRED", "AUTHORIZATION_VOIDED", "AUTHORIZATION_ALREADY_CAPTURED",
-                           "INVALID_STATE") or e.status == 422:
-                self.db.update_order(order_id, status="AUTH_FAILED", last_error=f"PayPal: {e.issue}")
-                log.warning("escrow %s: PayPal refused %s: %s", order_id, o["status"], e.issue)
-            else:
-                log.warning("escrow %s: PayPal error, will retry: %s", order_id, e.issue)
-        except httpx.HTTPError as e:
-            log.warning("escrow %s: PayPal unreachable, will retry: %s", order_id, e)
+        """Carries out a recorded decision at PayPal. Idempotent and serialised: the poller and a request
+        thread may both get here; network errors are retried by tick()."""
+        with self.lock:
+            o = self._order(order_id)
+            if o["status"] not in ("RELEASING", "VOIDING"):
+                return  # already carried out by another thread
+            auth_id = self._terms_row(order_id)["authorization_id"]
+            try:
+                if o["status"] == "RELEASING":
+                    self._capture(order_id, auth_id)
+                else:
+                    self._void(order_id, auth_id)
+            except PayPalError as e:
+                done = {"RELEASING": "AUTHORIZATION_ALREADY_CAPTURED", "VOIDING": "AUTHORIZATION_VOIDED"}[o["status"]]
+                if e.issue == done:  # a previous attempt succeeded but its result was lost: same outcome
+                    if o["status"] == "VOIDING":
+                        self._mark_voided(order_id, auth_id)
+                    else:
+                        self.db.update_order(order_id, last_error="capture already done at PayPal; "
+                                                                  "waiting for its webhook")
+                elif e.issue in ("AUTHORIZATION_EXPIRED", "AUTHORIZATION_VOIDED", "AUTHORIZATION_ALREADY_CAPTURED",
+                                 "INVALID_STATE") or e.status == 422:
+                    self.db.update_order(order_id, status="AUTH_FAILED", last_error=f"PayPal: {e.issue}")
+                    log.warning("escrow %s: PayPal refused %s: %s", order_id, o["status"], e.issue)
+                else:
+                    self.db.update_order(order_id, last_error=f"PayPal error, retrying: {e.issue}")
+                    log.warning("escrow %s: PayPal error, will retry: %s", order_id, e.issue)
+            except httpx.HTTPError as e:
+                self.db.update_order(order_id, last_error=f"PayPal unreachable, retrying: {type(e).__name__}")
+                log.warning("escrow %s: PayPal unreachable, will retry: %s", order_id, e)
+
+    def _capture(self, order_id: str, auth_id: str) -> None:
+        cap = self.paypal.capture_authorization(auth_id, request_id=f"aurix-{order_id}-release")
+        status = {"COMPLETED": "CAPTURED", "PENDING": "CAPTURE_PENDING"}.get(cap.get("status"), "DENIED")
+        amt = cap.get("amount") or {}
+        self.db.update_order(order_id, status=status, capture_id=cap["id"],
+                             capture_amount=amt.get("value"), capture_currency=amt.get("currency_code"),
+                             last_error=None if status != "DENIED" else f"capture {cap.get('status')}")
+
+    def _void(self, order_id: str, auth_id: str) -> None:
+        self.paypal.void_authorization(auth_id, request_id=f"aurix-{order_id}-void")
+        self._mark_voided(order_id, auth_id)
+
+    def _mark_voided(self, order_id: str, auth_id: str) -> None:
+        self.db.update_order(order_id, status="VOIDED", last_error=None)
+        self.attest(order_id, "payment.voided", provider="paypal", provider_event_id=f"void:{auth_id}",
+                    refs={"authorization_id": auth_id}, method="paypal_api_authenticated", provider_status="VOIDED")
 
     def on_paypal_event(self, event: dict, order_id: str | None) -> str | None:
         """Verified PayPal webhook events of escrow orders. Returns a result, or None if not handled here."""
@@ -370,8 +419,9 @@ class EscrowService:
                         source_event_time=r.get("create_time"), raw=r)
             return "authorization recorded"
         if etype == "PAYMENT.AUTHORIZATION.VOIDED":
-            if self._order(order_id)["status"] in ("VOIDING", "AUTHORIZED"):
-                self.db.update_order(order_id, status="VOIDED")
+            with self.lock:
+                if self._order(order_id)["status"] in ("VOIDING", "AUTHORIZED"):
+                    self.db.update_order(order_id, status="VOIDED")
             self.attest(order_id, "payment.voided", provider="paypal", provider_event_id=f"void:{r.get('id')}",
                         refs={"authorization_id": r.get("id")}, method="paypal_webhook_signature",
                         provider_status=r.get("status"), raw=r)
@@ -401,11 +451,15 @@ class EscrowService:
 
     def tick(self) -> None:
         """Poller: evaluate waiting orders (deadlines), retry pending executions, record anchors."""
-        for r in self.db.all("SELECT t.order_id, o.status FROM escrow_terms t JOIN paypal_orders o"
+        for r in self.db.all("SELECT t.order_id, t.decision, o.status FROM escrow_terms t JOIN paypal_orders o"
                              " ON o.order_id=t.order_id WHERE o.status IN"
                              " ('AUTHORIZED','RELEASING','VOIDING','ANCHORED')"):
             try:
-                if r["status"] == "AUTHORIZED":
+                if r["status"] == "AUTHORIZED" and r["decision"] in FINAL:
+                    # decision recorded but the process stopped before the status changed: resume it
+                    self.db.update_order(r["order_id"], status="RELEASING" if r["decision"] == RELEASE else "VOIDING")
+                    self.execute(r["order_id"])
+                elif r["status"] == "AUTHORIZED":
                     self.evaluate(r["order_id"])
                 elif r["status"] == "ANCHORED":
                     self.record_anchor(r["order_id"])
@@ -455,16 +509,40 @@ class EscrowService:
 
     def _save_advice(self, order_id: str, kind: str, advice) -> dict:
         doc = advice.as_dict() | {"kind": kind, "order_id": order_id, "generated_at": self.clock()}
-        self.db.exec("INSERT INTO advisories(order_id, kind, doc) VALUES (?,?,?)", order_id, kind, json.dumps(doc))
+        with self.lock:  # one row per kind is enough for the proof; keep the table bounded
+            self.db.exec("DELETE FROM advisories WHERE order_id=? AND kind=?", order_id, kind)
+            self.db.exec("INSERT INTO advisories(order_id, kind, doc) VALUES (?,?,?)", order_id, kind, json.dumps(doc))
         return doc
 
+    def _advice_gate(self, order_id: str, lang: str) -> None:
+        """Allowlisted language (it goes into the system prompt) and rate limits (each call costs a model run)."""
+        if lang not in LANGS:
+            raise HTTPException(422, f"lang must be one of {sorted(LANGS)}")
+        now = time.monotonic()
+        with self.lock:
+            recent = [t for t in self._advice_calls if now - t < 60]
+            if len(recent) >= ADVICE_PER_MINUTE:
+                raise HTTPException(429, "too many advisor requests; try again in a minute")
+            if now - self._advice_last.get(order_id, -1e9) < ADVICE_MIN_INTERVAL:
+                raise HTTPException(429, "advisor already asked for this order a moment ago")
+            n = self.db.one("SELECT COUNT(*) AS n FROM advisories WHERE order_id=?", order_id)["n"]
+            if n >= ADVICE_PER_ORDER:
+                raise HTTPException(429, "advisor limit reached for this order")
+            self._advice_calls = recent + [now]
+            self._advice_last[order_id] = now
+
     def explain(self, order_id: str, audience: str, lang: str) -> dict:
+        if audience not in AUDIENCES:
+            raise HTTPException(422, f"audience must be one of {sorted(AUDIENCES)}")
+        self._terms(order_id)
+        self._advice_gate(order_id, lang)
         return self._save_advice(order_id, f"explanation-{audience}",
                                  self.advisor.explain(self._facts(order_id), audience, lang))
 
     def arbiter_brief(self, order_id: str, lang: str) -> dict:
         if not self._terms(order_id).get("arbiter_key_id"):
             raise HTTPException(409, "this order has no arbiter")
+        self._advice_gate(order_id, lang)
         return self._save_advice(order_id, "arbiter-brief", self.advisor.arbiter_brief(self._facts(order_id), lang))
 
     def demo_arbiter_action(self, order_id: str, action: str) -> dict:
@@ -479,7 +557,7 @@ class EscrowService:
         if terms.get("arbiter_key_id") != DEV_ARBITER.key_id:
             raise HTTPException(409, "the demo arbiter is not the arbiter of this order")
         now = self.clock()
-        n = len([1 for a, _, _ in self.evidence(order_id) if a["event"]["type"] == "arbiter.decision"]) + 1
+        n = uuid.uuid4().hex[:12]  # unique even for two quick clicks
         att = {"schema": "aurix.financial-attestation", "schema_version": "1.0",
                "attestation_id": f"arb_{order_id}_{n}", "operation_id": order_id,
                "source": {"provider": "arbiter", "source_type": "simulated", "environment": "demo",

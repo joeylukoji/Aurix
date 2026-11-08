@@ -8,7 +8,7 @@ import pytest
 
 from aurix_verify.package import read_zip, verify_package
 
-from helpers import att, keys, package, signed
+from helpers import ARBITER, att, keys, package, signed, terms
 from test_verify import rewrite
 
 NODE = shutil.which("node")
@@ -30,6 +30,11 @@ const fs = require('fs'); const V = require(process.argv[1]);
 def cases():
     kd_rev = keys(revoked_carrier_at="2026-11-09T00:00:00Z")
     late = [signed(att("payment.authorized")), signed(att("shipment.delivered", when="2026-11-15T20:00:00Z"))]
+    kd_exp = keys()
+    kd_exp["keys"][1]["valid_until"] = "2026-11-09T00:00:00Z"
+    early = [signed(att("payment.authorized")), signed(att("shipment.delivered", when="2026-11-08T20:00:00Z"))]
+    held = [signed(att("payment.authorized")), signed(att("shipment.delivered", when="2026-11-10T08:00:00Z")),
+            signed(att("arbiter.decision", when="2026-11-09T12:00:00Z", action="HOLD"))]
     wrong_amount = [signed(att("payment.authorized", amount="12.00")),
                     signed(att("shipment.delivered", when="2026-11-10T08:00:00Z"))]
     return {
@@ -42,6 +47,12 @@ def cases():
         "late_receipt_void": (package(items=late, decided_at="2026-11-16T00:00:01Z",
                                       received={"att_shipment_delivered_1": "2026-11-16T03:00:00Z"}), keys()),
         "amount_mismatch": (package(items=wrong_amount), keys()),
+        "backdated_delivery": (package(items=late, decided_at="2026-11-16T03:30:00Z",
+                                       received={"att_shipment_delivered_1": "2026-11-16T03:00:00Z"}), keys()),
+        "expired_key_backdated": (package(items=early, key_doc=kd_exp, decided_at="2026-11-10T09:00:00Z",
+                                          received={"att_shipment_delivered_1": "2026-11-10T08:00:00Z"}), kd_exp),
+        "hold_at_deadline": (package(t=terms(arbiter=ARBITER.key_id), items=held, decided_at="2026-11-16T00:00:01Z"),
+                             keys()),
     }
 
 
@@ -68,4 +79,6 @@ def test_browser_verifier_matches_python(tmp_path):
         assert js["limitations"] == py["limitations"], name
         results[name] = js["result"]
     assert results["valid"] == "VALID" and results["late_receipt_void"] == "VALID"
+    assert results["backdated_delivery"] == "VALID" and results["hold_at_deadline"] == "VALID"
+    assert results["expired_key_backdated"] == "INVALID"
     assert results["tampered_byte"] == results["falsified_decision"] == results["revoked_carrier"] == "INVALID"

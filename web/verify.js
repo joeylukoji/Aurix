@@ -76,6 +76,11 @@
   class KeyRegistry {
     constructor(doc) { this.keys = Object.fromEntries((doc?.keys || []).map((k) => [k.key_id, k])); }
     role(id) { return this.keys[id]?.role ?? null; }
+    validAt(id, when) {
+      const k = this.keys[id]; if (!k) return false;
+      const start = t(k.valid_from), end = t(k.valid_until), revoked = t(k.revoked_at);
+      return !(when < start || when > end || when >= revoked);
+    }
     async verify(obj, sig) {
       const k = this.keys[sig?.key_id || ""];
       if (!k || k.alg !== "Ed25519" || sig.alg !== "Ed25519") return UNKNOWN_KEY;
@@ -113,16 +118,26 @@
     const trusted = (e, role) => {
       if (e.verdict !== VALID) { reasons.push(`${type(e) || "attestation"} ignored: signature ${e.verdict}`); return false; }
       if (e.role !== role) { reasons.push(`${type(e)} ignored: signed by a ${e.role || "unregistered"} key, ${role} required`); return false; }
-      if (e.attestation.operation_id !== orderId && refs(e.attestation).order_id !== orderId) { reasons.push(`${type(e)} ignored: belongs to another order`); return false; }
+      const ref = refs(e.attestation).order_id;
+      if (e.attestation.operation_id !== orderId || (ref != null && ref !== orderId)) { reasons.push(`${type(e)} ignored: belongs to another order`); return false; }
+      return true;
+    };
+    const receivedInTime = (e) => {
+      const rec = e.received_at ? t(e.received_at) : NaN;
+      if (Number.isNaN(rec) || rec > deadline) { reasons.push(`${type(e)} ignored: received by AURIX after the deadline`); return false; }
       return true;
     };
     const arb = evidence.filter((e) => type(e) === "arbiter.decision" && arbiter && e.key_id === arbiter && trusted(e, "arbiter")
-      && ["HOLD", "UNHOLD", "RELEASE", "VOID"].includes(e.attestation.event.action) && t(e.attestation.timestamps.attested_at) <= at)
+      && ["HOLD", "UNHOLD", "RELEASE", "VOID"].includes(e.attestation.event.action) && t(e.attestation.timestamps.attested_at) <= Math.min(at, deadline)
+      && receivedInTime(e))
       .sort((x, y) => t(x.attestation.timestamps.attested_at) - t(y.attestation.timestamps.attested_at));
     if (arb.length) {
       const last = arb[arb.length - 1], action = last.attestation.event.action;
       if (action === "RELEASE" || action === "VOID") return { decision: action, reasons: [...reasons, `arbiter decided ${action}`], inputs: [last.attestation] };
-      if (action === "HOLD") return { decision: "HOLD", reasons: [...reasons, "arbiter hold in place"], inputs: [last.attestation] };
+      if (action === "HOLD") {
+        if (at > deadline) return { decision: "VOID", reasons: [...reasons, "deadline passed with the arbiter's hold still in place"], inputs: [last.attestation] };
+        return { decision: "HOLD", reasons: [...reasons, "arbiter hold in place"], inputs: [last.attestation] };
+      }
     }
     const auth = evidence.filter((e) => type(e) === "payment.authorized" && trusted(e, "aurix"));
     const authOk = auth.filter((e) => money(e.attestation.event.amount) === expected);
@@ -134,6 +149,7 @@
       const st = t(e.attestation.timestamps?.source_event_time);
       if (Number.isNaN(st) || st > deadline) { reasons.push("delivery ignored: recorded after the deadline"); continue; }
       if (st > at) continue;
+      if (!receivedInTime(e)) continue;
       deliveries.push(e);
     }
     if (authOk.length && deliveries.length) return { decision: "RELEASE", reasons: [...reasons, "payment authorised and delivery attested before the deadline"], inputs: [authOk[0].attestation, deliveries[0].attestation] };
@@ -216,14 +232,22 @@
     if (receiptsOk) for (const r of receipts.receipts || []) receivedAt[r.attestation_hash] = t(r.received_at);
     const dig = new Map();
     for (const e of evidence) dig.set(e, await digest(e.attestation));
-    for (const e of evidence) if (!(dig.get(e) in receivedAt)) errors.push(`no AURIX receipt for attestation ${e.attestation.attestation_id}`);
+    for (const e of evidence) {
+      const rec = receivedAt[dig.get(e)];
+      if (rec === undefined) errors.push(`no AURIX receipt for attestation ${e.attestation.attestation_id}`);
+      else if (e.verdict === VALID && !reg.validAt(e.key_id, rec)) {
+        errors.push(`attestation ${e.attestation.attestation_id}: key not valid when received`);
+        e.verdict = INVALID; verdicts.push(INVALID);
+      }
+    }
     let replay = null;
     if ("decision.json" in listed) {
       const decision = load("decision.json");
       const decOk = (await check(decision, "signatures/decision.json", "aurix")) === VALID;
       if (decision && terms && termsOk) {
         const at = t(decision.decided_at);
-        const known = evidence.filter((e) => dig.get(e) in receivedAt && receivedAt[dig.get(e)] <= at);
+        const known = evidence.filter((e) => dig.get(e) in receivedAt && receivedAt[dig.get(e)] <= at)
+          .map((e) => ({ ...e, received_at: new Date(receivedAt[dig.get(e)]).toISOString().replace(/\.\d{3}Z$/, "Z") }));
         const out = decide(terms, known, decision.decided_at);
         const got = (await Promise.all(out.inputs.map(digest))).sort();
         const same = JSON.stringify(got) === JSON.stringify([...(decision.inputs || [])].sort());
