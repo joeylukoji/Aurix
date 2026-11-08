@@ -120,7 +120,9 @@
         evidence arrives before the deadline, and releases them back to the buyer otherwise. AURIX never holds the money.</p>
       <div id="cdMode" class="pill"></div>
       <label>Amount (USD)<input id="cdAmt" type="number" min="0.01" step="0.01" value="120.00"></label>
-      <label>Deadline (days, at most 29)<input id="cdDays" type="number" min="1" max="29" step="1" value="7"></label>
+      <label>Deadline<select id="cdDays">
+        <option value="7">7 days</option><option value="3">3 days</option><option value="14">14 days</option>
+        <option value="29">29 days (PayPal maximum)</option><option value="m2" data-demo>Demo: 2 minutes</option></select></label>
       <label class="check"><input id="cdArb" type="checkbox"> Designate the demo arbiter (can hold a disputed payment)</label>
       <button id="cdCreate" class="primary">Create conditional order &amp; assess risk</button>
       <div id="cdResult"></div>

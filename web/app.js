@@ -297,6 +297,7 @@ let escrowAdvisor = null; // {enabled, model, demo_arbiter} from payments
 const CD_FINAL = ["ANCHORED", "VOIDED", "AUTH_FAILED", "DENIED", "CANCELLED"];
 const deliveryUrl = () => (C.config?.delivery || "").replace(/\/+$/, "");
 async function refreshCond() { if (C.gatewayOk && !escrowAdvisor) escrowAdvisor = await api("/api/escrow/advisor").catch(() => null);
+  const demo = document.querySelector('#cdDays option[data-demo]'); if (demo) demo.hidden = !escrowAdvisor?.demo_arbiter;
   if (C.gatewayOk) set("condGrid", (await api("/api/escrow/orders")).map((o) => ({
   order_id: o.order_id, amount_usd: o.amount_usd, status: o.status, deadline: o.terms.deadline,
   decision: o.decision?.decision || o.last_evaluation?.decision || "", evidence: o.timeline.length,
@@ -330,7 +331,13 @@ async function renderCond(oid) {
   if (!escrowAdvisor) escrowAdvisor = await api("/api/escrow/advisor").catch(() => null);
   const o = await api(`/api/escrow/orders/${oid}`);
   const canDeliver = o.status === "AUTHORIZED" && deliveryUrl();
-  $("cdResult").innerHTML = condStatusHtml(o) + timelineHtml(o) +
+  // While funds are held, keep watching: the server voids at the deadline (demo: a 2-minute deadline).
+  clearTimeout(renderCond.timer);
+  if (["AUTHORIZED", "RELEASING", "CAPTURED", "CONFIRMED", "ATTESTING", "VOIDING"].includes(o.status) && $("cond").classList.contains("active"))
+    renderCond.timer = setTimeout(() => renderCond(oid).then((n) => n.status !== o.status && refreshCond()).catch(() => {}), 3000);
+  const left = Math.max(0, Math.round((new Date(o.terms.deadline) - Date.now()) / 1000));
+  const countdown = o.status === "AUTHORIZED" && left < 3600 ? `<p class="pill warn">Deadline in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}</p>` : "";
+  $("cdResult").innerHTML = condStatusHtml(o) + countdown + timelineHtml(o) +
     (canDeliver ? `<p class="muted">Demo carrier (simulated, its own signing key):</p>
       <button id="cdDeliver" class="primary">Carrier: report delivery</button><button id="cdForge">Send a forged delivery</button>` : "") +
     (o.status === "AUTHORIZED" && !deliveryUrl() ? `<p class="muted">No demo carrier configured ("delivery" in config.json).</p>` : "") +
@@ -404,7 +411,8 @@ async function createCond() {
   const keys = $("cdArb").checked ? (await api("/api/escrow/keys")).keys : [];
   const arbiter = keys.find((k) => k.role === "arbiter")?.key_id || null;
   const o = await api("/api/escrow/orders", { method: "POST", body: { amount_usd: $("cdAmt").value,
-    deadline_days: Number($("cdDays").value), arbiter_key_id: arbiter, payer: wallet?.address } });
+    ...($("cdDays").value.startsWith("m") ? { deadline_minutes: Number($("cdDays").value.slice(1)) }
+      : { deadline_days: Number($("cdDays").value) }), arbiter_key_id: arbiter, payer: wallet?.address } });
   const who = o.paypal_mode === "simulator" ? "PayPal simulator" : "PayPal Sandbox";
   $("cdResult").innerHTML = `<p>Conditional order <code>${esc(o.order_id)}</code> · ${esc(o.terms.amount.value)} USD · deadline ${esc(o.terms.deadline)}</p>` +
     riskHtml(o.risk, o.risk ? "ok" : "unavailable") +

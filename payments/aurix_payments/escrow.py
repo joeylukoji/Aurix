@@ -99,6 +99,8 @@ def load_external_keys(env: Mapping[str, str] | None = None) -> list[dict]:
 class EscrowOrderReq(BaseModel):
     amount_usd: str
     deadline_days: int = 7
+    # Demo only (refused when AURIX_ENV=production): a deadline in minutes, to show a void live.
+    deadline_minutes: int | None = None
     carrier: str = DEMO_CARRIER
     arbiter_key_id: str | None = None
     payer: str | None = None
@@ -216,7 +218,12 @@ class EscrowService:
                 raise InvalidOperation
         except InvalidOperation:
             raise HTTPException(422, "amount_usd must be a positive amount with at most 2 decimals")
-        if not 1 <= req.deadline_days <= MAX_DEADLINE_DAYS:
+        if req.deadline_minutes is not None:
+            if not self.demo_arbiter:  # demo features are off in production
+                raise HTTPException(422, "deadline_minutes is a demo option, disabled in production")
+            if not 1 <= req.deadline_minutes <= 24 * 60:
+                raise HTTPException(422, "deadline_minutes must be between 1 and 1440")
+        elif not 1 <= req.deadline_days <= MAX_DEADLINE_DAYS:
             raise HTTPException(422, f"deadline_days must be between 1 and {MAX_DEADLINE_DAYS} "
                                      "(a PayPal authorization lasts at most 29 days)")
         if not any(k.get("role") == f"source:{req.carrier}" for k in self.keys["keys"]):
@@ -228,7 +235,8 @@ class EscrowService:
         risk = self.guardian.score(context="paypal_order", sender=req.payer or "anonymous", recipient="merchant",
                                    amount=float(amount), currency="USD")
         created = self.clock()
-        deadline = (crypto.parse_time(created) + timedelta(days=req.deadline_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        span = timedelta(minutes=req.deadline_minutes) if req.deadline_minutes else timedelta(days=req.deadline_days)
+        deadline = (crypto.parse_time(created) + span).strftime("%Y-%m-%dT%H:%M:%SZ")
         terms = {"schema": "aurix.escrow-terms", "schema_version": "1.0", "order_id": order["id"],
                  "amount": {"value": value, "currency": "USD"}, "deadline": deadline, "rule": RULE_ID,
                  "condition": "delivery-attested", "carrier": req.carrier, "arbiter_key_id": req.arbiter_key_id,

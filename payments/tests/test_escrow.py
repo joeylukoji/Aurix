@@ -210,3 +210,15 @@ def test_tampered_export_is_rejected(tmp_path, monkeypatch):
     path = next(p for p in files if p.startswith("attestations/") and b"payment.authorized" in files[p])
     files[path] = files[path].replace(b'"120.00"', b'"1.00"')
     assert verify_package(files, c.get("/api/escrow/keys").json())["result"] == "INVALID"
+
+
+def test_demo_deadline_in_minutes_voids_live(tmp_path, monkeypatch):
+    c, sim, clock = setup(tmp_path, monkeypatch)
+    r = c.post("/api/escrow/orders", json={"amount_usd": "15.00", "deadline_minutes": 2}).json()
+    assert r["terms"]["deadline"] > r["terms"]["created_at"]
+    oid = r["order_id"]
+    sim.post(f"/sim/orders/{oid}/approve")
+    c.post(f"/api/escrow/orders/{oid}/authorize", json={"confirm": True})
+    clock.advance(minutes=2, seconds=1)
+    assert wait(c, oid, "VOIDED")["decision"]["decision"] == "VOID"
+    assert c.post("/api/escrow/orders", json={"amount_usd": "1.00", "deadline_minutes": 0}).status_code == 422

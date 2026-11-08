@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "AURIX Payments (PayPal connector)",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "paths": {
     "/health": {
@@ -255,6 +255,425 @@
           }
         }
       }
+    },
+    "/api/escrow/orders": {
+      "get": {
+        "summary": "List Escrows",
+        "operationId": "list_escrows_api_escrow_orders_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Escrow",
+        "operationId": "create_escrow_api_escrow_orders_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EscrowOrderReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/escrow/orders/{order_id}": {
+      "get": {
+        "summary": "Get Escrow",
+        "operationId": "get_escrow_api_escrow_orders__order_id__get",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/escrow/orders/{order_id}/authorize": {
+      "post": {
+        "summary": "Authorize Escrow",
+        "operationId": "authorize_escrow_api_escrow_orders__order_id__authorize_post",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmReq"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/escrow/orders/{order_id}/evaluate": {
+      "post": {
+        "summary": "Evaluate Escrow",
+        "operationId": "evaluate_escrow_api_escrow_orders__order_id__evaluate_post",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/escrow/evidence": {
+      "post": {
+        "summary": "Submit Evidence",
+        "operationId": "submit_evidence_api_escrow_evidence_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvidenceReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/escrow/orders/{order_id}/proof": {
+      "get": {
+        "summary": "Proof",
+        "operationId": "proof_api_escrow_orders__order_id__proof_get",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/escrow/orders/{order_id}/explain": {
+      "post": {
+        "summary": "Explain",
+        "description": "AI explanation in plain language (Gemma 4 by default). Advisory only.",
+        "operationId": "explain_api_escrow_orders__order_id__explain_post",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExplainReq"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/escrow/orders/{order_id}/arbiter-brief": {
+      "post": {
+        "summary": "Arbiter Brief",
+        "description": "AI brief for the arbiter: summary, inconsistencies, questions, suggested action. The arbiter decides.",
+        "operationId": "arbiter_brief_api_escrow_orders__order_id__arbiter_brief_post",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExplainReq"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/escrow/orders/{order_id}/demo-arbiter": {
+      "post": {
+        "summary": "Demo Arbiter",
+        "operationId": "demo_arbiter_api_escrow_orders__order_id__demo_arbiter_post",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArbiterActionReq"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/escrow/advisor": {
+      "get": {
+        "summary": "Advisor Info",
+        "operationId": "advisor_info_api_escrow_advisor_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/escrow/keys": {
+      "get": {
+        "summary": "Keys",
+        "operationId": "keys_api_escrow_keys_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -269,6 +688,125 @@
         },
         "type": "object",
         "title": "ApproveReq"
+      },
+      "ArbiterActionReq": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "title": "Action"
+          }
+        },
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "ArbiterActionReq"
+      },
+      "ConfirmReq": {
+        "properties": {
+          "confirm": {
+            "type": "boolean",
+            "title": "Confirm",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "ConfirmReq"
+      },
+      "EscrowOrderReq": {
+        "properties": {
+          "amount_usd": {
+            "type": "string",
+            "title": "Amount Usd"
+          },
+          "deadline_days": {
+            "type": "integer",
+            "title": "Deadline Days",
+            "default": 7
+          },
+          "deadline_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline Minutes"
+          },
+          "carrier": {
+            "type": "string",
+            "title": "Carrier",
+            "default": "aurix_demo_delivery"
+          },
+          "arbiter_key_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arbiter Key Id"
+          },
+          "payer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payer"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": "AURIX conditional purchase"
+          }
+        },
+        "type": "object",
+        "required": [
+          "amount_usd"
+        ],
+        "title": "EscrowOrderReq"
+      },
+      "EvidenceReq": {
+        "properties": {
+          "attestation": {
+            "type": "object",
+            "title": "Attestation"
+          },
+          "signature": {
+            "type": "object",
+            "title": "Signature"
+          }
+        },
+        "type": "object",
+        "required": [
+          "attestation",
+          "signature"
+        ],
+        "title": "EvidenceReq"
+      },
+      "ExplainReq": {
+        "properties": {
+          "audience": {
+            "type": "string",
+            "title": "Audience",
+            "default": "buyer"
+          },
+          "lang": {
+            "type": "string",
+            "title": "Lang",
+            "default": "French"
+          }
+        },
+        "type": "object",
+        "title": "ExplainReq"
       },
       "HTTPValidationError": {
         "properties": {

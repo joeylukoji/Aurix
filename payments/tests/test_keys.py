@@ -26,3 +26,4 @@ def test_anchor_key_seed_refused_in_production(tmp_path, monkeypatch):
     app = create_app(s)
     assert app.state.paypal_mode in ("disabled", "sandbox", "simulator")
     assert app.state.escrow.keys["keys"] == app.state.escrow.keys["keys"][:1]  # no dev carrier in production
+    assert app.state.escrow.demo_arbiter is False  # no demo arbiter nor minute deadlines in production
