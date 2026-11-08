@@ -12,3 +12,6 @@ e2e-*.png
 .run/
 .claude/
 *.egg-info/
+
+# Graphify knowledge graph output
+graphify-out/
