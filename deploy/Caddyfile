@@ -1,0 +1,16 @@
+# Public HTTPS for the AURIX web demo (see the "https" profile in docker-compose.yml).
+# The certificate comes from the "certs" service (Let's Encrypt, DuckDNS DNS challenge); Caddy only serves it.
+{
+	auto_https disable_certs
+}
+
+{$AURIX_DOMAIN} {
+	tls /certs/certificates/{$AURIX_DOMAIN}.crt /certs/certificates/{$AURIX_DOMAIN}.key
+	encode gzip
+	header Strict-Transport-Security "max-age=31536000"
+	reverse_proxy gateway:8080
+}
+
+http://{$AURIX_DOMAIN} {
+	redir https://{host}{uri} permanent
+}

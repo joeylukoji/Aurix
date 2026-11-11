@@ -274,7 +274,33 @@ services:
     depends_on:
       chain2: { condition: service_healthy }
       paypal-sim: { condition: service_healthy }
+  # HTTPS on a public domain (optional, profile "https"), e.g. aurixfin.duckdns.org:
+  #   docker compose -f deploy/docker-compose.yml --profile https run --rm certs   # get / renew the certificate
+  #   docker compose -f deploy/docker-compose.yml --profile https up -d https      # serve https://$AURIX_DOMAIN
+  # The certificate is proved through the DuckDNS DNS challenge (DUCKDNS_TOKEN): no port needs to be open for it.
+  # Visitors still need the router to forward ports 80 and 443 to this machine.
+  certs:
+    image: goacme/lego:v4.19.2
+    profiles: ["https"]
+    environment:
+      DUCKDNS_TOKEN: ${DUCKDNS_TOKEN:?set DUCKDNS_TOKEN in deploy/.env}
+    command: ["--accept-tos", "--email", "admin@${AURIX_DOMAIN}", "--dns", "duckdns", "--dns.disable-cp",
+              "--domains", "${AURIX_DOMAIN}", "--path", "/certs", "run"]
+    volumes: ["certs:/certs"]
+    restart: "no"
+  https:
+    image: caddy:2.8.4
+    profiles: ["https"]
+    environment:
+      AURIX_DOMAIN: ${AURIX_DOMAIN:-localhost}
+    ports: ["80:80", "443:443"]
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro", "certs:/certs:ro"]
+    depends_on:
+      gateway: { condition: service_healthy }
+    restart: unless-stopped
+
 volumes:
+  certs:
   chain-data:
   postgres-data:
   payments-data:
