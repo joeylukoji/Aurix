@@ -6,9 +6,7 @@
 | Scrum | [scrum/product-backlog.md](scrum/product-backlog.md) | Epics, user stories, acceptance criteria, estimates |
 | Scrum | [scrum/sprints.md](scrum/sprints.md) | Sprints S0 to S5, goals, sprint backlogs, burndown |
 | Architecture | [architecture/services.md](architecture/services.md) | Modelling of each service (responsibilities, API, data) |
-| Process | [process/review-and-refactor.md](process/review-and-refactor.md) | Code review and refactor: role of each installed skill |
-| Architecture | [architecture/evidence-escrow.md](architecture/evidence-escrow.md) | MVP 0.2 evidence-released USD escrow: PayPal authorize/capture driven by signed multi-source evidence (proposed, not implemented) |
-| Architecture | [architecture/mscfa.md](architecture/mscfa.md) | MSCFA multi-source attestation: integration architecture and specification (MVP 0.3, proposed, not implemented) |
+| Architecture | [architecture/evidence-escrow.md](architecture/evidence-escrow.md) | Evidence-released USD escrow: PayPal authorize/capture driven by signed evidence, rules `delivery-attested/1` and `conditions/1`, AI-drafted conditions |
 | Architecture | [architecture/diagrams.md](architecture/diagrams.md) | UML/C4 diagrams (as built): context, use cases, sequences, states, classes, deployment |
 | Submission | [submission/devpost.md](submission/devpost.md) | Devpost project description |
 | Submission | [submission/demo-script.md](submission/demo-script.md) | < 3 min demo video script |

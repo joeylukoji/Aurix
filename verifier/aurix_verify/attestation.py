@@ -1,4 +1,4 @@
-"""One builder for `aurix.financial-attestation` v1.0 documents (docs/architecture/mscfa.md §6).
+"""One builder for `aurix.financial-attestation` v1.0 documents (docs/architecture/evidence-escrow.md §6).
 
 Used by the payments service (AURIX's own attestations, the demo arbiter), the simulated carrier and the
 tests, so the signed format is written in one place. It builds the document only; signing is

@@ -1,4 +1,4 @@
-"""Regression tests for the MVP 0.2 review findings (docs/process/review-and-refactor.md)."""
+"""Regression tests for the MVP 0.2 review findings."""
 import json
 
 from aurix_common.clients import PayPalError

@@ -114,7 +114,7 @@ including for `conditions/1`. The gateway and indexer suites start a real `aurix
 | PayPal | ✅ simulator end to end · ⚠️ Sandbox: orders created, full capture + signed webhook not yet validated end to end |
 | Public HTTPS on aurixfin.duckdns.org | 🚧 certificate obtained; deployment being finalised (until December 1, 2026) |
 | Demo video | 📝 script: [`docs/submission/demo-script.md`](docs/submission/demo-script.md) |
-| Research contributions | C1 (deterministic execution / k-of-n attestation / advisory AI) demonstrated; C2 threat-model analysis and C3 ablations not done ([`research/PLAN.md`](research/PLAN.md)) |
+| Research contributions | C1 (deterministic execution / k-of-n attestation / advisory AI) demonstrated; C2 threat-model analysis and C3 ablation study not done yet |
 
 ## Recent changes
 
@@ -151,5 +151,9 @@ including for `conditions/1`. The gateway and indexer suites start a real `aurix
 | [docs/architecture/services.md](docs/architecture/services.md) | Services and data flows |
 | [docs/submission/devpost.md](docs/submission/devpost.md), [demo-script.md](docs/submission/demo-script.md) | Submission and video script |
 | [docs/scrum/](docs/scrum/README.md) | Backlog and sprints |
-| [AURIX_SOFTWARE_ARCHITECTURE.md](AURIX_SOFTWARE_ARCHITECTURE.md) | Reference architecture ([French](AURIX_ARCHITECTURE_LOGICIELLE.md)) |
+| [AURIX_SOFTWARE_ARCHITECTURE.md](AURIX_SOFTWARE_ARCHITECTURE.md) | Reference software architecture |
 | [deploy/README.md](deploy/README.md) | Deployment and healthchecks |
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).

@@ -15,3 +15,15 @@ e2e-*.png
 
 # Graphify knowledge graph output
 graphify-out/
+
+# Local files kept out of the repository
+*.pdf
+Auric AI Fintech Landing Page Template.html
+Auric AI Fintech Landing Page Template_files/
+PRODUCT.md
+.impeccable/
+# AI assistant tooling (local to each developer)
+.agents/
+.claude/
+CLAUDE.md
+skills-lock.json

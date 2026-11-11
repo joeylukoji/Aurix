@@ -1,7 +1,7 @@
 """Neural Guardian risk model: regularised logistic regression trained on PaySim, with exact linear
 SHAP explanations, an isotonic probability calibration and thresholds chosen on a validation split.
 
-Artefacts (produced by `python -m training.evaluate <paysim.csv> --ship`, see research/PLAN.md step 2.1):
+Artefacts (produced by `python -m training.evaluate <paysim.csv> --ship`, see guardian/MODEL_CARD.md):
   models/guardian_logreg.json      standardisation + coefficients (trained on PaySim steps 1-400)
   models/guardian_calibration.json isotonic map and raw-score thresholds (fitted on steps 401-550)
   models/paysim_metrics.json       test metrics (steps 551-744, read once) and model selection

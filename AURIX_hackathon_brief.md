@@ -38,7 +38,7 @@ The thesis: a digital currency that is useful at scale must combine verifiabilit
 | --- | --- | --- |
 | 1. AURIX Wallet & Transfer | Create a demo wallet, check the balance, send/receive AUR | Accounts, nonces, fees, signatures, CometBFT consensus |
 | 2. Smart Money | Conditional payment: funds locked, released if the condition is met, refunded at the deadline | Finite-state escrow module, checked by block height and protocol time |
-| 3. Neural Guardian | Alert before confirmation, risk score, explained reasons | PyTorch ML model; final decision left to the protocol and the user |
+| 3. Neural Guardian | Alert before confirmation, risk score, explained reasons | Calibrated logistic regression with exact SHAP reasons (trained on PaySim); final decision left to the protocol and the user |
 | PayPal connector | USD payment in Sandbox, associated tracking proof | Orders API, capture, signed and idempotent webhook |
 
 PayPal Sandbox is the external payment demonstrator, not a fourth protocol feature.
@@ -94,7 +94,7 @@ The core (layer 1) depends on no upper layer: the protocol works without PayPal 
 ```mermaid
 flowchart LR
     U[User / Web wallet] --> GW[API Gateway<br/>Spring Boot]
-    GW --> AI[Neural Guardian<br/>FastAPI + PyTorch]
+    GW --> AI[Neural Guardian<br/>FastAPI + logistic regression]
     GW --> PP[PayPal Sandbox<br/>Orders API]
     PP -- signed webhook --> GW
     GW --> CHAIN[AURIX node<br/>Cosmos SDK + CometBFT]
@@ -138,7 +138,7 @@ sequenceDiagram
 | Consensus | CometBFT |
 | Blockchain core | Cosmos SDK + Go (`x/aurixbank`, `x/smartmoney`) |
 | Application services | Java 21 + Spring Boot (API Gateway, orchestration) |
-| AI | Python + FastAPI + PyTorch / PyTorch Geometric |
+| AI | Python + FastAPI, logistic regression + SHAP (PyTorch Geometric on the roadmap); Gemma 4 advisor |
 | Data | PostgreSQL (off-chain index) + Redis (cache) |
 | Orchestration | Docker Compose in development, Kubernetes as target |
 

@@ -1,4 +1,4 @@
-"""Leakage-free evaluation and training of Neural Guardian on PaySim (research/PLAN.md, step 2.1).
+"""Leakage-free evaluation and training of Neural Guardian on PaySim (see guardian/MODEL_CARD.md).
 
     python -m training.evaluate /path/to/paysim.csv [--out DIR] [--seeds 5] [--bootstrap 1000] [--ship]
 

@@ -1,235 +1,223 @@
-# AURIX MVP 0.2 — Escrow à preuves (Evidence-Released USD Escrow)
+# AURIX MVP 0.2 — Evidence-Released USD Escrow
 
-**Statut :** implémenté sur la branche `MVP_0.1` et revu (revue complète du 2026-11-08, constats corrigés). Testé de bout en bout avec le simulateur PayPal et la vraie chaîne. Reste : validation sur la PayPal Sandbox réelle, test avec un vrai modèle Gemma 4, déploiement Render.
-**Date :** 2026-11-08
-**Position :** version intermédiaire entre le MVP 0.1 (hackathon) et le MVP 0.3 complète
-([`mscfa.md`](mscfa.md) : MSCFA complet + escrow USD on-chain, §14 bis).
+**Status:** implemented on the `MVP_0.1` branch and reviewed. Tested end to end with the PayPal simulator and the
+real chain; AI-drafted conditions tested with Gemma 4 (Google AI Studio). Remaining: a full capture on the real
+PayPal Sandbox, online deployment.
 
 ---
 
-## 1. L'idée en une phrase
+## 1. The idea in one sentence
 
-**Un paiement PayPal en USD est autorisé, puis encaissé automatiquement seulement quand des preuves
-signées par des sources indépendantes confirment que la condition est remplie. Sinon, il est annulé à
-la date limite. Le tout est livré sous forme de dossier de preuve qu'un tiers peut revérifier hors ligne.**
+**A USD PayPal payment is authorized, then captured automatically only when evidence signed by independent sources
+shows that the condition is met. Otherwise it is voided at the deadline. Everything comes as a proof package that a
+third party can re-verify offline.**
 
-L'escrow USD apporte la valeur métier (des dollars, pas des AUR). Le MSCFA apporte ce qui déclenche la
-libération et ce qui la rend vérifiable (des attestations signées, reliées et exportables). Ensemble :
-**PayPal garde l'argent, les preuves décident, n'importe qui peut vérifier la décision.**
+The USD escrow brings the business value (dollars, not AUR). The signed attestations bring what triggers the release
+and what makes it verifiable. Together: **PayPal holds the money, the evidence decides, anyone can verify the decision.**
 
-## 2. Ce que PayPal n'offre pas aujourd'hui
+## 2. What PayPal does not offer today
 
-| Besoin | PayPal aujourd'hui | Escrow à preuves |
+| Need | PayPal today | Evidence escrow |
 | --- | --- | --- |
-| Encaisser seulement si la livraison est confirmée | Autorisation puis capture **manuelle** par le marchand ; protection acheteur **après coup** (litige) | Capture **déclenchée par une attestation signée** du transporteur |
-| Annuler automatiquement si rien ne se passe | L'autorisation expire ; aucune règle métier | Annulation (void) à la date limite fixée par l'acheteur |
-| Montrer à un tiers pourquoi le paiement a été encaissé | Historique privé du compte | Dossier de preuve exporté, règle de décision **rejouable** hors ligne |
+| Capture only once delivery is confirmed | Authorization, then a **manual** capture by the merchant; buyer protection **after the fact** (dispute) | Capture **triggered by a signed attestation** from the carrier (or any agreed source) |
+| Void automatically when nothing happens | The authorization expires; no business rule | Void at the deadline chosen by the buyer |
+| Show a third party why the payment was captured | Private account history | Exported proof package, decision rule **replayable** offline |
 
-## 3. Scénario de démonstration
+## 3. Demo scenario
 
-Un acheteur commande un article à 120 USD, livraison sous 7 jours.
+A buyer orders an item for 120 USD, delivery within 7 days.
 
-1. **Commande conditionnelle** : l'acheteur choisit la condition « livraison attestée par le transporteur »,
-   une date limite (7 jours, toujours ≤ 29 jours) et, en option, un arbitre.
-2. **Autorisation PayPal** (`intent = AUTHORIZE`) : l'acheteur approuve. Les 120 USD sont **bloqués** chez PayPal,
-   rien n'est encaissé. Le Guardian a évalué la commande **avant** l'approbation (existant).
-3. **Attestation 1, paiement autorisé** : `payments` vérifie le webhook PayPal signé (existant) ; AURIX produit
-   une attestation signée Ed25519.
-4. **Attestation 2, livraison** : le transporteur (simulé, marqué comme tel) envoie `shipment.delivered`
-   signé avec sa propre clé, avec la référence de la commande.
-5. **Décision** : le moteur de règle vérifie la signature du transporteur, la correspondance des références,
-   le montant et la devise, la date limite. Décision `RELEASE`, signée.
-6. **Capture PayPal** : `payments` encaisse l'autorisation. Webhook signé, puis **attestation k-sur-n** des
-   attestors sur la chaîne (existant, `MsgAnchorProof`). Attestation 3.
-7. **Dossier de preuve** : export `.zip` avec les 3 attestations, la décision, les clés publiques.
-   `aurix-verify` le revérifie hors ligne **et rejoue la règle** : il obtient la même décision.
+1. **Conditional order:** the buyer picks the condition (or lets the AI draft one, §12), a deadline (≤ 29 days) and,
+   optionally, an arbiter.
+2. **PayPal authorization** (`intent = AUTHORIZE`): the buyer approves. The 120 USD are **held** at PayPal, nothing
+   is captured. Neural Guardian scored the order **before** the approval.
+3. **Attestation 1, payment authorized:** `payments` verifies the signed PayPal webhook; AURIX issues an Ed25519
+   signed attestation.
+4. **Attestation 2, delivery:** the carrier (simulated, labelled as such) sends `shipment.delivered`, signed with its
+   own key, with the order reference.
+5. **Decision:** the rule checks the carrier's signature, the references, the amount and currency, the deadline.
+   Signed `RELEASE` decision.
+6. **PayPal capture:** `payments` captures the authorization. Signed webhook, then **k-of-n attestation** by the
+   attestors on chain (`MsgAnchorProof`). Attestation 3.
+7. **Proof package:** a `.zip` with the attestations, the decision and the public keys. `aurix-verify` re-checks it
+   offline **and replays the rule**: it reaches the same decision.
 
-Variantes à montrer :
-- **Pas de livraison avant la date limite** : décision `VOID`, l'autorisation est annulée, l'acheteur n'est pas débité.
-- **Attestation falsifiée** (signature invalide ou montant différent) : rejetée, pas de capture, anomalie dans le dossier.
-- **Litige** : l'arbitre bloque la libération avant la date limite ; décision `HOLD`, puis `RELEASE` ou `VOID` par l'arbitre,
-  toujours avant la date limite. Un blocage encore en place à la date limite se termine en `VOID` : l'acheteur est
-  remboursé plutôt que de laisser les fonds bloqués au-delà de l'autorisation PayPal.
+Variants:
+- **No delivery before the deadline:** `VOID`, the authorization is voided, the buyer is not charged.
+- **Forged evidence** (invalid signature, wrong source or amount): refused, no capture.
+- **Dispute:** the arbiter holds the release before the deadline (`HOLD`), then decides `RELEASE` or `VOID`. A hold
+  still in place at the deadline ends in `VOID`: the buyer is refunded rather than funds staying held past the PayPal
+  authorization.
 
-Ajouts au périmètre initial, décidés pendant le développement : une échéance en minutes pour la démo
-(désactivée en production) et le vérificateur dans le navigateur (`web/verify.js`, prévu en MVP 0.3, avancé).
+Demo-only additions: a deadline in minutes (disabled in production) and the in-browser verifier (`web/verify.js`).
 
 ## 4. Architecture
 
 ```mermaid
 flowchart LR
-    B[Acheteur / web] --> PAY[payments<br/>Orders v2 AUTHORIZE<br/>capture / void]
-    PP[PayPal Sandbox] -- webhook signé --> PAY
+    B[Buyer / web] --> PAY[payments<br/>Orders v2 AUTHORIZE<br/>capture / void]
+    PP[PayPal] -- signed webhook --> PAY
     PAY <--> PP
-    DEL[delivery-sim<br/>SIMULÉ, clé Ed25519 propre] -- shipment.delivered signé --> EVL
-    PAY -- événements vérifiés --> EVL
-    subgraph EVL[evidence-lite, module de payments]
+    SRC[delivery-sim<br/>SIMULATED carrier, inspector, customs<br/>own Ed25519 keys] -- signed evidence --> EV
+    PAY -- verified events --> EV
+    subgraph EV[evidence module of payments]
       ATT[Attestations<br/>JCS + SHA-256 + Ed25519]
-      RULE[Moteur de règle<br/>déterministe]
-      PKG[Dossier de preuve]
+      RULE[Deterministic rule]
+      PKG[Proof package]
       ATT --> RULE --> PKG
     end
     RULE -- RELEASE / VOID --> PAY
-    PAY -- MsgAnchorProof --> CHAIN[(Chaîne AURIX)]
-    ATTS[attestors k-sur-n] --> CHAIN
+    PAY -- MsgAnchorProof --> CHAIN[(AURIX chain)]
+    ATTS[k-of-n attestors] --> CHAIN
     CHAIN -- PaymentProof CONFIRMED --> ATT
-    PKG --> VER[aurix-verify<br/>CLI hors ligne]
+    PKG --> VER[aurix-verify<br/>offline CLI, browser]
 ```
 
-### Pourquoi « intermédiaire »
-
-| | MVP 0.1 (hackathon) | **MVP 0.2 escrow à preuves** | MVP 0.3 |
+| | MVP 0.1 | **MVP 0.2 evidence escrow** | Later |
 | --- | --- | --- | --- |
-| Escrow | AUR, sur la chaîne | **USD chez PayPal, libéré par les preuves** | USD, condition enregistrée sur la chaîne (`MsgCreateFiatEscrow`) |
-| Qui décide | Émetteur / arbitre | **Règle déterministe sur preuves signées**, rejouable par le vérificateur | La chaîne (consensus BFT) |
-| MSCFA | — | **Réduit** : 3 types d'attestation, 1 source externe, module dans `payments` | Service `evidence` complet, PostgreSQL, API générique, rotation de clés |
-| Changement de la chaîne | — | **Aucun** (réutilise `MsgAnchorProof`) | Nouveaux messages protobuf |
-| Vérificateur | Explorateur | **CLI `aurix-verify` hors ligne** | CLI + page web + révocations en ligne |
+| Escrow | AUR, on chain | **USD at PayPal, released by evidence** | USD, condition recorded on chain |
+| Who decides | Sender / arbiter | **Deterministic rule over signed evidence**, replayed by the verifier | The chain (BFT consensus) |
+| Chain changes | — | **None** (reuses `MsgAnchorProof`) | New protobuf messages |
 
-Le point clé de le MVP 0.2 : **pas besoin de modifier la chaîne pour que la décision soit vérifiable.** La règle
-est déterministe et publique ; ses entrées sont signées ; le vérificateur la rejoue. Le MVP 0.3 ajoute le
-consensus BFT sur la décision elle-même.
+The key point: **the chain does not need to change for the decision to be verifiable.** The rule is deterministic
+and public; its inputs are signed; the verifier replays it.
 
-## 5. La règle de décision
+## 5. The decision rules
 
-Fonction pure, versionnée (`rule = "delivery-attested/1"`), partagée par `payments` et `aurix-verify` :
+Pure, versioned functions in `verifier/aurix_verify/rule.py`, shared by `payments` and `aurix-verify` (and ported to
+`web/verify.js`, kept in lockstep by `verifier/tests/test_js_parity.py`).
+
+`delivery-attested/1`:
 
 ```text
 decide(terms, evidence, now) ->
-  # une preuve ne compte que si sa signature est valide, sa clé a le bon rôle, et
-  # operation_id == provider_reference.order_id (si présent) == terms.order_id
-  a = dernière action de l'arbitre désigné, signée et REÇUE par AURIX avant la date limite
-  if a == RELEASE ou VOID                       -> a
-  if a == HOLD : if now > deadline -> VOID  sinon -> HOLD
-  auth = payment.authorized (clé AURIX) au montant et à la devise exacts des termes
-  d = shipment.delivered du transporteur convenu (clé source:<transporteur>), avec
-        event_time <= deadline, event_time <= now,
-        et REÇUE par AURIX (reçu signé) <= deadline
-  if auth et d                                  -> RELEASE
-  if now > deadline                             -> VOID
-  sinon                                         -> WAIT
+  # evidence counts only if its signature is valid, its key has the right role, and
+  # operation_id == provider_reference.order_id (if present) == terms.order_id
+  a = latest action of the designated arbiter, signed and RECEIVED by AURIX before the deadline
+  if a == RELEASE or VOID                        -> a
+  if a == HOLD: if now > deadline -> VOID  else -> HOLD
+  auth = payment.authorized (AURIX key) for exactly the agreed amount and currency
+  d = shipment.delivered from the agreed carrier (key source:<carrier>), with
+        event_time <= deadline, event_time <= now, and RECEIVED by AURIX (signed receipt) <= deadline
+  if auth and d                                  -> RELEASE
+  if now > deadline                              -> VOID
+  else                                           -> WAIT
 ```
 
-Règles : montants en décimal (jamais de `float`) ; références comparées exactement (jamais par proximité de
-montant ou de date) ; la décision et ses entrées (hash de chaque attestation) sont signées par AURIX et
-ajoutées au dossier.
+`conditions/1` (a condition tree, §12) applies the same arbiter, authorization and reception checks, then:
 
-Pourquoi l'heure de **réception** : l'heure d'un événement est déclarée par celui qui signe et peut être
-antidatée ; l'heure à laquelle AURIX a reçu la preuve est enregistrée dans un reçu signé (`receipts.json`). Une
-livraison réellement survenue avant la date limite mais évaluée après (le poller passe toutes les quelques
-secondes) donne `RELEASE` si AURIX l'a reçue à temps. Pour la même raison, la validité d'une clé est vérifiée à
-l'heure de réception, et non à la date `created_at` choisie par le signataire.
+```text
+  used = evidence satisfying the tree (all / any / at_least; leaf = evidence type + source + optional limit)
+  if auth and used:
+      release_at = min(time AURIX had all of it + dispute_window_hours, deadline)
+      open buyer dispute received before release_at -> HOLD (VOID once the deadline passes)
+      now >= release_at                            -> RELEASE
+      else                                         -> WAIT (dispute window open)
+  if now > deadline                                -> VOID
+  else                                             -> WAIT
+```
+
+Rules: amounts in decimal (never `float`); references compared exactly; the decision and its inputs (hash of each
+attestation) are signed by AURIX and added to the package.
+
+Why the **reception** time: an event's time is declared by its signer and can be backdated; the time AURIX received
+the evidence is recorded in a signed receipt (`receipts.json`). Evidence that arrived before the deadline but was
+evaluated after it still counts. For the same reason a key's validity is checked at reception time, not at the
+`created_at` chosen by the signer.
 
 ## 6. Formats
 
-Attestations au format `aurix.financial-attestation` v1.0 décrit dans [`mscfa.md`](mscfa.md) §6, limité à :
-`payment.authorized`, `shipment.delivered`, `payment.captured`, `payment.anchored`, `payment.voided`,
-`arbiter.decision`. La référence à la `PaymentProof` on-chain est portée par `payment.anchored` (source
-`aurix_chain`, méthode `aurix_chain_kofn_attestation`), émise une fois la preuve confirmée par k attestors :
-`payment.captured` est émis plus tôt, à la réception du webhook, quand la preuve n'existe pas encore.
+**Attestation** (`aurix.financial-attestation` v1.0, `verifier/aurix_verify/attestation.py`):
+`attestation_id`, `operation_id` (the order), `source` (`provider`, `source_type` real / simulated, `environment`,
+`provider_event_id`, `provider_reference`, `verification_method`), `event` (`type`, optional `amount`, `action`),
+`timestamps` (`source_event_time`, …). Canonicalised with RFC 8785 (JCS), hashed with SHA-256, signed with Ed25519.
 
-Décision :
+Event types: `payment.authorized`, `payment.captured`, `payment.anchored`, `payment.voided` (AURIX),
+`shipment.shipped`, `shipment.delivered`, `inspection.passed`, `customs.cleared` (sources), `buyer.disputed` (AURIX),
+`arbiter.decision` (arbiter). `payment.anchored` references the on-chain `PaymentProof` once k attestors confirmed it.
+
+**Signature verdicts:** `valid`, `invalid`, `unknown_key`, `revoked_key`, `valid_but_key_revoked_after_signing`.
+
+**Decision:**
 
 ```json
 { "schema": "aurix.escrow-decision", "schema_version": "1.0",
-  "order_id": "5O1…", "rule": "delivery-attested/1", "decision": "RELEASE",
-  "inputs": ["sha256:…payment.authorized", "sha256:…shipment.delivered"],
+  "order_id": "5O1…", "rule": "conditions/1", "decision": "RELEASE",
+  "inputs": ["sha256:…", "sha256:…"],
   "decided_at": "2026-11-15T10:02:00Z", "deadline": "2026-11-15T23:59:59Z" }
 ```
 
-Dossier : structure de [`mscfa.md`](mscfa.md) §8, plus `decision.json` et `decision.sig.json`.
-Le rapport du vérificateur indique toujours : source de livraison **simulée** ; la validité cryptographique
-ne prouve pas la remise physique du colis ; les fonds ont été gérés par PayPal, pas par AURIX.
+**Proof package** (`aurix-proof-<order_id>.zip`, `verifier/aurix_verify/package.py`): signed `manifest.json`,
+`terms.json`, `attestations/<id>.json`, `receipts.json`, `decision.json` (each with its signature), `trust/public-keys.json`,
+`trust/trust-metadata.json`, optional `advisory/<kind>.json`. The verifier report always states which sources are
+simulated, that cryptographic validity does not prove physical delivery, and that PayPal, not AURIX, held the funds.
 
-## 7. Composants et modifications
+## 7. Components
 
-| Élément | Changement |
+| Component | Role |
 | --- | --- |
-| `paypal-sim/app/main.py` (**fait**) | Mode `AUTHORIZE`, `POST /v2/payments/authorizations/{id}/capture` et `/void`, webhooks `PAYMENT.AUTHORIZATION.CREATED` / `.VOIDED`, expiration simulée |
-| `common/aurix_common/clients.py` (**fait**) | `create_order(intent=…)`, `capture_authorization()`, `void_authorization()` |
-| `payments/aurix_payments/` (**fait**) | Module `escrow.py` : commandes conditionnelles (`deadline`, `arbiter`, transporteur), attestations signées, règle partagée avec `aurix_verify`, décision signée et finale, capture ou void idempotents avec réessai dans le `poller()` existant, export du dossier ; routes `/api/escrow/*` (aussi via le gateway) |
-| `delivery-sim/` (nouveau, **fait**, port 8087) | Petit service FastAPI : `POST /ship/{order_id}`, `POST /deliver/{order_id}`, signature Ed25519 avec clé démo distincte ; `source_type = simulated` |
-| `verifier/` (nouveau, **fait**) | `python -m aurix_verify proof.zip` : empreintes, signatures, clés, **rejeu de la règle** ; aucune dépendance aux services. `payments` importe ce même paquet (JCS, signatures, règle) : le vérificateur rejoue exactement le code qui a décidé |
-| `web/` (**fait**) | Onglet « Conditional (USD) » : création, autorisation, état et raisons de la règle, frise des preuves (réel/simulé, signature), boutons du transporteur simulé (livraison, livraison falsifiée), conseiller IA (explication, brief arbitre), boutons d'arbitre de démo, téléchargement du dossier |
-| `deploy/`, `scripts/` (**fait**, sauf Render) | Service `delivery-sim` dans `docker-compose.yml` et `dev-up.sh`, secrets `ESCROW_KEY_FILE`, `ESCROW_TRUSTED_KEYS_FILE`, `DELIVERY_SIM_KEY_FILE` ; `verifier` et `delivery-sim` dans `test-all.sh` |
+| `paypal-sim/` | Local PayPal simulator: `AUTHORIZE`, capture, void, webhooks, simulated expiry |
+| `common/aurix_common/clients.py` | PayPal client: `create_order(intent=…)`, `capture_authorization()`, `void_authorization()`; retries failed connections |
+| `payments/aurix_payments/escrow.py` | Conditional orders, signed attestations, rule, signed and final decision, idempotent capture or void retried by the poller, proof export, `/api/escrow/*` |
+| `delivery-sim/` (port 8087) | Simulated carrier, inspector and customs, each with its own Ed25519 key: `/ship`, `/deliver`, `/inspect`, `/customs` |
+| `verifier/` | `python -m aurix_verify proof.zip`: hashes, signatures, keys, **rule replay**; no service dependency |
+| `web/` | Guided demo (`demo.html`), proof page (`proof.html`), full wallet tab "Conditional (USD)" |
 
-Aucune modification de `chain/`.
+No change to `chain/`.
 
-## 7 bis. Conseiller IA (Gemma 4, consultatif)
+## 8. AI advisor (Gemma 4, advisory only)
 
-**Principe : l'IA explique et suggère, elle ne décide jamais.** La décision reste la règle déterministe
-`delivery-attested/1`, que `aurix-verify` rejoue ; un LLM n'y entre pas (ses réponses ne sont pas reproductibles).
-Code : `payments/aurix_payments/advisor.py`.
+**The AI explains and suggests; it never decides.** The decision stays the deterministic rule that `aurix-verify`
+replays; an LLM cannot be part of it (its answers are not reproducible). Code: `payments/aurix_payments/advisor.py`.
 
-| Fonction | Route | Ce que fait le modèle | Ce qu'il ne fait pas |
+| Function | Route | What the model does | What it does not do |
 | --- | --- | --- | --- |
-| Explication en clair | `POST /api/escrow/orders/{id}/explain` `{audience: buyer\|merchant\|auditor, lang}` | Résume ce qui s'est passé, pourquoi la règle a décidé, les limites (sources simulées, signature ≠ livraison physique) | Modifier l'état ou la décision |
-| Assistant de l'arbitre | `POST /api/escrow/orders/{id}/arbiter-brief` | JSON : résumé, incohérences, questions à vérifier hors AURIX, **suggestion** `HOLD/RELEASE/VOID/NONE` | Agir : seule l'action **signée** de l'arbitre compte |
+| Draft a condition | `POST /api/escrow/propose` | Turns a free description into a condition tree, with warnings | Apply it: the buyer reviews, edits and approves |
+| Plain explanation | `POST /api/escrow/orders/{id}/explain` `{audience, lang}` | What happened, why the rule decided, the limits | Change the state or decision |
+| Arbiter brief | `POST /api/escrow/orders/{id}/arbiter-brief` | Summary, inconsistencies, questions, **suggested** action | Act: only the arbiter's **signed** action counts |
 
-- **Modèle** : Gemma 4 par défaut (`ADVISOR_LLM_MODEL=gemma4:e4b`) via tout point d'accès compatible OpenAI
-  (`ADVISOR_LLM_URL`) : Ollama en local (`http://localhost:11434/v1`), vLLM, ou l'endpoint compatible OpenAI de
-  Google AI Studio (`ADVISOR_LLM_API_KEY`). Sans modèle joignable : texte généré par gabarit, signalé comme tel.
-- **Données envoyées** : uniquement des champs structurés du dossier (types d'événements, sources, statuts de
-  vérification, montants, dates, anomalies). Ni identité du payeur, ni payload brut, ni texte libre du transporteur.
-- **Injection de prompt** : les faits sont passés comme données, le prompt système interdit de les suivre comme
-  instructions ; la sortie n'est qu'affichée (échappée), jamais réinjectée dans la règle.
-- **Traçabilité** : chaque texte est enregistré et exporté dans le dossier (`advisory/<kind>.json`, protégé par le
-  manifeste signé) avec le modèle effectivement utilisé ; le vérificateur l'affiche comme « consultatif, non utilisé
-  par la règle ».
-- **Arbitre de démo** : `POST /api/escrow/orders/{id}/demo-arbiter` signe avec la clé d'arbitre de démo détenue par
-  le serveur, uniquement hors production (`AURIX_ENV≠production`). Un vrai arbitre signe avec sa propre clé et
-  dépose son attestation sur `/api/escrow/evidence`.
+- **Model:** any OpenAI-compatible endpoint (`ADVISOR_LLM_URL`, `ADVISOR_LLM_MODEL`, `ADVISOR_LLM_API_KEY`): Google AI
+  Studio (`gemma-4-26b-a4b-it`), Ollama, vLLM. Without a reachable model, a deterministic template, labelled as such.
+- **Data sent:** structured fields only (event types, sources, verification status, amounts, dates). No payer
+  identity, no raw payload.
+- **Prompt injection:** facts are passed as data; the output is only displayed (escaped) and, for conditions,
+  strictly validated against the schema and the registered sources.
+- **Traceability:** each text is saved in the proof package (`advisory/<kind>.json`) with the model actually used.
+- **Demo arbiter:** `/api/escrow/orders/{id}/demo-arbiter` signs with a server-held demo key, outside production only.
 
-## 8. Sécurité
+## 9. Security
 
-- Les secrets PayPal restent dans `payments` uniquement ; `delivery-sim` ne peut que déposer des attestations signées.
-- Une attestation de livraison sans signature valide d'une clé enregistrée est rejetée et journalisée.
-- Capture et void sont idempotents (clé d'idempotence PayPal = `order_id + decision`) ; une décision `RELEASE`
-  ne peut jamais être suivie d'un `VOID`, et inversement (machine à états testée).
-- Statuts, comme pour le paiement immédiat existant : `CAPTURED` dès la réponse authentifiée de l'API PayPal,
-  `CONFIRMED` à la réception du webhook signé, `ANCHORED` une fois la preuve confirmée par k attestors. Seul
-  `ANCHORED` (et l'attestation `payment.anchored`) vaut preuve de paiement dans l'interface et le dossier.
-- Les identifiants d'attestation externes sont contraints (`[A-Za-z0-9_-]{1,64}`, préfixe `att_` réservé à AURIX).
-- Les appels au conseiller IA sont limités (langue sur liste fermée, débit par commande et global, un avis
-  conservé par type). L'API n'a pas de comptes utilisateurs sur le testnet : limite déclarée dans le Devpost.
-- Le dossier exporté ne contient ni données personnelles du payeur ni payload brut (seulement son hash).
+- PayPal secrets stay in `payments`; evidence sources can only submit signed attestations.
+- Evidence without a valid signature from a registered key, or from a source attesting another kind of event, is refused.
+- Capture and void are idempotent (PayPal request id = order + decision); `RELEASE` is never followed by `VOID`, nor
+  the reverse.
+- Statuses: `CAPTURED` on PayPal's authenticated API response, `CONFIRMED` on the signed webhook, `ANCHORED` once k
+  attestors confirmed the proof. Only `ANCHORED` counts as a payment proof.
+- External attestation ids are constrained (`[A-Za-z0-9_-]{1,64}`, prefix `att_` reserved for AURIX).
+- AI calls are rate limited and the language is allowlisted. The testnet API has no user accounts.
+- The proof package holds no payer personal data and no raw payload (only its hash).
 
-## 9. Critères d'acceptation
+## 10. Acceptance criteria
 
-- [x] Une commande conditionnelle crée une autorisation PayPal ; l'acheteur n'est pas débité. — `test_escrow.py::test_delivery_evidence_releases_the_payment`
-- [x] Une livraison attestée et valide déclenche la capture, puis l'ancrage k-sur-n. — e2e `demo-journey.js` sur la vraie chaîne (2 attestors)
-- [x] Sans livraison avant la date limite, l'autorisation est annulée. — `test_no_evidence_before_deadline_voids_the_authorization`, e2e `E2E_VOID=1`
-- [x] Une attestation falsifiée ou incohérente est rejetée et n'entraîne aucune capture. — `test_forged_or_misattributed_evidence_is_refused`, `test_review_fixes.py`
-- [x] L'arbitre peut bloquer puis trancher avant la date limite. — `test_arbiter_hold_then_void`, `test_arbiter_hold_still_in_place_at_deadline_voids`
-- [x] `aurix-verify` revérifie le dossier hors ligne et obtient la même décision en rejouant la règle. — `verifier/tests`, e2e (CLI) et parité Python/JS
-- [x] Une modification d'un octet du dossier est détectée. — `test_one_byte_change_is_detected`, bouton « Tamper » (e2e)
-- [x] La source simulée est signalée dans l'interface, le dossier et le rapport. — interface, `trust-metadata.json`, limites du rapport
-- [x] `payments` garde son comportement actuel pour les commandes non conditionnelles (non-régression). — suites `payments` et `gateway` existantes vertes
+- [x] A conditional order creates a PayPal authorization; the buyer is not charged.
+- [x] Valid evidence triggers the capture, then k-of-n anchoring (e2e on the real chain, 2 attestors).
+- [x] Without the evidence by the deadline, the authorization is voided.
+- [x] Forged or inconsistent evidence is refused and causes no capture.
+- [x] The arbiter can hold, then decide, before the deadline; the buyer can dispute in the dispute window.
+- [x] `aurix-verify` re-checks the package offline and reaches the same decision (Python / browser parity).
+- [x] A one-byte change in the package is detected.
+- [x] Simulated sources are flagged in the UI, the package and the report.
+- [x] An AI-drafted condition is validated before use, and its summary is computed from the condition itself.
 
-## 10. Effort estimé
+## 11. Limits
 
-| Bloc | Estimation |
-| --- | --- |
-| Simulateur + client PayPal (autorisation, capture, void) | 0,5 j |
-| Module `evidence.py` (JCS, Ed25519, attestations, règle, export) | 1 j |
-| Commandes conditionnelles dans `payments` + boucle de décision | 0,5 j |
-| `delivery-sim` + `aurix-verify` | 0,5 j |
-| Onglet web + tests + e2e | 0,5–1 j |
-| **Total** | **≈ 3 à 3,5 jours** |
+- The funds stay at PayPal: AURIX guarantees nothing beyond what PayPal guarantees for an authorization (at most 29 days).
+- The decision is taken by an AURIX service following a public, replayable rule, not yet by consensus.
+- Carrier, inspector and customs are simulated: the demo proves the mechanism, not a real integration.
 
-Vérification nécessaire en Sandbox réelle : comportement des autorisations (durée de 29 jours,
-période garantie de 3 jours, réautorisation) sur la documentation PayPal officielle avant de s'y engager.
+## 12. Custom conditions (rule `conditions/1`)
 
-## 11. Limites
-
-- Les fonds restent chez PayPal : AURIX ne garantit pas leur disponibilité au-delà de ce que PayPal garantit pour une autorisation.
-- Durée maximale de 29 jours.
-- La décision est prise par un service AURIX selon une règle publique et rejouable, mais pas encore par consensus (MVP 0.3).
-- Le transporteur est simulé : la démo prouve le mécanisme, pas une intégration réelle.
-
-## Conditions sur mesure (règle `conditions/1`, ajoutée le 2026-11-09)
-
-En plus de `delivery-attested/1`, une commande peut porter une **condition composable**, signée dans `terms.json` :
+Besides `delivery-attested/1`, an order can carry a **composable condition**, signed in `terms.json`:
 
 ```json
 {"rule": "conditions/1", "dispute_window_hours": 72,
@@ -238,15 +226,13 @@ En plus de `delivery-attested/1`, une commande peut porter une **condition compo
                        {"evidence": "shipment.delivered", "source": "aurix_demo_delivery"}]}}
 ```
 
-- Nœuds : `all`, `any`, `at_least` + `of` ; feuilles : `evidence` (`shipment.shipped`, `shipment.delivered`,
-  `inspection.passed`, `customs.cleared`), `source` (clé enregistrée `source:<source>`, qui ne peut signer que son
-  type d'événement), `before` optionnel. Au plus 10 feuilles et 4 niveaux (`validate_condition`).
-- `within_days` (relatif) est converti en `before` (absolu) à la création : les termes signés ne dépendent pas du moment de l'évaluation.
-- **Délai de contestation** : une fois la condition remplie, RELEASE seulement après `dispute_window_hours` (borné par
-  la date limite). Une contestation de l'acheteur (`buyer.disputed`, attestée par AURIX) met le paiement en HOLD ;
-  l'arbitre tranche (RELEASE / VOID, ou UNHOLD pour lever la contestation), sinon VOID à la date limite.
-- **IA** : `POST /api/escrow/propose` fait rédiger une condition par l'advisor (Gemma 4, ou un modèle déterministe sans
-  IA) à partir d'une description libre. La sortie est validée strictement ; le résumé affiché est calculé à partir de
-  l'arbre, pas du texte du modèle. L'acheteur relit, modifie et approuve : l'IA ne décide jamais.
-- Sources simulées supplémentaires dans `delivery-sim` : inspection (`/inspect/{order}`) et douane (`/customs/{order}`).
-- Le vérificateur Python et `web/verify.js` rejouent les deux règles (tests de parité dans `verifier/tests/test_js_parity.py`).
+- Nodes: `all`, `any`, `at_least` + `of`; leaves: `evidence` (`shipment.shipped`, `shipment.delivered`,
+  `inspection.passed`, `customs.cleared`), `source` (a registered `source:<source>` key, which may only sign its own
+  kind of event), optional `before`. At most 10 leaves and 4 levels (`validate_condition`).
+- `within_days` (relative) becomes `before` (absolute) at creation: signed terms never depend on evaluation time.
+- **Dispute window:** once the condition is met, `RELEASE` only after `dispute_window_hours` (capped by the deadline).
+  A buyer dispute (`buyer.disputed`, attested by AURIX) holds the payment; the arbiter decides (`RELEASE` / `VOID`,
+  or `UNHOLD` to lift it), otherwise `VOID` at the deadline.
+- **AI:** `POST /api/escrow/propose` drafts the condition from a free description (Gemma 4, or a deterministic
+  template). The output is strictly validated; the displayed summary and the workflow diagram are computed from the
+  tree, never from model text. The buyer reviews, edits and approves.

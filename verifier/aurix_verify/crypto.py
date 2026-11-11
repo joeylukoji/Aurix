@@ -72,7 +72,7 @@ class Signer:
                 "signature": b64(self.private_key.sign(h.encode())), "created_at": created_at}
 
 
-# Signature verdicts (docs/architecture/mscfa.md §7)
+# Signature verdicts (docs/architecture/evidence-escrow.md §6)
 VALID, INVALID, UNKNOWN_KEY, REVOKED_KEY = "valid", "invalid", "unknown_key", "revoked_key"
 VALID_KEY_REVOKED_LATER = "valid_but_key_revoked_after_signing"
 
