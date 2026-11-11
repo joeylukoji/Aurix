@@ -3,176 +3,165 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AURIX Wallet</title>
-<link rel="stylesheet" href="vendor/ag-grid.min.css">
-<link rel="stylesheet" href="vendor/ag-theme-quartz.min.css">
-<link rel="stylesheet" href="styles.css">
-<script src="vendor/noble.min.js"></script>
-<script src="vendor/bip39-english.js"></script>
-<script src="cosmos-tx.js"></script>
-<script src="keys.js"></script>
-<script src="chain.js"></script>
-<script src="vendor/ag-grid-community.min.js"></script>
+<title>AURIX · Pay when the evidence says so</title>
+<meta name="description" content="AURIX is a trust layer on top of PayPal: the buyer's dollars are released only when signed evidence meets the condition, and anyone can re-verify the decision offline.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="landing.css">
+<script src="i18n.js"></script>
 </head>
 <body>
-<header>
-  <div class="brand"><span class="logo">◆</span> AURIX <small>testnet</small></div>
-  <div class="tag">Programmable Value, Verifiable Trust.</div>
-  <div class="status"><span id="chainStatus">connecting…</span> <span id="gwStatus" class="pill" hidden></span></div>
+<header class="nav-wrap">
+  <nav class="nav" aria-label="Main">
+    <a class="brand" href="#top"><span class="mark" aria-hidden="true">◆</span>AURIX</a>
+    <div class="links">
+      <a href="#how">How it works</a>
+      <a href="#evidence">Evidence</a>
+      <a href="demo.html">Demo</a>
+      <a href="proof.html">Proof</a>
+    </div>
+    <div class="nav-end"><div class="lang" role="group" aria-label="Language"><button type="button" data-lang="en">EN</button><button type="button" data-lang="fr">FR</button></div><a class="btn lime" href="demo.html">Launch the demo <span aria-hidden="true">↗</span></a></div>
+  </nav>
 </header>
-<nav>
-  <button data-tab="wallet" class="active">Wallet</button>
-  <button data-tab="send">Send AUR</button>
-  <button data-tab="escrow">Smart Money</button>
-  <button data-tab="paypal">PayPal (USD)</button>
-  <button data-tab="cond">Conditional (USD)</button>
-  <button data-tab="explorer">Explorer</button>
-  <button data-tab="settings">Settings</button>
-</nav>
-<main>
-  <section id="wallet" class="tab active">
-    <div class="card">
-      <h2>My wallet</h2>
-      <p class="muted">Your key is generated and kept in this browser only. Testnet: AUR has no monetary value.</p>
-      <div id="noWallet" hidden>
-        <button id="newMnemonic" class="primary">Create wallet (recovery phrase)</button>
-        <details><summary>Import a recovery phrase (12 or 24 words)</summary>
-          <label>Recovery phrase<textarea id="importMnemonic" rows="3" autocomplete="off" spellcheck="false" placeholder="word1 word2 … word12"></textarea></label>
-          <label>Password (encrypts it in this browser)<input id="importPw" type="password" autocomplete="new-password"></label>
-          <label>Repeat password<input id="importPw2" type="password" autocomplete="new-password"></label>
-          <button id="doImportMnemonic">Import</button></details>
-        <div class="demo">
-          <p class="muted">Testnet demo: a throwaway dev key (sha256 of a random seed, kept unencrypted in this browser). Never use it on a public network.</p>
-          <button id="createWallet">Demo account</button>
-          <details><summary>Import a demo seed</summary><input id="importSeed" placeholder="64 hex chars"><button id="doImport">Import</button></details>
+
+<main id="top">
+  <section class="hero">
+    <div class="hero-inner">
+      <div class="hero-copy">
+        <div class="chips"><span class="chip">Testnet · no real money</span><span class="chip">PayPal Sandbox</span></div>
+        <p class="eyebrow">Programmable value, verifiable trust</p>
+        <h1>Pay only when the evidence says so.</h1>
+        <p class="lead">PayPal holds the buyer's dollars. Signed evidence from the carrier, the inspector and customs
+          decides when they are released, and anyone can re-verify that decision offline. AURIX never holds the money.</p>
+        <div class="ctas">
+          <a class="btn lime big" href="demo.html">Launch the demo <span aria-hidden="true">↗</span></a>
+          <a class="link" href="#how">How it works</a>
+        </div>
+        <p class="note"><span class="spark" aria-hidden="true">✦</span> The AI advises, the rule decides, the human approves.</p>
+      </div>
+
+      <div class="hero-visual" aria-hidden="true">
+        <p class="net-tag"><span class="dot"></span>AURIX network · 4 validators</p>
+        <svg class="globe" viewBox="0 0 520 520">
+          <defs>
+            <radialGradient id="g" cx="40%" cy="35%" r="70%">
+              <stop offset="0" stop-color="#2e64c4"/><stop offset=".6" stop-color="#123a85"/><stop offset="1" stop-color="#081d48"/>
+            </radialGradient>
+          </defs>
+          <circle cx="260" cy="260" r="200" fill="url(#g)"/>
+          <g fill="none" stroke="#9fb9ea" stroke-opacity=".28">
+            <ellipse cx="260" cy="260" rx="200" ry="70"/><ellipse cx="260" cy="260" rx="200" ry="140"/>
+            <ellipse cx="260" cy="260" rx="70" ry="200"/><ellipse cx="260" cy="260" rx="140" ry="200"/>
+            <line x1="60" y1="260" x2="460" y2="260"/>
+          </g>
+          <ellipse class="orbit" cx="260" cy="260" rx="250" ry="120" transform="rotate(-18 260 260)"/>
+          <ellipse class="orbit" cx="260" cy="260" rx="230" ry="215" transform="rotate(12 260 260)"/>
+          <g class="node"><circle cx="168" cy="190" r="15"/><circle cx="168" cy="190" r="6"/></g>
+          <g class="node"><circle cx="300" cy="135" r="13"/><circle cx="300" cy="135" r="5"/></g>
+          <g class="node"><circle cx="400" cy="215" r="13"/><circle cx="400" cy="215" r="5"/></g>
+          <g class="node"><circle cx="330" cy="355" r="11"/><circle cx="330" cy="355" r="4"/></g>
+        </svg>
+        <div class="cond-card">
+          <p class="cc-head">Condition · drafted by AI, approved by the buyer</p>
+          <ul>
+            <li class="done">Shipment within 10 days <span>carrier</span></li>
+            <li class="done">Inspection passed <span>inspector</span></li>
+            <li>Customs cleared <span>customs</span></li>
+            <li>Delivered <span>carrier</span></li>
+          </ul>
+          <p class="cc-foot"><span>then 72 h dispute window</span><b>2 / 4 evidence</b></p>
         </div>
       </div>
-      <div id="backup" hidden>
-        <h3>Write down your recovery phrase</h3>
-        <p class="muted">These 12 words are shown once. Anyone who has them controls the funds; without them a lost password means lost funds. Path m/44'/118'/0'/0/0 (same as <code>aurixd keys add --recover</code>).</p>
-        <ol id="backupWords" class="words"></ol>
-        <label class="check"><input id="backupAck" type="checkbox"> I wrote the 12 words down, in order, offline</label>
-        <label>Password (encrypts the phrase in this browser)<input id="backupPw" type="password" autocomplete="new-password"></label>
-        <label>Repeat password<input id="backupPw2" type="password" autocomplete="new-password"></label>
-        <button id="backupDone" class="primary">Save wallet</button><button id="backupCancel">Cancel</button>
+    </div>
+  </section>
+
+  <section class="light" id="how">
+    <div class="wrap">
+      <div class="split">
+        <p class="eyebrow dark">// How it works</p>
+        <h2>A trust layer on top of PayPal, not a new place to keep money.</h2>
       </div>
-      <div id="unlock" hidden>
-        <h3>Unlock wallet</h3>
-        <div class="kv"><span>Address</span><code id="unlockAddr"></code></div>
-        <label>Password<input id="unlockPw" type="password" autocomplete="current-password"></label>
-        <button id="unlockGo" class="primary">Unlock</button><button id="forgetVault" class="danger">Remove wallet</button>
+      <div class="cards">
+        <article class="card">
+          <span class="ic" aria-hidden="true">01</span>
+          <h3>Describe the deal</h3>
+          <p>Explain the purchase in your own words. The AI advisor drafts a condition from the evidence sources AURIX
+            knows. You read it, edit it and approve it.</p>
+        </article>
+        <article class="card">
+          <span class="ic" aria-hidden="true">02</span>
+          <h3>PayPal holds the funds</h3>
+          <p>The buyer approves on PayPal. The dollars are authorised, not captured: nothing is charged until the
+            condition is met.</p>
+        </article>
+        <article class="card">
+          <span class="ic" aria-hidden="true">03</span>
+          <h3>Independent evidence</h3>
+          <p>Each source signs its own events with its own key: shipment, inspection, customs, delivery. A forged or
+            misattributed signature is refused.</p>
+        </article>
+        <article class="card">
+          <span class="ic" aria-hidden="true">04</span>
+          <h3>A decision anyone can replay</h3>
+          <p>Release or void follows a public, deterministic rule. The proof package lets anyone re-run it offline,
+            in the browser or on the command line.</p>
+        </article>
       </div>
-      <div id="hasWallet" hidden>
-        <div class="kv"><span>Address</span><code id="addr"></code><button id="copyAddr" class="small">Copy</button><span id="walletKind" class="pill"></span><span id="trustBadge" class="pill" hidden></span></div>
-        <div id="nodeWarn" class="warnbox" hidden></div>
-        <div class="balances">
-          <div class="bal aur"><label>AUR balance (on-chain)</label><strong id="balAur">–</strong></div>
-          <div class="bal usd"><label>USD (PayPal Sandbox)</label><strong>separate rail</strong></div>
-        </div>
-        <div class="row"><button id="faucet" class="primary">Get 100 test AUR</button><button id="refresh">Refresh</button>
-          <button id="showSeed">Show seed</button><button id="lock">Lock</button><button id="forget" class="danger">Forget wallet</button></div>
-        <h3>History</h3><div id="historyGrid" class="grid ag-theme-quartz-auto-dark"></div>
+    </div>
+  </section>
+
+  <section class="tint" id="evidence">
+    <div class="wrap two">
+      <div>
+        <p class="eyebrow dark">// Evidence, not promises</p>
+        <h2>Change one digit, and the proof says so.</h2>
+        <p class="body">Every step becomes a signed attestation. The proof package holds the terms, the evidence, the
+          receipts and the decision. Tamper with a single byte and verification fails. A valid signature proves who
+          signed what; it does not prove that goods physically arrived.</p>
+        <a class="btn navy" href="proof.html">Verify a proof <span aria-hidden="true">↗</span></a>
+      </div>
+      <div class="proof" aria-hidden="true">
+        <div class="proof-row ok"><span>Integrity</span><b>valid</b></div>
+        <div class="proof-row ok"><span>Signatures</span><b>valid</b></div>
+        <div class="proof-row ok"><span>Decision replayed</span><b>RELEASE · match</b></div>
+        <div class="proof-row ok"><span>Rule</span><b>conditions/1</b></div>
+        <div class="proof-row warn"><span>Sources</span><b>carrier, customs simulated</b></div>
+        <div class="verdict">VALID</div>
       </div>
     </div>
   </section>
 
-  <section id="send" class="tab">
-    <div class="card">
-      <h2>Send AUR</h2>
-      <label>Recipient<input id="sendTo" placeholder="aur1…"></label>
-      <label>Amount (AUR)<input id="sendAmt" type="number" min="0.000001" step="0.000001"></label>
-      <button id="sendCheck" class="primary">Check with Neural Guardian</button>
-      <div id="sendRisk"></div>
+  <section class="light" id="network">
+    <div class="wrap">
+      <div class="split">
+        <p class="eyebrow dark">// Under the hood</p>
+        <h2>Small, auditable parts.</h2>
+      </div>
+      <div class="stats">
+        <div class="stat"><b>4</b><span>CometBFT validators: the chain keeps running with one faulty node.</span></div>
+        <div class="stat"><b>2 of 2</b><span>independent attestors re-check each PayPal capture before its proof is confirmed on chain.</span></div>
+        <div class="stat"><b>29 days</b><span>the longest a PayPal authorization can hold funds: conditions must fit inside it.</span></div>
+      </div>
     </div>
   </section>
 
-  <section id="escrow" class="tab">
-    <div class="card">
-      <h2>Create a conditional payment</h2>
-      <p class="muted">Funds are locked by the protocol, released by you or the arbiter, or refunded once the deadline block is reached.</p>
-      <label>Recipient<input id="escTo" placeholder="aur1…"></label>
-      <label>Arbiter (optional)<input id="escArb" placeholder="aur1…"></label>
-      <label>Amount (AUR)<input id="escAmt" type="number" min="0.000001" step="0.000001"></label>
-      <label>Deadline in blocks from now<input id="escBlocks" type="number" value="120" min="1"></label>
-      <button id="escCheck" class="primary">Check and lock</button>
-      <div id="escRisk"></div>
-    </div>
-    <div class="card"><h2>Escrows</h2><div id="escrowGrid" class="grid ag-theme-quartz-auto-dark"></div></div>
-  </section>
-
-  <section id="paypal" class="tab">
-    <div class="card">
-      <h2>Pay in USD with PayPal Sandbox</h2>
-      <p class="muted">USD never becomes AUR. After capture, only a proof (hash) is anchored on AURIX.</p>
-      <div id="ppMode" class="pill"></div>
-      <label>Amount (USD)<input id="ppAmt" type="number" min="0.01" step="0.01" value="49.90"></label>
-      <label>Description<input id="ppDesc" value="AURIX demo purchase"></label>
-      <button id="ppCreate" class="primary">Create order &amp; assess risk</button>
-      <div id="ppResult"></div>
-    </div>
-    <div class="card"><h2>Orders</h2><div id="ordersGrid" class="grid ag-theme-quartz-auto-dark"></div></div>
-  </section>
-
-  <section id="cond" class="tab">
-    <div class="card">
-      <h2>Conditional payment in USD</h2>
-      <p class="muted">PayPal holds the buyer's funds. AURIX captures them only when the carrier's signed delivery
-        evidence arrives before the deadline, and releases them back to the buyer otherwise. AURIX never holds the money.</p>
-      <div id="cdMode" class="pill"></div>
-      <label>Amount (USD)<input id="cdAmt" type="number" min="0.01" step="0.01" value="120.00"></label>
-      <label>Deadline<select id="cdDays">
-        <option value="7">7 days</option><option value="3">3 days</option><option value="14">14 days</option>
-        <option value="29">29 days (PayPal maximum)</option><option value="m2" data-demo>Demo: 2 minutes</option></select></label>
-      <label class="check"><input id="cdArb" type="checkbox"> Designate the demo arbiter (can hold a disputed payment)</label>
-      <button id="cdCreate" class="primary">Create conditional order &amp; assess risk</button>
-      <div id="cdResult"></div>
-    </div>
-    <div class="card"><h2>Conditional orders</h2><div id="condGrid" class="grid ag-theme-quartz-auto-dark"></div></div>
-    <div class="card">
-      <h2>Verify a proof package</h2>
-      <p class="muted">Runs in your browser only: nothing is uploaded. Same checks as <code>aurix-verify</code>.</p>
-      <label>Proof package (.zip)<input id="vfFile" type="file" accept=".zip,application/zip"></label>
-      <label class="check"><input id="vfKeys" type="checkbox" checked> Check against AURIX's published keys (otherwise the keys inside the package)</label>
-      <div id="vfResult"></div>
-    </div>
-  </section>
-
-  <section id="explorer" class="tab">
-    <div class="kpis">
-      <div class="kpi"><label>Block height</label><strong id="kHeight">–</strong></div>
-      <div class="kpi"><label>Txs shown</label><strong id="kTxs">–</strong></div>
-      <div class="kpi"><label>Locked escrows</label><strong id="kEsc">–</strong><small id="kEscAur"></small></div>
-      <div class="kpi"><label>PayPal proofs anchored</label><strong id="kProofs">–</strong></div>
-    </div>
-    <div class="card">
-      <form id="searchForm" class="search"><input id="searchQ" placeholder="Search tx hash, aur1… address, block height, escrow id or proof hash"><button class="primary">Search</button></form>
-      <div id="detail"></div>
-    </div>
-    <div class="card"><h2>Blocks</h2><div id="blocksGrid" class="grid ag-theme-quartz-auto-dark"></div></div>
-    <div class="card"><h2>Transactions</h2><div id="txsGrid" class="grid tall ag-theme-quartz-auto-dark"></div></div>
-  </section>
-
-  <section id="settings" class="tab">
-    <div class="card">
-      <h2>Network</h2>
-      <p class="muted">The wallet reads and broadcasts directly to AURIX nodes. Endpoints are tried in order; on a timeout or server error the next one is used. The wallet trusts the node it reads from, so prefer nodes you or several independent operators run.</p>
-      <div class="kv"><span>Expected chain id</span><code id="setChain"></code></div>
-      <div class="kv"><span>Gateway</span><code id="setGw"></code></div>
-      <div class="kv"><span>Faucet</span><code id="setFaucet"></code></div>
-      <h3>Chain endpoints (REST)</h3>
-      <ul id="nodeList" class="nodes"></ul>
-      <h3>Add your own node</h3>
-      <label>REST URL<input id="nodeRest" placeholder="https://rest.my-node.example (port 1317)"></label>
-      <label>RPC URL (optional)<input id="nodeRpc" placeholder="https://rpc.my-node.example (port 26657)"></label>
-      <button id="addNode" class="primary">Add node</button>
-      <h3>Gateway (optional: PayPal and Neural Guardian)</h3>
-      <label>Gateway URL — empty uses config.json, <code>none</code> disables it<input id="gwUrl" placeholder="https://gateway.example"></label>
-      <button id="saveGw">Save gateway</button>
+  <section class="cta-band">
+    <div class="wrap cta-inner">
+      <div>
+        <p class="eyebrow">Try it now</p>
+        <h2>Describe a purchase, let the AI draft the rule, watch the evidence decide.</h2>
+      </div>
+      <a class="btn lime big" href="demo.html">Launch the demo <span aria-hidden="true">↗</span></a>
     </div>
   </section>
 </main>
-<div id="toast" hidden></div>
-<script src="verify.js"></script>
-<script src="app.js"></script>
+
+<footer class="foot">
+  <div class="wrap foot-inner">
+    <span class="brand dark"><span class="mark" aria-hidden="true">◆</span>AURIX</span>
+    <span>Demonstration testnet: AUR has no monetary value. PayPal runs in Sandbox mode.</span>
+  </div>
+</footer>
 </body>
 </html>

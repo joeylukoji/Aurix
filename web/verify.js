@@ -1,11 +1,11 @@
 // AURIX proof package verifier for the browser (and Node 20+): a port of verifier/aurix_verify.
 // Runs entirely locally: no upload, no network. Checks integrity (signed manifest), Ed25519 signatures over
 // SHA-256 of RFC 8785 canonical JSON, sources (real vs simulated), consistency, and replays the decision
-// rule "delivery-attested/1". Kept in lockstep with the Python verifier by verifier/tests/test_js_parity.py.
+// rules "delivery-attested/1" and "conditions/1". Kept in lockstep with the Python verifier by verifier/tests/test_js_parity.py.
 (function (root) {
   "use strict";
   const SCHEMA = "aurix.proof-package";
-  const RULE_ID = "delivery-attested/1";
+  const RULE_ID = "delivery-attested/1", RULE_CONDITIONS = "conditions/1";
   const VALID = "valid", INVALID = "invalid", UNKNOWN_KEY = "unknown_key", REVOKED_KEY = "revoked_key";
   const VALID_KEY_REVOKED_LATER = "valid_but_key_revoked_after_signing";
   const LIMITATIONS_ALWAYS = [
@@ -112,7 +112,7 @@
     }
   }
 
-  // ---------- rule delivery-attested/1 (port of aurix_verify/rule.py) ----------
+  // ---------- rules delivery-attested/1 and conditions/1 (port of aurix_verify/rule.py) ----------
   function money(m) {
     if (!m || m.value == null || m.currency == null) return null;
     const s = String(m.value).trim();
@@ -123,11 +123,13 @@
     return v + " " + String(m.currency).toUpperCase();
   }
   const refs = (a) => a?.source?.provider_reference || {};
+  const type = (e) => e.attestation?.event?.type || "";
+  const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
   function decide(terms, evidence, now) {
-    const orderId = terms.order_id, deadline = t(terms.deadline), at = t(now);
-    const expected = money(terms.amount), carrier = terms.carrier, arbiter = terms.arbiter_key_id;
-    const reasons = [];
-    const type = (e) => e.attestation?.event?.type || "";
+    return terms.rule === RULE_CONDITIONS ? decideConditions(terms, evidence, now) : decideDelivery(terms, evidence, now);
+  }
+  function checks(terms, reasons) {
+    const orderId = terms.order_id, deadline = t(terms.deadline);
     const trusted = (e, role) => {
       if (e.verdict !== VALID) { reasons.push(`${type(e) || "attestation"} ignored: signature ${e.verdict}`); return false; }
       if (e.role !== role) { reasons.push(`${type(e)} ignored: signed by a ${e.role || "unregistered"} key, ${role} required`); return false; }
@@ -140,21 +142,38 @@
       if (Number.isNaN(rec) || rec > deadline) { reasons.push(`${type(e)} ignored: received by AURIX after the deadline`); return false; }
       return true;
     };
+    return [trusted, receivedInTime];
+  }
+  function arbiterOutcome(terms, evidence, at, trusted, receivedInTime, reasons) {
+    const deadline = t(terms.deadline), arbiter = terms.arbiter_key_id;
     const arb = evidence.filter((e) => type(e) === "arbiter.decision" && arbiter && e.key_id === arbiter && trusted(e, "arbiter")
       && ["HOLD", "UNHOLD", "RELEASE", "VOID"].includes(e.attestation.event.action) && t(e.attestation.timestamps.attested_at) <= Math.min(at, deadline)
       && receivedInTime(e))
       .sort((x, y) => t(x.attestation.timestamps.attested_at) - t(y.attestation.timestamps.attested_at));
     if (arb.length) {
       const last = arb[arb.length - 1], action = last.attestation.event.action;
-      if (action === "RELEASE" || action === "VOID") return { decision: action, reasons: [...reasons, `arbiter decided ${action}`], inputs: [last.attestation] };
+      if (action === "RELEASE" || action === "VOID") return [{ decision: action, reasons: [...reasons, `arbiter decided ${action}`], inputs: [last.attestation] }, arb];
       if (action === "HOLD") {
-        if (at > deadline) return { decision: "VOID", reasons: [...reasons, "deadline passed with the arbiter's hold still in place"], inputs: [last.attestation] };
-        return { decision: "HOLD", reasons: [...reasons, "arbiter hold in place"], inputs: [last.attestation] };
+        if (at > deadline) return [{ decision: "VOID", reasons: [...reasons, "deadline passed with the arbiter's hold still in place"], inputs: [last.attestation] }, arb];
+        return [{ decision: "HOLD", reasons: [...reasons, "arbiter hold in place"], inputs: [last.attestation] }, arb];
       }
     }
+    return [null, arb];
+  }
+  function authorized(terms, evidence, trusted, reasons) {
+    const expected = money(terms.amount);
     const auth = evidence.filter((e) => type(e) === "payment.authorized" && trusted(e, "aurix"));
     const authOk = auth.filter((e) => money(e.attestation.event.amount) === expected);
     if (auth.length && !authOk.length) reasons.push("payment authorised for a different amount or currency");
+    return authOk;
+  }
+  function decideDelivery(terms, evidence, now) {
+    const deadline = t(terms.deadline), at = t(now), carrier = terms.carrier;
+    const reasons = [];
+    const [trusted, receivedInTime] = checks(terms, reasons);
+    const [out] = arbiterOutcome(terms, evidence, at, trusted, receivedInTime, reasons);
+    if (out) return out;
+    const authOk = authorized(terms, evidence, trusted, reasons);
     const deliveries = [];
     for (const e of evidence) {
       if (type(e) !== "shipment.delivered" || !trusted(e, `source:${carrier}`)) continue;
@@ -169,6 +188,63 @@
     if (at > deadline) return { decision: "VOID", reasons: [...reasons, "deadline passed without the required evidence"], inputs: authOk.slice(0, 1).map((e) => e.attestation) };
     if (!authOk.length) reasons.push("waiting for the payment authorisation");
     if (!deliveries.length) reasons.push("waiting for the delivery attestation");
+    return { decision: "WAIT", reasons, inputs: [] };
+  }
+  function decideConditions(terms, evidence, now) {
+    const deadline = t(terms.deadline), at = t(now);
+    const reasons = [];
+    const [trusted, receivedInTime] = checks(terms, reasons);
+    const [out, arb] = arbiterOutcome(terms, evidence, at, trusted, receivedInTime, reasons);
+    if (out) return out;
+    const authOk = authorized(terms, evidence, trusted, reasons);
+    const rec = (e) => t(e.received_at);
+    const leaf = (node) => {
+      const src = node.source, before = node.before ? t(node.before) : NaN;
+      const limit = Number.isNaN(before) ? deadline : Math.min(before, deadline);
+      const found = [];
+      for (const e of evidence) {
+        if (type(e) !== node.evidence || !trusted(e, `source:${src}`)) continue;
+        if (e.attestation.source?.provider !== src) { reasons.push(`${type(e)} ignored: not from ${src}`); continue; }
+        const st = t(e.attestation.timestamps?.source_event_time);
+        if (Number.isNaN(st) || st > limit) { reasons.push(`${type(e)} from ${src} ignored: recorded after its time limit`); continue; }
+        if (st > at || !receivedInTime(e)) continue;
+        found.push([st, e.attestation.attestation_id || "", e]);
+      }
+      found.sort((x, y) => x[0] - y[0] || (x[1] < y[1] ? -1 : x[1] > y[1] ? 1 : 0));
+      return found.length ? found[0][2] : null;
+    };
+    const missing = [];
+    const met = (node) => {
+      if ("evidence" in node) {
+        const e = leaf(node);
+        if (!e) missing.push(`${node.evidence} from ${node.source}`);
+        return e ? [e] : null;
+      }
+      const children = "all" in node ? node.all : "any" in node ? node.any : node.of;
+      const ok = children.map(met).filter((p) => p !== null);
+      const need = "all" in node ? children.length : "any" in node ? 1 : Number(node.at_least);
+      return ok.length >= need ? ok.slice(0, need).flat() : null;
+    };
+    const used = met(terms.condition);
+    const unholds = arb.filter((e) => e.attestation.event.action === "UNHOLD").map((e) => t(e.attestation.timestamps.attested_at));
+    const lifted = unholds.length ? Math.max(...unholds) : null;
+    const disputes = evidence.filter((e) => type(e) === "buyer.disputed" && trusted(e, "aurix") && receivedInTime(e)
+      && (lifted === null || rec(e) > lifted));
+    if (authOk.length && used) {
+      const metAt = Math.max(...[authOk[0], ...used].map(rec));
+      const releaseAt = Math.min(metAt + Math.trunc(Number(terms.dispute_window_hours || 0)) * 3600e3, deadline);
+      const open = disputes.filter((e) => rec(e) <= releaseAt);
+      if (open.length) {
+        if (at > deadline) return { decision: "VOID", reasons: [...reasons, "deadline passed with the buyer's dispute unresolved"], inputs: [open[0].attestation] };
+        return { decision: "HOLD", reasons: [...reasons, "buyer disputed: waiting for the arbiter (refund at the deadline)"], inputs: [open[0].attestation] };
+      }
+      if (at >= releaseAt) return { decision: "RELEASE", reasons: [...reasons, "payment authorised and the condition was met" + (releaseAt > metAt ? ", no dispute in the window" : "")],
+        inputs: [authOk[0].attestation, ...used.map((e) => e.attestation)] };
+      return { decision: "WAIT", reasons: [...reasons, `condition met; buyer dispute window open until ${iso(releaseAt)}`], inputs: [] };
+    }
+    if (at > deadline) return { decision: "VOID", reasons: [...reasons, "deadline passed without the required evidence"], inputs: authOk.slice(0, 1).map((e) => e.attestation) };
+    if (!authOk.length) reasons.push("waiting for the payment authorisation");
+    for (const m of missing) reasons.push(`waiting for ${m}`);
     return { decision: "WAIT", reasons, inputs: [] };
   }
 
@@ -267,7 +343,7 @@
         const same = JSON.stringify(got) === JSON.stringify([...(decision.inputs || [])].sort());
         replay = { recorded: decision.decision, replayed: out.decision, matches: decOk && out.decision === decision.decision && same,
           rule: decision.rule, reasons: out.reasons };
-        if (decision.rule !== RULE_ID) { errors.push(`unknown rule ${decision.rule}`); replay.matches = false; }
+        if (![RULE_ID, RULE_CONDITIONS].includes(decision.rule) || decision.rule !== (terms.rule || RULE_ID)) { errors.push(`unknown rule ${decision.rule}`); replay.matches = false; }
         if (!replay.matches) errors.push("recorded decision does not match the replayed rule");
       }
     }
@@ -298,6 +374,6 @@
       trust_source: trustSource, limitations: limitations || [...LIMITATIONS_ALWAYS] };
   }
 
-  const api = { canon, digest, readZip, verifyPackage, decide, KeyRegistry, RULE_ID };
+  const api = { canon, digest, readZip, verifyPackage, decide, KeyRegistry, RULE_ID, RULE_CONDITIONS };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.AurixVerify = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

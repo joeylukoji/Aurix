@@ -163,8 +163,15 @@
   // Gateway JSON API (PayPal, Guardian, faucet, and last-resort chain fallback).
   async function gw(path, opts = {}) {
     if (!state.gatewayOk) throw new ChainError(0, "gateway not available");
-    const r = await timedFetch(state.gateway + path, { headers: { "Content-Type": "application/json" }, ...opts,
-      body: opts.body ? JSON.stringify(opts.body) : undefined }, opts.timeout || 30000);
+    const ms = opts.timeout || 30000;
+    let r;
+    try {
+      r = await timedFetch(state.gateway + path, { headers: { "Content-Type": "application/json" }, ...opts,
+        body: opts.body ? JSON.stringify(opts.body) : undefined }, ms);
+    } catch (e) {
+      if (e.name === "AbortError") throw new ChainError(0, `No answer after ${Math.round(ms / 1000)} s: try again in a moment`);
+      throw e;
+    }
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new ChainError(r.status, data.detail || data.error || data.log || r.statusText);
     return data;

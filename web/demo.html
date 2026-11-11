@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AURIX demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="demo.css">
+<script src="i18n.js"></script>
+</head>
+<body>
+<header class="slim">
+  <a class="brand" href="index.html"><span class="logo">◆</span>AURIX <small>testnet</small></a>
+  <nav class="pages" aria-label="Pages">
+    <a href="index.html">Home</a><a href="demo.html" aria-current="page">Demo</a><a href="proof.html">Proof</a>
+  </nav>
+  <div class="lang" role="group" aria-label="Language"><button type="button" data-lang="en">EN</button><button type="button" data-lang="fr">FR</button></div>
+</header>
+
+<main class="demo">
+  <div class="intro">
+    <p class="eyebrow">Live demo · PayPal Sandbox</p>
+    <h1>From a sentence to a payment rule.</h1>
+    <p class="muted">Describe a purchase. The AI drafts the condition, you approve it, PayPal holds the money, and signed evidence decides.</p>
+  </div>
+
+  <ol class="stepper">
+    <!-- 1 -->
+    <li class="stage" id="s1" data-state="now">
+      <div class="stage-head"><span class="stage-n">1</span><div><h2>Describe the purchase</h2><p class="muted">In your own words, in any language.</p></div></div>
+      <div class="stage-body">
+        <div class="presets">
+          <button type="button" data-preset="0">Phones from China to Kinshasa</button>
+          <button type="button" data-preset="1">Cement from Turkey to Lubumbashi</button>
+          <button type="button" data-preset="2">Laptop delivered in Kinshasa</button>
+        </div>
+        <textarea id="desc" rows="3" maxlength="1000" placeholder="e.g. I buy 500 phones from a supplier in Shenzhen, delivered to Kinshasa"></textarea>
+        <div class="inline">
+          <label>Amount (USD)<input id="amount" type="number" min="1" step="0.01" value="120.00"></label>
+          <button id="ask" class="primary">Ask the AI</button>
+        </div>
+        <p id="askWait" class="wait" hidden>The AI is drafting the condition… (about 40 s)</p>
+      </div>
+    </li>
+    <!-- 2 -->
+    <li class="stage" id="s2" data-state="todo">
+      <div class="stage-head"><span class="stage-n">2</span><div><h2>Review the AI condition</h2><p class="muted">The AI proposes. You decide.</p></div></div>
+      <div class="stage-body" id="proposal"></div>
+    </li>
+    <!-- 3 -->
+    <li class="stage" id="s3" data-state="todo">
+      <div class="stage-head"><span class="stage-n">3</span><div><h2>The buyer pays on PayPal</h2><p class="muted">The money is held by PayPal, not charged.</p></div></div>
+      <div class="stage-body" id="pay"></div>
+    </li>
+    <!-- 4 -->
+    <li class="stage" id="s4" data-state="todo">
+      <div class="stage-head"><span class="stage-n">4</span><div><h2>Evidence arrives</h2><p class="muted">Each source signs with its own key (simulated sources in this demo).</p></div></div>
+      <div class="stage-body" id="evidence"></div>
+    </li>
+    <!-- 5 -->
+    <li class="stage" id="s5" data-state="todo">
+      <div class="stage-head"><span class="stage-n">5</span><div><h2>Decision and explanation</h2><p class="muted">The rule decides. The AI explains.</p></div></div>
+      <div class="stage-body" id="result"></div>
+    </li>
+  </ol>
+</main>
+<div id="toast" hidden></div>
+<script src="workflow.js"></script>
+<script src="demo.js"></script>
+</body>
+</html>

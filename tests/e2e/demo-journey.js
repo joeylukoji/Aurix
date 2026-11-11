@@ -24,7 +24,7 @@ async function main() {
     const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
     page.on('pageerror', e => errors.push(e.message));
 
-    const url = BASE_URL + '/' + (NODES ? `?nodes=${encodeURIComponent(NODES)}` : '');
+    const url = BASE_URL + '/app.html' + (NODES ? `?nodes=${encodeURIComponent(NODES)}` : '');
     step(`open ${url}`);
     await page.goto(url);
     if (NODES) {

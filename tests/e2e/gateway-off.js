@@ -57,7 +57,7 @@ async function main() {
     await waitHttp(`http://127.0.0.1:${WEB_PORT}/index.html`);
     const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
     page.on('pageerror', e => errors.push(e.message));
-    const url = `http://127.0.0.1:${WEB_PORT}/?nodes=${encodeURIComponent(NODES)}`;
+    const url = `http://127.0.0.1:${WEB_PORT}/app.html?nodes=${encodeURIComponent(NODES)}`;
     step(`open static wallet ${url}`);
     await page.goto(url);
 

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AURIX proof</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600&display=swap" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="demo.css">
+<script src="i18n.js"></script>
+</head>
+<body>
+<header class="slim">
+  <a class="brand" href="index.html"><span class="logo">◆</span>AURIX <small>testnet</small></a>
+  <nav class="pages" aria-label="Pages">
+    <a href="index.html">Home</a><a href="demo.html">Demo</a><a href="proof.html" aria-current="page">Proof</a>
+  </nav>
+  <div class="lang" role="group" aria-label="Language"><button type="button" data-lang="en">EN</button><button type="button" data-lang="fr">FR</button></div>
+</header>
+
+<main class="demo">
+  <div class="intro">
+    <p class="eyebrow">Verifiable by anyone</p>
+    <h1>Don't trust AURIX. Check it.</h1>
+    <p class="muted">Every decision comes with a proof package: the terms, the signed evidence and the decision. Your browser re-checks it and replays the rule, offline.</p>
+  </div>
+
+  <section class="panel">
+    <label>Order<select id="order"></select></label>
+    <div id="summary"></div>
+  </section>
+
+  <section class="panel">
+    <h2>1 · Verify the proof</h2>
+    <p class="muted">Runs in your browser only: nothing is uploaded.</p>
+    <div class="actions"><button id="verify" class="primary">Verify in browser</button>
+      <button id="tamper">Change one digit &amp; verify again</button><button id="download">Download proof package</button></div>
+    <div id="report"></div>
+  </section>
+
+  <section class="panel">
+    <h2>2 · Ask the AI to explain it</h2>
+    <p class="muted">For an auditor: what happened, why the rule decided, and the limits. Advisory only.</p>
+    <button id="explain" class="primary">AI: explain for an auditor</button>
+    <div id="advice"></div>
+  </section>
+</main>
+<div id="toast" hidden></div>
+<script src="verify.js"></script>
+<script src="workflow.js"></script>
+<script src="proof.js"></script>
+</body>
+</html>

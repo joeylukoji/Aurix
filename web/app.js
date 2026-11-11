@@ -9,6 +9,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(
 
 // Gateway API (optional: PayPal and Guardian). Chain reads/writes go through AurixChain (chain.js).
 const api = (path, opts) => C.gw(path, opts);
+const AI_TIMEOUT = 180000; // AI advisor calls wait for Gemma 4 (30-70 s); same limit as the gateway
 
 function toast(msg, err = false) {
   const t = $("toast");
@@ -331,6 +332,7 @@ function condStatusHtml(o) {
 async function renderCond(oid) {
   if (!escrowAdvisor) escrowAdvisor = await api("/api/escrow/advisor").catch(() => null);
   const o = await api(`/api/escrow/orders/${oid}`);
+  const custom = o.terms.rule === "conditions/1";
   const canDeliver = o.status === "AUTHORIZED" && deliveryUrl();
   // While funds are held, keep watching: the server voids at the deadline (demo: a 2-minute deadline).
   clearTimeout(renderCond.timer);
@@ -338,8 +340,14 @@ async function renderCond(oid) {
     renderCond.timer = setTimeout(() => renderCond(oid).then((n) => n.status !== o.status && refreshCond()).catch(() => {}), 3000);
   const left = Math.max(0, Math.round((new Date(o.terms.deadline) - Date.now()) / 1000));
   const countdown = o.status === "AUTHORIZED" && left < 3600 ? `<p class="pill warn">Deadline in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}</p>` : "";
-  $("cdResult").innerHTML = condStatusHtml(o) + countdown + timelineHtml(o) +
-    (canDeliver ? `<p class="muted">Demo carrier (simulated, its own signing key):</p>
+  $("cdResult").innerHTML = condStatusHtml(o) + countdown + workflowHtml(o.terms, o) + (custom ? conditionHtml(o.terms) : "") + timelineHtml(o) +
+    (canDeliver && custom ? `<p class="muted">Demo sources (simulated, each with its own signing key):</p>
+      ${leaves(o.terms.condition).map((l, i) => SIM_PATH[l.evidence] ? `<button data-sim="${i}">${esc(SIM_LABEL[l.evidence])}</button>` : "").join("")}
+      <button id="cdForge">Send a forged delivery</button>` : "") +
+    (o.status === "AUTHORIZED" && custom && o.terms.dispute_window_hours && !o.decision ? `<p class="muted">Buyer: you can dispute until the
+      dispute window closes. The payment is then held until the arbiter decides, and refunded at the deadline otherwise.</p>
+      <input id="cdReason" maxlength="200" placeholder="Reason (optional)"><button id="cdDispute">Dispute this payment</button>` : "") +
+    (canDeliver && !custom ? `<p class="muted">Demo carrier (simulated, its own signing key):</p>
       <button id="cdDeliver" class="primary">Carrier: report delivery</button><button id="cdForge">Send a forged delivery</button>` : "") +
     (o.status === "AUTHORIZED" && !deliveryUrl() ? `<p class="muted">No demo carrier configured ("delivery" in config.json).</p>` : "") +
     (o.status !== "SCORED" ? `<button id="cdProof">Download proof package</button>
@@ -361,11 +369,11 @@ async function renderCond(oid) {
         ${["HOLD", "UNHOLD", "RELEASE", "VOID"].map((a) => `<button data-arb="${a}">${a}</button>`).join("")}` : ""}`;
     $("cdResult").append(box);
     $("cdExplain").onclick = (e) => busy(e.target, async () => {
-      const r = await api(`/api/escrow/orders/${oid}/explain`, { method: "POST", body: { audience: $("cdAud").value } });
+      const r = await api(`/api/escrow/orders/${oid}/explain`, { method: "POST", body: { audience: $("cdAud").value, lang: AurixI18n.advisorLang() }, timeout: AI_TIMEOUT });
       $("cdAdvice").innerHTML = adviceHtml(r);
     });
     if ($("cdBrief")) $("cdBrief").onclick = (e) => busy(e.target, async () => {
-      const r = await api(`/api/escrow/orders/${oid}/arbiter-brief`, { method: "POST", body: {} });
+      const r = await api(`/api/escrow/orders/${oid}/arbiter-brief`, { method: "POST", body: { lang: AurixI18n.advisorLang() }, timeout: AI_TIMEOUT });
       $("cdAdvice").innerHTML = adviceHtml(r) + (r.inconsistencies?.length ? `<p><b>Inconsistencies</b></p><ul>${r.inconsistencies.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "")
         + (r.questions?.length ? `<p><b>To check outside AURIX</b></p><ul>${r.questions.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "")
         + `<p>Suggested action: <span class="pill warn">${esc(r.suggestion)}</span> ${esc(r.rationale || "")}</p><p class="muted">A suggestion only: nothing happens until the arbiter signs.</p>`;
@@ -377,6 +385,13 @@ async function renderCond(oid) {
     })));
   }
   if ($("cdDeliver")) $("cdDeliver").onclick = (e) => busy(e.target, () => carrier(oid, false));
+  if (custom) $("cdResult").querySelectorAll("button[data-sim]").forEach((b) => (b.onclick = (e) => busy(e.target, () =>
+    simSource(oid, leaves(o.terms.condition)[Number(b.dataset.sim)].evidence))));
+  if ($("cdDispute")) $("cdDispute").onclick = (e) => busy(e.target, async () => {
+    const r = await api(`/api/escrow/orders/${oid}/dispute`, { method: "POST", body: { reason: $("cdReason").value } });
+    toast(`Dispute recorded: rule now says ${r.evaluation?.decision}`);
+    await followCond(oid);
+  });
   if ($("cdForge")) $("cdForge").onclick = (e) => busy(e.target, () => carrier(oid, true));
   if ($("cdProof")) $("cdProof").onclick = (e) => busy(e.target, () => downloadProof(oid));
   if ($("cdVerify")) $("cdVerify").onclick = (e) => busy(e.target, async () => {
@@ -394,6 +409,52 @@ const advisorLabel = () => escrowAdvisor?.enabled ? `model ${escrowAdvisor.model
 function adviceHtml(r) {
   return `<blockquote class="advice">${esc(r.text)}</blockquote>
     <p class="muted">${r.generated_by === "llm" ? `Written by ${esc(r.model)}` : "Template text (no AI model reachable)"} · advisory only, may contain errors · saved in the proof package.</p>`;
+}
+// Custom conditions (rule conditions/1): drafted by the AI advisor, reviewed and approved by the buyer.
+const SIM_PATH = { "shipment.shipped": "ship", "shipment.delivered": "deliver", "inspection.passed": "inspect", "customs.cleared": "customs" };
+const SIM_LABEL = { "shipment.shipped": "Carrier: report shipment", "shipment.delivered": "Carrier: report delivery",
+  "inspection.passed": "Inspector: report inspection passed", "customs.cleared": "Customs: report clearance" };
+const leaves = (n) => ("evidence" in n ? [n] : (n.all || n.any || n.of || []).flatMap(leaves));
+function conditionHtml(terms) {
+  return `<details class="cond-json"><summary>Condition (JSON)</summary>
+    <pre class="cond">${esc(JSON.stringify(terms.condition, null, 2))}</pre></details>`;
+}
+
+// Transaction workflow: web/workflow.js (shared with the guided demo).
+const workflowHtml = (t, o = null) => AurixWorkflow.render(t, o, { amount: $("cdAmt").value, days: $("cdDays").value });
+async function simSource(oid, evidence) {
+  const r = await fetch(`${deliveryUrl()}/${SIM_PATH[evidence]}/${encodeURIComponent(oid)}`, { method: "POST" });
+  const b = await r.json();
+  if (b.aurix_status >= 400) toast(`AURIX refused the evidence: ${b.aurix_response?.detail || b.aurix_status}`, true);
+  else toast(`${evidence} accepted: rule says ${b.aurix_response?.evaluation?.decision || "stored"}`);
+  await followCond(oid);
+}
+let cdDraft = null;
+async function proposeCond() {
+  const r = await api("/api/escrow/propose", { method: "POST", body: { description: $("cdDesc").value, amount_usd: $("cdAmt").value, lang: AurixI18n.advisorLang() }, timeout: AI_TIMEOUT });
+  cdDraft = r;
+  const days = String(r.deadline_days);
+  if (![...$("cdDays").options].some((o) => o.value === days)) $("cdDays").append(new Option(`${days} days`, days));
+  $("cdDays").value = days;
+  $("cdProposal").innerHTML = `<p><b>${esc(r.summary)}</b></p>
+    <div id="cdWf"></div>
+    ${r.explanation ? `<blockquote class="advice">${esc(r.explanation)}</blockquote>` : ""}
+    ${r.warnings?.length ? `<ul>${r.warnings.map((w) => `<li class="warn">${esc(w)}</li>`).join("")}</ul>` : ""}
+    <p class="muted">${r.generated_by === "llm" ? `Drafted by ${esc(r.model)}` : "Template draft (no AI model reachable)"} · advisory only: review it before use.</p>
+    <label>Condition (JSON, editable)<textarea id="cdCond" rows="10">${esc(JSON.stringify(r.condition, null, 2))}</textarea></label>
+    <label>Buyer dispute window (hours)<input id="cdWindow" type="number" min="0" max="336" value="${esc(r.dispute_window_hours)}"></label>
+    <label class="check"><input id="cdUseCond" type="checkbox" checked> I approve this condition for the next order</label>
+    <p class="muted">With "Demo: 2 minutes" the relative time limits (within_days) are dropped so the demo fits in the deadline.</p>`;
+  if (r.dispute_window_hours && !$("cdArb").checked) $("cdArb").checked = true;
+  // the workflow follows the condition as the buyer edits it
+  const drawWf = () => {
+    let condition;
+    try { condition = JSON.parse($("cdCond").value); } catch { return; }
+    $("cdWf").innerHTML = workflowHtml({ condition, deadline_days: $("cdDays").value.startsWith("m") ? "2 min" : $("cdDays").value,
+      dispute_window_hours: Number($("cdWindow").value) || 0, arbiter_key_id: $("cdArb").checked ? "demo" : null });
+  };
+  ["cdCond", "cdWindow", "cdDays", "cdArb", "cdAmt"].forEach((id) => $(id).addEventListener("input", drawWf));
+  drawWf();
 }
 async function carrier(oid, forge) {
   const r = await fetch(`${deliveryUrl()}/deliver/${encodeURIComponent(oid)}${forge ? "?forge=true" : ""}`, { method: "POST" });
@@ -457,9 +518,18 @@ async function downloadProof(oid) {
 async function createCond() {
   const keys = $("cdArb").checked ? (await api("/api/escrow/keys")).keys : [];
   const arbiter = keys.find((k) => k.role === "arbiter")?.key_id || null;
+  const demo = $("cdDays").value.startsWith("m");
+  let custom = {};
+  if (cdDraft && $("cdUseCond")?.checked) {
+    let condition;
+    try { condition = JSON.parse($("cdCond").value); } catch { throw new Error("The condition is not valid JSON"); }
+    const strip = (n) => ("evidence" in n ? (({ within_days, ...rest }) => rest)(n)
+      : Object.fromEntries(Object.entries(n).map(([k, v]) => [k, Array.isArray(v) ? v.map(strip) : v])));
+    custom = { condition: demo ? strip(condition) : condition, dispute_window_hours: Number($("cdWindow").value) || 0 };
+  }
   const o = await api("/api/escrow/orders", { method: "POST", body: { amount_usd: $("cdAmt").value,
-    ...($("cdDays").value.startsWith("m") ? { deadline_minutes: Number($("cdDays").value.slice(1)) }
-      : { deadline_days: Number($("cdDays").value) }), arbiter_key_id: arbiter, payer: wallet?.address } });
+    ...(demo ? { deadline_minutes: Number($("cdDays").value.slice(1)) }
+      : { deadline_days: Number($("cdDays").value) }), arbiter_key_id: arbiter, payer: wallet?.address, ...custom } });
   const who = o.paypal_mode === "simulator" ? "PayPal simulator" : "PayPal Sandbox";
   $("cdResult").innerHTML = `<p>Conditional order <code>${esc(o.order_id)}</code> · ${esc(o.terms.amount.value)} USD · deadline ${esc(o.terms.deadline)}</p>` +
     riskHtml(o.risk, o.risk ? "ok" : "unavailable") +
@@ -631,6 +701,7 @@ function init() {
   $("escCheck").onclick = (e) => busy(e.target, checkEscrow);
   $("ppCreate").onclick = (e) => busy(e.target, createOrder);
   $("cdCreate").onclick = (e) => busy(e.target, createCond);
+  $("cdPropose").onclick = (e) => busy(e.target, proposeCond);
   $("vfFile").onchange = (e) => busy(e.target, async () => {
     const f = e.target.files[0]; if (!f) return;
     $("vfResult").innerHTML = await verifyFiles(await AurixVerify.readZip(await f.arrayBuffer()), $("vfKeys").checked, `<p class="muted">${esc(f.name)}</p>`);
