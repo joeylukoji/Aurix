@@ -8,7 +8,7 @@ import pytest
 
 from aurix_verify.package import read_zip, verify_package
 
-from helpers import ARBITER, att, keys, package, signed, terms
+from helpers import ARBITER, att, cond_terms, keys, package, signed, terms
 from test_verify import rewrite
 
 NODE = shutil.which("node")
@@ -37,7 +37,21 @@ def cases():
             signed(att("arbiter.decision", when="2026-11-09T12:00:00Z", action="HOLD"))]
     wrong_amount = [signed(att("payment.authorized", amount="12.00")),
                     signed(att("shipment.delivered", when="2026-11-10T08:00:00Z"))]
+    auth, dlv = signed(att("payment.authorized")), signed(att("shipment.delivered", when="2026-11-10T08:00:00Z"))
+    insp = signed(att("inspection.passed", when="2026-11-11T08:00:00Z"))
+    dispute = signed(att("buyer.disputed", when="2026-11-12T08:00:00Z"))
+    either = {"at_least": 1, "of": [{"evidence": "inspection.passed", "source": "aurix_demo_inspection"},
+                                    {"evidence": "shipment.delivered", "source": "aurix_demo_delivery"}]}
     return {
+        "cond_release": (package(t=cond_terms(), items=[auth, dlv, insp], decided_at="2026-11-11T09:00:00Z"), keys()),
+        "cond_at_least": (package(t=cond_terms(either), items=[auth, dlv, insp], decided_at="2026-11-11T09:00:00Z"),
+                          keys()),
+        "cond_window_release": (package(t=cond_terms(dispute_hours=24), items=[auth, dlv, insp],
+                                        decided_at="2026-11-12T08:00:00Z"), keys()),
+        "cond_dispute_void": (package(t=cond_terms(dispute_hours=48), items=[auth, dlv, insp, dispute],
+                                      decided_at="2026-11-16T00:00:01Z"), keys()),
+        "cond_falsified": (package(t=cond_terms(), items=[auth, dlv], decided_at="2026-11-11T09:00:00Z",
+                                   decision_override="RELEASE"), keys()),
         "valid": (package(), keys()),
         "self_declared_keys": (package(), None),
         "tampered_byte": (rewrite(package(), "attestations/att_payment_authorized_1.json",
@@ -83,6 +97,8 @@ def test_browser_verifier_matches_python(tmp_path):
     assert results["valid"] == "VALID" and results["late_receipt_void"] == "VALID"
     assert results["backdated_delivery"] == "VALID" and results["hold_at_deadline"] == "VALID"
     assert results["expired_key_backdated"] == "INVALID"
+    assert results["cond_release"] == results["cond_at_least"] == results["cond_window_release"] == "VALID"
+    assert results["cond_dispute_void"] == "VALID" and results["cond_falsified"] == "INVALID"
     assert results["tampered_byte"] == results["falsified_decision"] == results["revoked_carrier"] == "INVALID"
 
 

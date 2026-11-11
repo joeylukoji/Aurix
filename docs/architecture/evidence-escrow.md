@@ -226,3 +226,27 @@ période garantie de 3 jours, réautorisation) sur la documentation PayPal offic
 - Durée maximale de 29 jours.
 - La décision est prise par un service AURIX selon une règle publique et rejouable, mais pas encore par consensus (MVP 0.3).
 - Le transporteur est simulé : la démo prouve le mécanisme, pas une intégration réelle.
+
+## Conditions sur mesure (règle `conditions/1`, ajoutée le 2026-11-09)
+
+En plus de `delivery-attested/1`, une commande peut porter une **condition composable**, signée dans `terms.json` :
+
+```json
+{"rule": "conditions/1", "dispute_window_hours": 72,
+ "condition": {"all": [{"evidence": "shipment.shipped", "source": "aurix_demo_delivery", "before": "<ISO>"},
+                       {"evidence": "customs.cleared", "source": "aurix_demo_customs"},
+                       {"evidence": "shipment.delivered", "source": "aurix_demo_delivery"}]}}
+```
+
+- Nœuds : `all`, `any`, `at_least` + `of` ; feuilles : `evidence` (`shipment.shipped`, `shipment.delivered`,
+  `inspection.passed`, `customs.cleared`), `source` (clé enregistrée `source:<source>`, qui ne peut signer que son
+  type d'événement), `before` optionnel. Au plus 10 feuilles et 4 niveaux (`validate_condition`).
+- `within_days` (relatif) est converti en `before` (absolu) à la création : les termes signés ne dépendent pas du moment de l'évaluation.
+- **Délai de contestation** : une fois la condition remplie, RELEASE seulement après `dispute_window_hours` (borné par
+  la date limite). Une contestation de l'acheteur (`buyer.disputed`, attestée par AURIX) met le paiement en HOLD ;
+  l'arbitre tranche (RELEASE / VOID, ou UNHOLD pour lever la contestation), sinon VOID à la date limite.
+- **IA** : `POST /api/escrow/propose` fait rédiger une condition par l'advisor (Gemma 4, ou un modèle déterministe sans
+  IA) à partir d'une description libre. La sortie est validée strictement ; le résumé affiché est calculé à partir de
+  l'arbre, pas du texte du modèle. L'acheteur relit, modifie et approuve : l'IA ne décide jamais.
+- Sources simulées supplémentaires dans `delivery-sim` : inspection (`/inspect/{order}`) et douane (`/customs/{order}`).
+- Le vérificateur Python et `web/verify.js` rejouent les deux règles (tests de parité dans `verifier/tests/test_js_parity.py`).

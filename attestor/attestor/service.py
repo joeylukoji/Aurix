@@ -56,7 +56,8 @@ class PayPal:
     """Read-only PayPal Payments v2 client with client-credentials OAuth (as in the gateway)."""
 
     def __init__(self, base_url: str, client_id: str, secret: str, transport: httpx.BaseTransport | None = None):
-        self.http = httpx.Client(base_url=base_url, timeout=20, transport=transport)
+        # retries=3: only connections that failed before anything was sent (DNS, refused) are retried.
+        self.http = httpx.Client(base_url=base_url, timeout=45, transport=transport or httpx.HTTPTransport(retries=3))
         self.auth = (client_id, secret)
         self._token: str | None = None
 

@@ -3,12 +3,13 @@ from aurix_verify import crypto
 from aurix_verify.attestation import make_attestation
 from aurix_verify.jcs import digest
 from aurix_verify.package import build_package, receipts_doc
-from aurix_verify.rule import RULE_ID, decide, Evidence
+from aurix_verify.rule import RULE_CONDITIONS, RULE_ID, decide, Evidence
 
 T0 = "2026-11-08T08:00:00Z"
 AURIX = crypto.Signer.from_seed("aurix-escrow-test-1", b"a" * 32)
 CARRIER = crypto.Signer.from_seed("aurix-demo-delivery-1", b"c" * 32)
 ARBITER = crypto.Signer.from_seed("arbiter-test-1", b"r" * 32)
+INSPECTOR = crypto.Signer.from_seed("aurix-demo-inspection-1", b"i" * 32)
 INTRUDER = crypto.Signer.from_seed("intruder", b"x" * 32)
 
 
@@ -19,6 +20,7 @@ def keys(revoked_carrier_at=None):
                 "revocation_reason": "test" if revoked else None}
     return {"keys": [k(AURIX, "aurix", "AURIX escrow service"),
                      k(CARRIER, "source:aurix_demo_delivery", "AURIX demo carrier (simulated)", revoked_carrier_at),
+                     k(INSPECTOR, "source:aurix_demo_inspection", "AURIX demo inspection (simulated)"),
                      k(ARBITER, "arbiter", "test arbiter")]}
 
 
@@ -29,9 +31,18 @@ def terms(order_id="ORDER-1", amount="120.00", deadline="2026-11-15T23:59:59Z", 
             "created_at": T0}
 
 
+def cond_terms(condition=None, dispute_hours=0, **kw):
+    """Terms of rule conditions/1; default: delivery AND inspection."""
+    return terms(**kw) | {"rule": RULE_CONDITIONS, "dispute_window_hours": dispute_hours, "condition": condition or {
+        "all": [{"evidence": "shipment.delivered", "source": "aurix_demo_delivery"},
+                {"evidence": "inspection.passed", "source": "aurix_demo_inspection"}]}}
+
+
 def att(kind, order_id="ORDER-1", amount="120.00", when="2026-11-09T10:00:00Z", n=1, action=None):
     src = {"payment.authorized": ("paypal", "real", "sandbox", "paypal_webhook_signature"),
            "shipment.delivered": ("aurix_demo_delivery", "simulated", "demo", "ed25519_source_key"),
+           "inspection.passed": ("aurix_demo_inspection", "simulated", "demo", "ed25519_source_key"),
+           "buyer.disputed": ("aurix_buyer", "simulated", "demo", "aurix_buyer_request"),
            "arbiter.decision": ("arbiter", "real", "demo", "ed25519_arbiter_key")}[kind]
     return make_attestation(
         attestation_id=f"att_{kind.replace('.', '_')}_{n}", operation_id=order_id, provider=src[0],
@@ -44,8 +55,8 @@ def att(kind, order_id="ORDER-1", amount="120.00", when="2026-11-09T10:00:00Z", 
 
 
 def signed(a, signer=None):
-    signer = signer or {"payment.authorized": AURIX, "shipment.delivered": CARRIER,
-                        "arbiter.decision": ARBITER}[a["event"]["type"]]
+    signer = signer or {"payment.authorized": AURIX, "shipment.delivered": CARRIER, "inspection.passed": INSPECTOR,
+                        "buyer.disputed": AURIX, "arbiter.decision": ARBITER}[a["event"]["type"]]
     return a, signer.sign(a, a["timestamps"]["attested_at"])
 
 
@@ -63,10 +74,11 @@ def package(t=None, items=None, decided_at="2026-11-10T09:00:00Z", decision_over
     out = decide(t, [e for e, (_, w) in zip(ev, when) if crypto.parse_time(w) <= at], decided_at)
     receipts = receipts_doc(t["order_id"], when)
     decision = {"schema": "aurix.escrow-decision", "schema_version": "1.0", "order_id": t["order_id"],
-                "rule": RULE_ID, "decision": decision_override or out.decision,
+                "rule": t["rule"], "decision": decision_override or out.decision,
                 "inputs": sorted(digest(a) for a in out.inputs), "decided_at": decided_at,
                 "deadline": t["deadline"], "reasons": out.reasons}
-    meta = {"sources": {"paypal": {"type": "real"}, "aurix_demo_delivery": {"type": "simulated"}}}
+    meta = {"sources": {"paypal": {"type": "real"}, "aurix_demo_delivery": {"type": "simulated"},
+                        "aurix_demo_inspection": {"type": "simulated"}, "aurix_buyer": {"type": "simulated"}}}
     return build_package(terms=t, terms_sig=AURIX.sign(t, T0), attestations=items, receipts=receipts,
                          receipts_sig=AURIX.sign(receipts, decided_at), decision=decision,
                          decision_sig=AURIX.sign(decision, decided_at), keys=kd, trust_metadata=meta,

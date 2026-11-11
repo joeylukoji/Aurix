@@ -213,7 +213,10 @@ class PayPalClient:
 
     def __init__(self, base_url: str, client_id: str, secret: str, webhook_id: str,
                  transport: httpx.BaseTransport | None = None):
-        self.http = httpx.Client(base_url=base_url, timeout=20, transport=transport)
+        # PayPal sometimes takes 20 s+ to answer (seen on the Sandbox over slow DNS): don't give up too early.
+        # retries=3 only retries connections that failed before anything was sent (DNS, refused), so a
+        # payment request is never sent twice.
+        self.http = httpx.Client(base_url=base_url, timeout=45, transport=transport or httpx.HTTPTransport(retries=3))
         self.auth = (client_id, secret)
         self.webhook_id = webhook_id
         self._token: str | None = None

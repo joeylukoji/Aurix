@@ -1,7 +1,8 @@
 """Evidence-released USD escrow (MVP 0.2). Spec: docs/architecture/evidence-escrow.md.
 
 PayPal holds the buyer's funds (intent AUTHORIZE). AURIX captures them only when signed evidence meets the
-public rule `delivery-attested/1` (aurix_verify.rule), and voids the authorization when the deadline passes
+public rule (aurix_verify.rule: `delivery-attested/1`, or `conditions/1` for a custom condition the buyer
+approved, possibly drafted by the AI advisor), and voids the authorization when the deadline passes
 without it. Every step becomes a signed attestation; the proof package can be re-verified offline with
 `aurix-verify`, which replays the very same rule code.
 
@@ -32,12 +33,13 @@ from aurix_verify.attestation import make_attestation
 from aurix_verify.jcs import digest
 from aurix_verify.package import build_package, read_zip, receipts_doc, verify_package
 
-from aurix_verify.rule import RELEASE, RULE_ID, VOID, WAIT, Evidence, decide
+from aurix_verify.rule import (EVIDENCE_TYPES, MAX_DISPUTE_HOURS, RELEASE, RULE_CONDITIONS, RULE_ID, VOID, WAIT,
+                               Evidence, decide, validate_condition)
 
 from .advisor import Advisor, facts
 # DEV_CARRIER, load_signer and load_external_keys are re-exported for main.py and the tests.
 from .escrow_keys import (DEMO_CARRIER, DEV_ARBITER, DEV_CARRIER, dev_key_entry, load_external_keys,  # noqa: F401
-                          load_signer)
+                          load_signer, source_events)
 
 log = logging.getLogger("aurix.escrow")
 
@@ -50,6 +52,7 @@ MAX_EVENT_ID = 200
 ADVICE_PER_ORDER = 10        # advisor calls allowed per order (one stored row per kind)
 ADVICE_MIN_INTERVAL = 5.0    # seconds between advisor calls for one order
 ADVICE_PER_MINUTE = 30       # advisor calls per minute for the whole service
+MAX_DESCRIPTION = 1000       # characters of a purchase description sent to the advisor
 
 
 utcnow = crypto.utcnow
@@ -78,6 +81,26 @@ def _raw_hash(raw) -> str | None:
     return "sha256:" + hashlib.sha256(json.dumps(raw, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def _fix_times(node: dict, created, deadline) -> dict:
+    """A copy of the condition where relative limits (within_days) become absolute times (before), so the signed
+    terms are self-contained and the rule never depends on when it runs. Every limit must be <= the deadline."""
+    if "evidence" in node:
+        out = {k: node[k] for k in ("evidence", "source")}
+        before = crypto.parse_time(node["before"]) if node.get("before") else None
+        if node.get("within_days"):
+            rel = created + timedelta(days=node["within_days"])
+            before = min(before, rel) if before else rel
+        if before:
+            if before > deadline:
+                raise ValueError(f"the time limit of {node['evidence']} is after the payment deadline")
+            out["before"] = crypto.format_time(before)
+        return out
+    kind = next(k for k in ("all", "any") if k in node) if "at_least" not in node else "at_least"
+    if kind == "at_least":
+        return {"at_least": node["at_least"], "of": [_fix_times(c, created, deadline) for c in node["of"]]}
+    return {kind: [_fix_times(c, created, deadline) for c in node[kind]]}
+
+
 class EscrowOrderReq(BaseModel):
     amount_usd: str
     deadline_days: int = 7
@@ -87,6 +110,19 @@ class EscrowOrderReq(BaseModel):
     arbiter_key_id: str | None = None
     payer: str | None = None
     description: str = "AURIX conditional purchase"
+    # Custom condition (rule conditions/1), e.g. drafted by /api/escrow/propose and approved by the buyer.
+    condition: dict | None = None
+    dispute_window_hours: int | None = None
+
+
+class ProposeReq(BaseModel):
+    description: str
+    amount_usd: str | None = None
+    lang: str = "French"
+
+
+class DisputeReq(BaseModel):
+    reason: str = ""
 
 
 class ConfirmReq(BaseModel):
@@ -206,6 +242,22 @@ class EscrowService:
             raise EscrowError(422, f"unknown carrier {req.carrier!r}: no registered key")
         if req.arbiter_key_id and self.registry.role(req.arbiter_key_id) != "arbiter":
             raise EscrowError(422, f"unknown arbiter key {req.arbiter_key_id!r}")
+        custom = req.condition is not None or req.dispute_window_hours is not None
+        condition = req.condition or {"evidence": "shipment.delivered", "source": req.carrier}
+        if custom:
+            try:
+                validate_condition(condition, self.sources())
+            except ValueError as e:
+                raise EscrowError(422, f"invalid condition: {e}")
+            if not 0 <= (req.dispute_window_hours or 0) <= MAX_DISPUTE_HOURS:
+                raise EscrowError(422, f"dispute_window_hours must be between 0 and {MAX_DISPUTE_HOURS}")
+        if custom:  # relative limits become absolute times; checked before anything is created at PayPal
+            now0 = crypto.parse_time(self.clock())
+            span0 = timedelta(minutes=req.deadline_minutes) if req.deadline_minutes else timedelta(days=req.deadline_days)
+            try:  # now0 <= created, so a limit within now0 + span is also within the final deadline
+                fixed = _fix_times(condition, now0, now0 + span0)
+            except ValueError as e:
+                raise EscrowError(422, f"invalid condition: {e}")
         value = f"{amount:.2f}"
         order = self.paypal.create_order(value, req.description, intent="AUTHORIZE")
         risk = self.guardian.score(context="paypal_order", sender=req.payer or "anonymous", recipient="merchant",
@@ -217,6 +269,9 @@ class EscrowService:
                  "amount": {"value": value, "currency": "USD"}, "deadline": deadline, "rule": RULE_ID,
                  "condition": "delivery-attested", "carrier": req.carrier, "arbiter_key_id": req.arbiter_key_id,
                  "created_at": created}
+        if custom:
+            terms |= {"rule": RULE_CONDITIONS, "condition": fixed,
+                      "dispute_window_hours": req.dispute_window_hours or 0}
         self.db.exec("INSERT INTO paypal_orders(order_id, amount_usd, payer, description, status, risk_score,"
                      " risk_level, simulated) VALUES (?,?,?,?,?,?,?,?)", order["id"], value, req.payer,
                      req.description, Status.SCORED, risk and risk["risk_score"], risk and risk["level"],
@@ -296,8 +351,10 @@ class EscrowService:
         role = self.registry.role(sig["key_id"]) or ""
         etype, provider = event.get("type", ""), src.get("provider")
         if role.startswith("source:"):
-            if provider != role.removeprefix("source:") or not str(etype).startswith("shipment."):
-                raise EscrowError(422, f"a {role} key may only attest shipment events of {role[7:]}")
+            allowed = source_events(role.removeprefix("source:"))
+            if provider != role.removeprefix("source:") or not str(etype).startswith(allowed):
+                raise EscrowError(422, f"a {role} key may only attest {'/'.join(a.rstrip('.') for a in allowed)}"
+                                       f" events of {role[7:]}")
         elif role == "arbiter":
             if etype != "arbiter.decision" or provider != "arbiter":
                 raise EscrowError(422, "an arbiter key may only attest arbiter.decision with provider 'arbiter'")
@@ -328,7 +385,7 @@ class EscrowService:
             if out.decision not in FINAL:
                 return {"decision": out.decision, "final": False, "reasons": out.reasons}
             doc = {"schema": "aurix.escrow-decision", "schema_version": "1.0", "order_id": order_id,
-                   "rule": RULE_ID, "decision": out.decision, "inputs": sorted(digest(a) for a in out.inputs),
+                   "rule": terms.get("rule", RULE_ID), "decision": out.decision, "inputs": sorted(digest(a) for a in out.inputs),
                    "decided_at": now, "deadline": terms["deadline"], "reasons": out.reasons}
             cur = self.db.exec("UPDATE escrow_terms SET decision=?, decision_doc=?, decision_sig=?"
                                " WHERE order_id=? AND decision IS NULL", out.decision, json.dumps(doc),
@@ -453,6 +510,59 @@ class EscrowService:
             except Exception:
                 log.exception("escrow tick failed for %s", r["order_id"])
 
+    # ---------------- custom conditions (rule conditions/1) ----------------
+    def sources(self) -> dict[str, set[str]]:
+        """Registered evidence sources and the condition evidence types each may attest."""
+        out = {}
+        for k in self.keys["keys"]:
+            role = k.get("role") or ""
+            if role.startswith("source:"):
+                prov = role.removeprefix("source:")
+                out[prov] = {t for t in EVIDENCE_TYPES if t.startswith(source_events(prov))}
+        return out
+
+    def catalog(self) -> list[dict]:
+        owners = {k["role"].removeprefix("source:"): k for k in self.keys["keys"]
+                  if (k.get("role") or "").startswith("source:")}
+        return [{"source": p, "owner": owners[p].get("owner"), "simulated": owners[p].get("source_type") == "simulated",
+                 "evidence": sorted(types)} for p, types in sorted(self.sources().items())]
+
+    def propose(self, req: ProposeReq) -> dict:
+        """The AI advisor drafts a condition from a plain-language description. It only proposes: the result is
+        validated here, shown to the buyer, and used only if the buyer creates the order with it."""
+        desc = (req.description or "").strip()
+        if not desc:
+            raise EscrowError(422, "describe the purchase")
+        if len(desc) > MAX_DESCRIPTION:
+            raise EscrowError(422, f"description is limited to {MAX_DESCRIPTION} characters")
+        self._advice_gate("__propose__", req.lang, per_order=False)
+        catalog = self.catalog()
+        p = self.advisor.propose_condition(desc, catalog, req.amount_usd, req.lang,
+                                           deadline_max=MAX_DEADLINE_DAYS, dispute_max=MAX_DISPUTE_HOURS)
+        try:
+            validate_condition(p["condition"], self.sources())
+        except (ValueError, KeyError) as e:  # an LLM output that does not fit is never used
+            log.warning("advisor condition refused (%s): falling back to the template", e)
+            p = self.advisor.propose_condition(desc, catalog, req.amount_usd, req.lang, deadline_max=MAX_DEADLINE_DAYS,
+                                               dispute_max=MAX_DISPUTE_HOURS, template_only=True)
+        return p | {"advisory_only": True, "sources": catalog}
+
+    def dispute(self, order_id: str, reason: str) -> dict:
+        """The buyer contests during the dispute window. AURIX attests that it received the dispute; the rule then
+        holds the payment until the arbiter decides (or voids it at the deadline). Demo: the buyer is not
+        authenticated in this testnet, so the attestation is marked simulated."""
+        terms = self._terms(order_id)
+        if terms.get("rule") != RULE_CONDITIONS or not terms.get("dispute_window_hours"):
+            raise EscrowError(409, "this order has no buyer dispute window")
+        if self._order(order_id)["status"] != Status.AUTHORIZED or self._terms_row(order_id)["decision"]:
+            raise EscrowError(409, "the payment is no longer held: too late to dispute")
+        n = uuid.uuid4().hex[:12]
+        self.attest(order_id, "buyer.disputed", provider="aurix_buyer", provider_event_id=f"dispute:{order_id}:{n}",
+                    refs={"reason": reason.strip()[:200] or None}, method="aurix_buyer_request",
+                    source_type="simulated" if self.demo_arbiter else "real",
+                    environment="demo" if self.demo_arbiter else "testnet")
+        return {"result": "dispute recorded", "evaluation": self.evaluate(order_id)}
+
     def _order_lock(self, order_id: str) -> threading.Lock:
         with self.lock:
             return self._order_locks.setdefault(order_id, threading.Lock())
@@ -503,7 +613,7 @@ class EscrowService:
             self.db.exec("INSERT INTO advisories(order_id, kind, doc) VALUES (?,?,?)", order_id, kind, json.dumps(doc))
         return doc
 
-    def _advice_gate(self, order_id: str, lang: str) -> None:
+    def _advice_gate(self, order_id: str, lang: str, per_order: bool = True) -> None:
         """Allowlisted language (it goes into the system prompt) and rate limits (each call costs a model run)."""
         if lang not in LANGS:
             raise EscrowError(422, f"lang must be one of {sorted(LANGS)}")
@@ -512,9 +622,9 @@ class EscrowService:
             recent = [t for t in self._advice_calls if now - t < 60]
             if len(recent) >= ADVICE_PER_MINUTE:
                 raise EscrowError(429, "too many advisor requests; try again in a minute")
-            if now - self._advice_last.get(order_id, -1e9) < ADVICE_MIN_INTERVAL:
+            if per_order and now - self._advice_last.get(order_id, -1e9) < ADVICE_MIN_INTERVAL:
                 raise EscrowError(429, "advisor already asked for this order a moment ago")
-            if self._advice_count.get(order_id, 0) >= ADVICE_PER_ORDER:
+            if per_order and self._advice_count.get(order_id, 0) >= ADVICE_PER_ORDER:
                 raise EscrowError(429, "advisor limit reached for this order")
             self._advice_calls = recent + [now]
             self._advice_last[order_id] = now
@@ -632,6 +742,19 @@ def register(app: FastAPI, svc: EscrowService, require_paypal: Callable[[], None
     @app.post("/api/escrow/orders/{order_id}/demo-arbiter")
     def demo_arbiter(order_id: str, req: ArbiterActionReq):
         return svc.demo_arbiter_action(order_id, req.action)
+
+    @app.post("/api/escrow/propose")
+    def propose(req: ProposeReq):
+        """AI draft of a custom condition from a plain-language description. Advisory: the buyer approves it."""
+        return svc.propose(req)
+
+    @app.get("/api/escrow/sources")
+    def sources():
+        return svc.catalog()
+
+    @app.post("/api/escrow/orders/{order_id}/dispute")
+    def dispute(order_id: str, req: DisputeReq):
+        return svc.dispute(order_id, req.reason)
 
     @app.get("/api/escrow/advisor")
     def advisor_info():

@@ -101,8 +101,11 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
         return JSONResponse(status_code=code, content={"detail": e.detail})
 
     @app.exception_handler(httpx.HTTPError)
-    def _chain_down(_: Request, e: httpx.HTTPError):
-        return JSONResponse(status_code=502, content={"detail": f"chain node unreachable: {type(e).__name__}"})
+    def _upstream_down(_: Request, e: httpx.HTTPError):
+        # payments calls PayPal, Neural Guardian and the chain: name the one that failed, not always the chain
+        host = getattr(getattr(e, "request", None), "url", None)
+        host = host.host if host else "an upstream service"
+        return JSONResponse(status_code=502, content={"detail": f"{host} unreachable ({type(e).__name__}): check the network and try again"})
 
     def chain_id() -> str:
         return chain.status()["chain_id"]

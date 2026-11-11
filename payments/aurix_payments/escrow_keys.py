@@ -16,6 +16,11 @@ from aurix_verify import crypto
 log = logging.getLogger("aurix.escrow")
 
 DEMO_CARRIER = "aurix_demo_delivery"
+DEMO_INSPECTOR = "aurix_demo_inspection"  # stands for an inspection company (quality / conformity check)
+DEMO_CUSTOMS = "aurix_demo_customs"       # stands for a customs clearance system
+# Evidence each source may attest (event type prefixes). Sources not listed: shipment events only.
+SOURCE_EVENTS = {DEMO_CARRIER: ("shipment.",), DEMO_INSPECTOR: ("inspection.",), DEMO_CUSTOMS: ("customs.",)}
+DEFAULT_SOURCE_EVENTS = ("shipment.",)
 
 
 def _dev_seed(label: str) -> bytes:
@@ -47,6 +52,12 @@ def dev_key_entry(signer: crypto.Signer, role: str, owner: str, source_type: str
 
 DEV_CARRIER = crypto.Signer.from_seed("aurix-demo-delivery-dev-1", _dev_seed("aurix-dev-delivery"))
 DEV_ARBITER = crypto.Signer.from_seed("aurix-arbiter-dev-1", _dev_seed("aurix-dev-arbiter"))
+DEV_INSPECTOR = crypto.Signer.from_seed("aurix-demo-inspection-dev-1", _dev_seed("aurix-dev-inspection"))
+DEV_CUSTOMS = crypto.Signer.from_seed("aurix-demo-customs-dev-1", _dev_seed("aurix-dev-customs"))
+
+
+def source_events(provider: str) -> tuple[str, ...]:
+    return SOURCE_EVENTS.get(provider, DEFAULT_SOURCE_EVENTS)
 
 
 def load_external_keys(env: Mapping[str, str] | None = None) -> list[dict]:
@@ -60,4 +71,7 @@ def load_external_keys(env: Mapping[str, str] | None = None) -> list[dict]:
     if is_production(env):
         return []
     return [dev_key_entry(DEV_CARRIER, f"source:{DEMO_CARRIER}", "AURIX demo carrier (simulated)", "simulated"),
+            dev_key_entry(DEV_INSPECTOR, f"source:{DEMO_INSPECTOR}", "AURIX demo inspection company (simulated)",
+                          "simulated"),
+            dev_key_entry(DEV_CUSTOMS, f"source:{DEMO_CUSTOMS}", "AURIX demo customs (simulated)", "simulated"),
             dev_key_entry(DEV_ARBITER, "arbiter", "AURIX demo arbiter")]

@@ -81,7 +81,7 @@ def test_template_fallback_without_a_model(tmp_path, monkeypatch):
     c, sim, clock = setup(tmp_path, monkeypatch, None)
     oid = authorized_order(c, sim)
     r = c.post(f"/api/escrow/orders/{oid}/explain", json={}).json()
-    assert r["generated_by"] == "template" and "attend la preuve de livraison" in r["text"]
+    assert r["generated_by"] == "template" and "waiting for the signed evidence" in r["text"]
     assert c.get("/api/escrow/advisor").json() == {"enabled": False, "model": "template", "demo_arbiter": True}
 
 

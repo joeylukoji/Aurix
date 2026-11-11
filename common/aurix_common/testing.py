@@ -72,7 +72,7 @@ def running_postgres():
     if os.environ.get("TEST_DATABASE_URL"):
         yield os.environ["TEST_DATABASE_URL"]
         return
-    as_root = os.geteuid() == 0
+    as_root = getattr(os, "geteuid", lambda: -1)() == 0  # no geteuid on Windows: never root there
     prefix = ["runuser", "-u", "postgres", "--"] if as_root else []
     data = Path(tempfile.mkdtemp(prefix="aurix-pg-"))
     if as_root:

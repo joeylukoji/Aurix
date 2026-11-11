@@ -28,6 +28,19 @@ from . import crypto
 from .clients import ChainClient, ChainError, GuardianClient, normalize_proof
 from .config import Settings
 from .db import DB
+
+class RevalidatedStaticFiles(StaticFiles):
+    """The web wallet without a build step: browsers must revalidate (cheap, by ETag) so a new app.js is never
+    hidden behind a stale cached copy."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+AI_TIMEOUT = 180  # seconds for AI advisor routes: two model calls (JSON-mode retry) of up to 75 s each
+PAYPAL_TIMEOUT = 120  # PayPal and escrow routes: one action may chain several slow PayPal calls
 from .keys import load_key
 
 log = logging.getLogger("aurix.gateway")
@@ -239,13 +252,14 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
         return chain.escrow(eid)
 
     # ---------------- explorer (indexer service) and PayPal (payments service) ----------------
-    def forward(client: httpx.Client, name: str, request: Request, path: str, body: bytes | None) -> Response:
+    def forward(client: httpx.Client, name: str, request: Request, path: str, body: bytes | None,
+                timeout: float = 30) -> Response:
         """Thin reverse proxy: the gateway is the single public edge; the services own the logic."""
         headers = {k: v for k, v in request.headers.items()
                    if k.lower() in ("content-type", "accept") or k.lower().startswith("paypal-")}
         try:
             r = client.request(request.method, path, params=dict(request.query_params), content=body,
-                               headers=headers, timeout=30)
+                               headers=headers, timeout=timeout)
         except httpx.HTTPError as e:
             return JSONResponse(status_code=503, content={"detail": f"{name} service unavailable: {type(e).__name__}"})
         passthrough = {k: v for k, v in r.headers.items() if k.lower() == "content-disposition"}  # downloads
@@ -260,13 +274,16 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
     @app.api_route("/api/paypal/{path:path}", methods=["GET", "POST"], include_in_schema=False)
     async def paypal_proxy(path: str, request: Request):
         body = await request.body()
-        return await run_in_threadpool(forward, payments, "payments", request, f"/api/paypal/{path}", body)
+        return await run_in_threadpool(forward, payments, "payments", request, f"/api/paypal/{path}", body,
+                                       PAYPAL_TIMEOUT)
 
     @app.api_route("/api/escrow/{path:path}", methods=["GET", "POST"], include_in_schema=False)
     async def escrow_proxy(path: str, request: Request):
         """Evidence-released USD escrow (MVP 0.2), owned by the payments service."""
         body = await request.body()
-        return await run_in_threadpool(forward, payments, "payments", request, f"/api/escrow/{path}", body)
+        # AI advisor routes wait for a model (Gemma 4 can take a minute); everything else keeps the short timeout.
+        timeout = AI_TIMEOUT if path.rsplit("/", 1)[-1] in ("propose", "explain", "arbiter-brief") else PAYPAL_TIMEOUT
+        return await run_in_threadpool(forward, payments, "payments", request, f"/api/escrow/{path}", body, timeout)
 
     @app.get("/api/proofs/{h}")
     def proof_normalised(h: str):
@@ -281,7 +298,7 @@ def create_app(settings: Settings | None = None, chain: ChainClient | None = Non
 
     web_dir = Path(os.environ.get("WEB_DIR", Path(__file__).resolve().parents[2] / "web"))
     if web_dir.is_dir():
-        app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
+        app.mount("/", RevalidatedStaticFiles(directory=web_dir, html=True), name="web")
     return app
 
 

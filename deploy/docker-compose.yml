@@ -187,6 +187,7 @@ services:
       ADVISOR_LLM_URL: ${ADVISOR_LLM_URL:-}
       ADVISOR_LLM_MODEL: ${ADVISOR_LLM_MODEL:-gemma4:e4b}
       ADVISOR_LLM_API_KEY: ${ADVISOR_LLM_API_KEY:-}
+      ADVISOR_LLM_TIMEOUT: ${ADVISOR_LLM_TIMEOUT:-60}
     volumes: ["payments-data:/data", "${AURIX_SECRETS_DIR:-./secrets}/payments:/run/aurix-secrets:ro"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8085/health',timeout=4)"]

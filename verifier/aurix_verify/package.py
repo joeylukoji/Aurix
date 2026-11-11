@@ -21,7 +21,7 @@ from collections import Counter
 
 from . import crypto
 from .jcs import canonicalize, digest
-from .rule import RULE_ID, Evidence, decide
+from .rule import RULE_ID, RULES, Evidence, decide
 
 SCHEMA = "aurix.proof-package"
 LIMITATIONS_ALWAYS = [
@@ -61,7 +61,8 @@ def build_package(*, terms: dict, terms_sig: dict, attestations: list[tuple[dict
     if decision is not None:
         files["decision.json"] = _dump(decision)
         files["signatures/decision.json"] = _dump(decision_sig)
-    manifest = {"schema": SCHEMA, "schema_version": "1.0", "order_id": terms["order_id"], "rule": RULE_ID,
+    manifest = {"schema": SCHEMA, "schema_version": "1.0", "order_id": terms["order_id"],
+                "rule": terms.get("rule", RULE_ID),
                 "created_at": created_at,
                 "files": {p: "sha256:" + hashlib.sha256(b).hexdigest() for p, b in sorted(files.items())}}
     files["manifest.json"] = _dump(manifest)
@@ -234,7 +235,7 @@ def verify_package(files: dict[str, bytes], trusted_keys: dict | None = None) ->
             replay = {"recorded": decision.get("decision"), "replayed": out.decision,
                       "matches": dec_ok and out.decision == decision.get("decision") and same_inputs,
                       "rule": decision.get("rule"), "reasons": out.reasons}
-            if decision.get("rule") != RULE_ID:
+            if decision.get("rule") not in RULES or decision.get("rule") != terms.get("rule", RULE_ID):
                 errors.append(f"unknown rule {decision.get('rule')}")
                 replay["matches"] = False
             if not replay["matches"]:
