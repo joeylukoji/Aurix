@@ -1,5 +1,4 @@
-# Render Blueprint. Copy to the repository root (render.yaml) to deploy, or point
-# the Blueprint at deploy/render.yaml.
+# Render Blueprint. Step-by-step guide: deploy/RENDER.md. Point the Blueprint at deploy/render.yaml.
 #
 # NOTE: the chain is a single-validator Cosmos SDK testnet (the 4-validator network runs with
 # docker compose or scripts/dev-up.sh; the multi-operator network is networks/aurix-testnet-2) and
@@ -78,6 +77,24 @@ services:
       - { key: PAYPAL_CLIENT_ID, value: sim-client-id }
       - { key: PAYPAL_CLIENT_SECRET, value: sim-client-secret }
       - { key: PAYPAL_WEBHOOK_ID, value: SIM-WEBHOOK-ID }
+      # AI advisor (Gemma 4 on Google AI Studio). Without a key the advisor uses a labelled template.
+      - { key: ADVISOR_LLM_URL, value: "https://generativelanguage.googleapis.com/v1beta/openai" }
+      - { key: ADVISOR_LLM_MODEL, value: gemma-4-26b-a4b-it }
+      - { key: ADVISOR_LLM_TIMEOUT, value: "150" }
+      - { key: ADVISOR_LLM_API_KEY, sync: false }
+
+  # Simulated evidence sources (carrier, inspector, customs). PUBLIC: the demo page calls them from
+  # the browser. Each signs with its own key; they post evidence to payments over the private network.
+  - type: web
+    name: aurix-delivery-sim
+    runtime: docker
+    plan: free
+    dockerfilePath: ./delivery-sim/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - { key: PAYMENTS_URL, value: "http://aurix-payments:8085" }
+      - { key: CORS_ORIGINS, value: "*" }
 
   # Explorer read model: follows the chain into the managed PostgreSQL below.
   - type: pserv
@@ -111,6 +128,8 @@ services:
       - { key: PAYMENTS_URL, value: "http://aurix-payments:8085" }
       - { key: DATABASE_URL, value: "sqlite:////tmp/aurix.db" }
       - { key: AURIX_FAUCET_SEED, sync: false }
+      # Where the demo page finds the simulated evidence sources (public URL of aurix-delivery-sim).
+      - { key: DELIVERY_PUBLIC_URL, value: "https://aurix-delivery-sim.onrender.com" }
 
   # Independent PayPal attestor (k-of-n anchoring). Not an HTTP service for users: private.
   # For a real deployment set ATTESTOR_MNEMONIC (and ATTESTOR_ADDRS on the chain) instead of the seed.

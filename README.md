@@ -152,6 +152,7 @@ including for `conditions/1`. The gateway and indexer suites start a real `aurix
 | [docs/submission/devpost.md](docs/submission/devpost.md), [demo-script.md](docs/submission/demo-script.md) | Submission and video script |
 | [docs/scrum/](docs/scrum/README.md) | Backlog and sprints |
 | [AURIX_SOFTWARE_ARCHITECTURE.md](AURIX_SOFTWARE_ARCHITECTURE.md) | Reference software architecture |
+| [deploy/RENDER.md](deploy/RENDER.md) | Step-by-step deployment on Render |
 | [deploy/README.md](deploy/README.md) | Deployment and healthchecks |
 
 ## License

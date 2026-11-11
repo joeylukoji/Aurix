@@ -29,6 +29,8 @@ Optional overrides go in a `.env` at the repo root (read by the gateway and by c
 
 ## Deploy on Render
 
+Step-by-step guide: [`RENDER.md`](RENDER.md).
+
 1. Use `deploy/render.yaml` as a Blueprint (copy it to `render.yaml` at the repo root, or select the path).
 2. Fill the `sync: false` secrets (`AURIX_FAUCET_SEED`, `AURIX_GATEWAY_SEED`) in the dashboard.
    Use the **same values** on chain and gateway.
