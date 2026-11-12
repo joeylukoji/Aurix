@@ -1,12 +1,13 @@
 % arXiv preprint. Build: pdflatex main && pdflatex main
+% Plots: python figures/fig_scorer.py ; python figures/fig_tamper.py   (data in data/, scripts in experiments/)
 \documentclass[10pt,a4paper]{article}
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
 \usepackage{lmodern}
 \usepackage[french,english]{babel}
-\usepackage[a4paper,margin=0.92in,top=1in,bottom=1in]{geometry}
+\usepackage[a4paper,left=0.95in,right=0.95in,top=0.88in,bottom=0.9in]{geometry}
 \usepackage{microtype}
-\usepackage{amsmath,amssymb}
+\usepackage{amsmath,amssymb,amsthm}
 \usepackage{booktabs}
 \usepackage{graphicx}
 \usepackage{xcolor}
@@ -14,10 +15,10 @@
 \usepackage{titlesec}
 \usepackage{caption}
 \usepackage{enumitem}
+\usepackage{multicol}
+\usepackage{fancyvrb}
 \usepackage{tikz}
-\usepackage{pgfplots}
-\pgfplotsset{compat=1.17}
-\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,calc,backgrounds}
+\usetikzlibrary{arrows.meta,positioning,calc,patterns,decorations.pathreplacing}
 \usepackage[hidelinks]{hyperref}
 
 % ---- author block: edit here -------------------------------------------------
@@ -26,11 +27,9 @@
 \newcommand{\papercontact}{\url{https://github.com/joeylukoji/Aurix}}
 % ------------------------------------------------------------------------------
 
-\definecolor{adv}{HTML}{2F6DB5}
-\definecolor{dec}{HTML}{1E8A5A}
-\definecolor{cus}{HTML}{B5642F}
-\definecolor{ink}{HTML}{222222}
-\definecolor{mute}{HTML}{6B6B6B}
+\definecolor{ink}{HTML}{1A1A1A}
+\definecolor{mute}{HTML}{6E6E6E}
+\definecolor{rule}{HTML}{9A9A9A}
 
 \pagestyle{fancy}\fancyhf{}
 \fancyhead[L]{\small\textsc{Verifiable Conditional Payments}}
@@ -39,588 +38,763 @@
 \renewcommand{\headrulewidth}{0.4pt}
 \titleformat{\section}{\large\bfseries}{\thesection}{0.6em}{}
 \titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
-\titlespacing*{\section}{0pt}{9pt}{4pt}
-\titlespacing*{\subsection}{0pt}{7pt}{3pt}
+\titlespacing*{\section}{0pt}{8pt plus 2pt}{3.5pt}
+\titlespacing*{\subsection}{0pt}{6pt plus 1pt}{2.5pt}
+\titlespacing*{\paragraph}{0pt}{4pt plus 1pt}{0.7em}
 \captionsetup{font=small,labelfont=bf,skip=5pt}
-\setlength{\parskip}{2.5pt plus 1pt}
-\setlength{\textfloatsep}{9pt plus 2pt}
-\setlength{\floatsep}{8pt plus 2pt}
-\setlist{itemsep=1pt,topsep=2pt,parsep=0pt,leftmargin=1.4em}
+\setlength{\parskip}{2pt plus 1pt}
+\setlength{\textfloatsep}{8pt plus 2pt minus 2pt}
+\setlength{\floatsep}{7pt plus 2pt}
+\setlength{\abovedisplayskip}{5pt plus 2pt minus 2pt}
+\setlength{\belowdisplayskip}{5pt plus 2pt minus 2pt}
+\setlist{itemsep=1pt,topsep=2pt,parsep=0pt,leftmargin=1.5em}
+\renewcommand{\topfraction}{0.92}\renewcommand{\bottomfraction}{0.85}\renewcommand{\textfraction}{0.06}
+\renewcommand{\floatpagefraction}{0.88}\setcounter{topnumber}{3}\setcounter{bottomnumber}{2}\setcounter{totalnumber}{5}
 \newcommand{\code}[1]{\texttt{\small #1}}
-\newcommand{\rel}{\textsc{release}}
-\newcommand{\void}{\textsc{void}}
-\newcommand{\hold}{\textsc{hold}}
-\newcommand{\wait}{\textsc{wait}}
+\newcommand{\rel}{\textup{\textsc{release}}}
+\newcommand{\void}{\textup{\textsc{void}}}
+\newcommand{\hold}{\textup{\textsc{hold}}}
+\newcommand{\wait}{\textup{\textsc{wait}}}
+\DeclareRobustCommand{\step}[1]{\tikz[baseline=(n.base)]{\node[circle,draw=ink,line width=0.3pt,inner sep=0.55pt,minimum size=2.5mm,font=\sffamily\fontsize{5.5}{6}\selectfont](n){#1};}}
+\newtheoremstyle{tight}{4pt}{3pt}{\itshape}{}{\bfseries}{.}{0.5em}{}
+\theoremstyle{tight}
+\newtheorem{proposition}{Proposition}
 
 \begin{document}
 \thispagestyle{plain}
 
 \begin{center}
-\rule{\textwidth}{1.6pt}\\[9pt]
+\rule{\textwidth}{1.4pt}\\[8pt]
 {\Large\bfseries A General Methodology for AI-Assisted, Evidence-Based and\\[3pt]
 Cryptographically Verifiable Conditional Payment Systems\par}
-\vspace{6pt}\rule{\textwidth}{0.5pt}\\[10pt]
+\vspace{5pt}\rule{\textwidth}{0.5pt}\\[9pt]
 {\large \paperauthor}\\[2pt]
-{\small \paperaffil\\ \papercontact}\\[4pt]
+{\small \paperaffil\\ \papercontact}\\[3pt]
 {\small November 2026}
 \end{center}
+\vspace{-4pt}
 
 \begin{abstract}
-\noindent A conditional payment moves money only if an agreed event took place. Card and wallet providers
-implement the condition as a manual capture by the merchant, and blockchains implement it as contract code fed by an
-oracle. In both cases a third party who was not present cannot check afterwards why the money moved. We describe a
-methodology that separates such a system into three planes with different authority. A custody plane holds the
-funds and is the only one that can move them. A decision plane is a pure, versioned function of signed evidence and
-of the time at which each item was received. An advisory plane, where the machine learning lives, drafts conditions
-and scores risk but has no write access to the decision. Each decision is exported with its inputs as a signed
-package, and an independent program replays the function offline and must reach the same outcome. We give the
-evidence model, the semantics of a small condition language, the decision function and the rules that keep model
-output outside the trusted path. A reference implementation, AURIX, runs the method over a commercial payment
-provider and a four-validator BFT ledger. On the PaySim benchmark, with a time-ordered split and thresholds fixed on
-validation data, a calibrated logistic regression reaches a test PR-AUC of 0.973 (95\% CI 0.967--0.978), while a
-gradient-boosted model is rejected because its validation PR-AUC ranges from 0.004 to 0.81 across five seeds.
-Exhaustive single-bit corruption of three proof packages (192,880 trials) never altered terms, evidence or a decision
-without detection, but it exposed two defects that we report: 123 flips in the unsigned envelope of the manifest
-signature were accepted, and 1,348 trials ended in an unhandled exception instead of a report. We state what the
-method does not establish: a valid signature says who asserted a delivery, not that the goods arrived.
+\noindent A conditional payment releases money only if an agreed event occurred. Payment providers leave the release
+to the merchant, and blockchains leave it to contract code fed by an oracle. Either way, a party who was not present
+cannot check afterwards why the money moved. We present a methodology that divides such a system into three planes
+of unequal authority. Custody holds the funds. A deterministic decision function, evaluated over signed evidence and
+signed reception receipts, orders their release. Machine-learning components draft conditions and score risk, and
+have no write access to the decision. Each outcome is exported with its inputs as a signed package that an
+independent program replays offline. We define the evidence model, a bounded condition language and the decision
+function, and we state its release, termination and non-interference properties. A reference implementation, AURIX,
+runs over a commercial payment provider and a BFT ledger, and the evaluation is directed against it. Random
+differential testing of two implementations of the decision function on 20,000 orders found no disagreement, and
+exposed an order dependence under which the verifier rejected honest packages. Flipping every bit of three proof
+packages (192,880 trials) found 123 accepted changes in an unsigned signature envelope and 1,348 unhandled
+exceptions; after correction, all 259,008 trials are rejected with a report. On PaySim, under a time-ordered
+protocol, a calibrated logistic regression reaches a test PR-AUC of 0.973 (95\% CI 0.967--0.978), and gradient
+boosting is rejected for instability across seeds. The method establishes who attested an event. It does not
+establish that the event happened.
 \end{abstract}
 
 \begin{otherlanguage}{french}
 \begin{abstract}
-\noindent Un paiement conditionnel ne déplace les fonds que si un événement convenu a eu lieu. Les prestataires de
-paiement traitent la condition comme une capture manuelle par le marchand, et les blockchains comme du code de
-contrat alimenté par un oracle. Dans les deux cas, un tiers absent au moment des faits ne peut pas vérifier après
-coup pourquoi l'argent a bougé. Nous décrivons une méthodologie qui sépare un tel système en trois plans d'autorité
-distincte. Le plan de garde détient les fonds et lui seul peut les déplacer. Le plan de décision est une fonction
-pure et versionnée des preuves signées et de l'heure de réception de chacune. Le plan consultatif, où réside
-l'apprentissage automatique, rédige les conditions et évalue le risque, sans aucun accès en écriture à la décision.
-Chaque décision est exportée avec ses entrées dans un paquet signé, et un programme indépendant rejoue la fonction
-hors ligne et doit aboutir au même résultat. Nous donnons le modèle de preuve, la sémantique d'un petit langage de
-conditions, la fonction de décision et les règles qui maintiennent la sortie des modèles hors du chemin de confiance.
-Une implémentation de référence, AURIX, applique la méthode au-dessus d'un prestataire de paiement commercial et d'un
-registre BFT à quatre validateurs. Sur le jeu PaySim, avec un découpage chronologique et des seuils fixés sur les
-données de validation, une régression logistique calibrée atteint une PR-AUC de test de 0,973 (IC à 95\,\% :
-0,967--0,978), tandis qu'un modèle de gradient boosting est écarté car sa PR-AUC de validation varie de 0,004 à 0,81
-selon la graine. La corruption exhaustive, bit par bit, de trois paquets de preuve (192\,880 essais) n'a jamais
-modifié les termes, les preuves ou une décision sans être détectée, mais elle a révélé deux défauts que nous
-signalons : 123 inversions dans l'enveloppe non signée de la signature du manifeste ont été acceptées, et
-1\,348 essais se sont terminés par une exception non gérée au lieu d'un rapport. Nous précisons ce que la méthode n'établit pas : une signature valide indique qui a
-affirmé une livraison, non que la marchandise est arrivée.
+\noindent Un paiement conditionnel ne libère les fonds que si un événement convenu a eu lieu. Les prestataires de
+paiement confient cette libération au marchand, les blockchains à un code de contrat alimenté par un oracle. Dans
+les deux cas, un tiers absent au moment des faits ne peut pas vérifier après coup pourquoi l'argent a bougé. Nous
+présentons une méthodologie qui divise un tel système en trois plans d'autorité inégale. La garde détient les fonds.
+Une fonction de décision déterministe, évaluée sur des preuves signées et des accusés de réception signés, ordonne
+leur libération. Les composants d'apprentissage automatique rédigent les conditions et évaluent le risque, sans
+aucun accès en écriture à la décision. Chaque issue est exportée avec ses entrées dans un paquet signé qu'un
+programme indépendant rejoue hors ligne. Nous définissons le modèle de preuve, un langage de conditions borné et la
+fonction de décision, et nous énonçons ses propriétés de libération, de terminaison et de non-interférence. Une
+implémentation de référence, AURIX, fonctionne au-dessus d'un prestataire de paiement commercial et d'un registre
+BFT, et l'évaluation est dirigée contre elle. Le test différentiel aléatoire de deux implémentations de la fonction
+de décision sur 20\,000 commandes n'a révélé aucun désaccord, et a mis au jour une dépendance à l'ordre des preuves
+qui faisait rejeter des paquets honnêtes par le vérificateur. L'inversion de chaque bit de trois paquets de preuve
+(192\,880 essais) a révélé 123 modifications acceptées dans une enveloppe de signature non signée et 1\,348
+exceptions non gérées ; après correction, les 259\,008 essais sont tous rejetés avec un rapport. Sur PaySim, selon
+un protocole chronologique, une régression logistique calibrée atteint une PR-AUC de test de 0,973 (IC à 95\,\% :
+0,967--0,978), et le gradient boosting est écarté pour instabilité entre graines. La méthode établit qui a attesté
+un événement. Elle n'établit pas que l'événement a eu lieu.
 \end{abstract}
 \end{otherlanguage}
 
 \noindent{\small\textbf{Keywords:} conditional payment, escrow, signed attestation, deterministic decision rule,
-offline verification, fraud scoring, calibration, large language models, BFT ledger.\\
-\textbf{Subjects:} cs.CR (primary); cs.AI; stat.ML; q-fin.GN.}
+offline verification, differential testing, fraud scoring, calibration, language models.
+\textbf{Subjects:} cs.CR; cs.AI; stat.ML; q-fin.GN.}
 
 \section{Introduction}
 
-A buyer in Kinshasa orders machine parts from a supplier in Guangzhou. The buyer does not want to pay before the
-parts clear customs; the supplier does not want to ship before the money is committed. The usual answers are a
-letter of credit, which costs a bank fee and several days, or an authorisation on a card or wallet that the
-merchant captures by hand. The first is out of reach for small amounts. The second leaves the release in the
-merchant's hands and gives the buyer a dispute procedure only after the charge.
+A conditional payment releases money only if an agreed event took place: goods were delivered, a container passed
+inspection, a customs entry cleared. A buyer in Kinshasa who orders machine parts from Guangzhou wants to pay after
+customs clearance, and the supplier wants the money committed before shipping. For large amounts banks sell this as
+a letter of credit. For small ones the available tool is a card or wallet authorisation that the merchant captures
+when it chooses, with a dispute procedure for the buyer after the charge.
 
-Fair exchange between two parties who do not trust each other cannot be achieved without a third
-party~\cite{pagnia1999}. Optimistic protocols limit the third party to the cases where something goes
-wrong~\cite{asokan2000}. Smart contracts~\cite{szabo1997} replace it with a replicated program, and contract
-languages such as the combinators of Peyton Jones et al.~\cite{peytonjones2000}, BitML~\cite{bartoletti2018} and
-Marlowe~\cite{lamela2018} give that program a precise meaning. A contract on a ledger, however, sees only what is
-written to the ledger. A delivery, an inspection or a customs clearance has to be reported by an
-oracle~\cite{zhang2016,zhang2020}, and the ledger cannot tell a truthful report from a false
-one~\cite{caldarelli2020}. Most consumer money also sits with regulated providers, not in on-chain escrow.
+Two parties who distrust each other cannot exchange fairly without a third~\cite{pagnia1999}, and the designs differ
+in what that third party is. Optimistic protocols call on it only when something goes
+wrong~\cite{asokan2000}. Smart contracts~\cite{szabo1997} make it a replicated program, and contract
+languages~\cite{peytonjones2000,bartoletti2018,lamela2018} give the program a precise meaning. A program on a ledger
+reads only the ledger, however. A delivery has to be reported by an oracle~\cite{zhang2016,zhang2020}, and the ledger
+cannot tell a true report from a false one~\cite{caldarelli2020,eskandari2021}. Most consumer money is also held by
+regulated providers, not in contract accounts.
 
-Machine learning adds a third difficulty. A language model can turn ``pay when the goods are delivered and
-inspected, within ten days'' into a formal condition, and a classifier can flag a suspicious order. Neither output
-is reproducible in the sense an auditor needs. The same prompt can give two answers, and text retrieved by the
-model can carry instructions planted by an attacker~\cite{greshake2023}. If a model takes part in the release
-decision, the decision can no longer be re-derived by someone else.
+Machine learning adds a second difficulty. A language model can turn ``pay when the goods are delivered and
+inspected, within ten days'' into a formal condition, and a classifier can flag an unusual order. Neither output
+can be re-derived by an auditor: the same prompt yields different drafts, and text read by the model can carry
+instructions planted by an attacker~\cite{greshake2023}. A release decision that depends on a model is a decision
+nobody else can reproduce.
 
-This paper gives a method for building conditional payment systems under those constraints. Its contributions are:
+This paper describes a way to build conditional payment systems under these constraints, and reports what happened
+when we tested our own implementation of it. The contributions are as follows.
 \begin{enumerate}
-\item an architecture in three planes (custody, decision, advisory) with an explicit rule on which plane may write
-what (Section~\ref{sec:method});
-\item an evidence model and a decision function defined over signed attestations and their reception times, with a
-condition language small enough to be replayed by an independent verifier;
-\item an integration discipline for learned components: schema-bounded drafting approved by a human, and an
-advisory risk score with pre-registered model selection, calibration and exact attributions;
-\item a reference implementation and two evaluations whose raw outputs are in the repository: a fraud-scoring
-study on PaySim and a bit-level tamper study of the proof format (Section~\ref{sec:eval}).
+\item A decomposition into custody, decision and advisory planes, with a rule stating which plane may write what,
+and a threat model that names what each party is trusted for (Sections~\ref{sec:setting}--\ref{sec:method}).
+\item An evidence model, a bounded condition language and a decision function over signed attestations and
+reception receipts, with three properties proved from the definition (Section~\ref{sec:decision}).
+\item A discipline for learned components: schema-bounded drafting that a human approves, and an advisory risk
+score selected, calibrated and explained under a protocol fixed in advance (Section~\ref{sec:ai}).
+\item An evaluation that attacks the reference implementation with random differential testing and exhaustive
+bit-level corruption. It found three defects that 55 hand-written tests had missed. We describe the defects, the
+corrections, and the measurements before and after (Section~\ref{sec:eval}).
 \end{enumerate}
 
-\section{Related work}\label{sec:related}
+\section{Setting and threat model}\label{sec:setting}
 
-\paragraph{Exchange protocols and contract languages.} Asokan, Shoup and Waidner~\cite{asokan2000} exchange
-signatures with an arbiter that intervenes only on failure; our arbiter has the same optimistic role, restricted to
-a hold and a final ruling. Contract languages~\cite{peytonjones2000,bartoletti2018,lamela2018} show that a small
-set of combinators covers a wide range of financial agreements. We borrow that restraint: our conditions are trees
-with three connectives, bounded in size, so that two independent implementations can be kept in agreement by tests.
+A \emph{buyer} and a \emph{seller} agree on an amount, a deadline $D$ and a condition. A \emph{custodian} holds the
+buyer's money and supports three operations: authorise (reserve), capture (pay the seller) and void (return). An
+\emph{operator} runs the service that evaluates the condition. \emph{Sources} (a carrier, an inspector, a customs
+broker) sign statements about events. An optional \emph{arbiter}, named in the terms, can suspend an order and rule
+on it. \emph{Attestors} are independent processes that query the custodian and record what they see on a ledger. A
+\emph{verifier} is anyone who holds a proof package and the public keys of the operator and the sources.
 
-\paragraph{Oracles.} Town Crier~\cite{zhang2016} authenticates web data with trusted hardware and
-DECO~\cite{zhang2020} proves statements about a TLS session without server changes. Both strengthen the link
-between a data source and a contract. They do not remove the source's ability to state something false, which
-Caldarelli calls the oracle problem~\cite{caldarelli2020}. We take the same position and make the residual trust
-explicit in every verification report.
+We assume that signatures are unforgeable and the hash collision-resistant, that the verifier obtained the keys
+through a channel the operator does not control, and that the custodian executes the operations it is sent. The
+adversary may be the buyer, the seller, a party on the network, or the operator. Table~\ref{tab:trust} lists what
+each party is trusted for and what follows if the trust is misplaced. The method has four goals.
+\begin{description}[leftmargin=1.5em,itemsep=0pt,topsep=2pt,font=\normalfont\itshape]
+\item[G1, evidence-bound release.] Funds are captured only if the signed evidence satisfies the condition the buyer
+approved, or the arbiter ruled so.
+\item[G2, bounded termination.] Every order is captured or voided once the deadline has passed.
+\item[G3, third-party verifiability.] From the package alone, a verifier can check G1 for that order, including
+against the operator.
+\item[G4, advisory non-interference.] No output of a learned component is an input of the decision.
+\end{description}
+The truth of the attested events is not a goal. Neither is privacy: a package discloses the terms and the evidence
+to whoever receives it.
 
-\paragraph{Tamper evidence.} Linked time-stamping~\cite{haber1991} and transparency logs~\cite{rfc6962} let a
-client detect that a record was altered or back-dated. We use a BFT ledger of the Tendermint
-family~\cite{buchman2018} for the same purpose: it stores a commitment to the outcome and a quorum of confirmations,
-not the business logic. Signatures are Ed25519~\cite{bernstein2012,rfc8032} over a canonical JSON
-form~\cite{rfc8785}.
-
-\paragraph{Fraud scoring.} Operational fraud detection faces class imbalance, drift and delayed
-labels~\cite{dalpozzolo2018}. Under imbalance, precision--recall analysis is more informative than
-ROC~\cite{davis2006,saito2015}. Raw classifier scores are poor probabilities and need
-calibration~\cite{zadrozny2002,niculescu2005}. Kapoor and Narayanan~\cite{kapoor2023} trace many inflated results to
-leakage between training and evaluation data, and preregistration~\cite{nosek2018} is the standard defence against
-choices made after seeing the outcome. Section~\ref{sec:risk} applies these points and reports one deviation from
-our own plan.
+\begin{table}[t]
+\centering\small
+\caption{Trust placed in each party, and the consequence if it misbehaves.}
+\label{tab:trust}
+\begin{tabular}{@{}p{2.3cm}p{5.0cm}p{8.0cm}@{}}
+\toprule
+Party & Trusted for & If it misbehaves \\
+\midrule
+Custodian & executing authorise, capture, void & out of scope; a regulated provider in our implementation \\
+Operator & reception times; passing on all evidence; availability & can delay, withhold evidence or misdate a
+receipt; cannot obtain an accepted package for a release that lacks the sources' signatures (G3) \\
+Source & the truth of its own reports & a false report yields a valid release; bounded by conditions that require
+several sources and by the dispute window \\
+Arbiter & its rulings, before $D$ & can force a release or a void on the orders that name it \\
+Learned models & nothing & a wrong draft must survive the buyer's reading; the risk score never blocks \\
+Verifier & nothing & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \section{Methodology}\label{sec:method}
 
 \subsection{Three planes and one write rule}
 
-Figure~\ref{fig:arch} shows the decomposition. The \emph{custody plane} is whoever legally holds the money: a
-payment provider that supports authorise, capture and void, or an on-chain escrow account. The \emph{decision
-plane} computes one of four outcomes from signed inputs. The \emph{advisory plane} contains every component whose
-output is statistical: the language model and the risk scorer.
-
-The write rule is: custody acts only on a signed decision; the decision reads only signed terms and signed
-evidence; advisory output reaches the decision only by becoming terms that a human has read and approved. The
-project states it as \emph{the AI advises, the rule decides, the human approves}. The operator of the decision
-plane never holds the funds, which keeps the method usable on top of an existing regulated provider.
+The \emph{custody plane} is whoever legally holds the money. The \emph{decision plane} computes one of four outcomes
+from signed inputs. The \emph{advisory plane} contains every component whose output is statistical. One rule
+connects them: custody acts only on a signed decision; the decision reads only signed terms and signed evidence;
+advisory output reaches the decision only by becoming terms that a person has read and approved. The operator never
+holds the funds, so the method can be placed on top of an existing provider. Figure~\ref{fig:flow} follows one order
+through the planes.
 
 \begin{figure}[t]
 \centering
-\resizebox{\textwidth}{!}{%
-\begin{tikzpicture}[font=\footnotesize, node distance=4mm and 9mm,
-  box/.style={draw=#1, fill=#1!8, rounded corners=2pt, minimum height=7.5mm, minimum width=24mm, align=center, text=ink},
-  ext/.style={draw=mute, rounded corners=2pt, minimum height=7.5mm, minimum width=22mm, align=center, text=ink},
-  arr/.style={-{Stealth[length=4.5pt]}, semithick, draw=ink},
-  dsh/.style={-{Stealth[length=4.5pt]}, semithick, dashed, draw=adv},
-  lab/.style={font=\scriptsize, text=mute, inner sep=1pt}]
-% advisory
-\node[box=adv] (llm) {Language model\\drafts a condition};
-\node[box=adv, right=of llm] (val) {Schema validator\\bounds, known sources};
-\node[box=adv, right=18mm of val] (risk) {Risk scorer\\calibrated, attributed};
-% human
-\node[ext, below=9mm of val] (buyer) {Buyer\\reads, edits, approves};
-% decision
-\node[box=dec, below=9mm of buyer] (terms) {Signed terms $T$};
-\node[box=dec, right=of terms] (rule) {Decision function $\delta$\\pure, versioned};
-\node[box=dec, right=of rule] (pkg) {Proof package $P$};
-\node[box=dec, left=of terms] (ev) {Evidence store\\signature, role, receipt};
-% sources
-\node[ext, left=12mm of ev] (src) {Sources\\carrier, inspector,\\customs, arbiter};
-% custody
-\node[box=cus, below=9mm of rule] (psp) {Payment provider\\authorise / capture / void};
-\node[box=cus, right=of psp] (chain) {BFT ledger\\$k$-of-$n$ attestors};
-\node[ext, right=of pkg] (ver) {Independent\\verifier};
-\draw[arr] (llm) -- (val);
-\draw[dsh] (val) -- node[lab, right]{draft} (buyer);
-\draw[dsh] (risk) |- node[lab, pos=0.25, right]{score, reasons} (buyer);
-\draw[arr] (buyer) -- node[lab, right]{approval} (terms);
-\draw[arr] (src) -- node[lab, above]{signed} (ev);
-\draw[arr] (ev) -- (terms);
-\draw[arr] (terms) -- (rule);
-\draw[arr] (rule) -- (pkg);
-\draw[arr] (rule) -- node[lab, right]{signed decision} (psp);
-\draw[arr] (psp) -- (chain);
-\draw[arr] (pkg) -- (ver);
-\draw[arr] (chain) |- ($(pkg.south)+(0,-2.2mm)$) -- (pkg.south);
-\begin{scope}[on background layer]
-\node[fit=(llm)(risk), draw=adv!60, dashed, rounded corners=3pt, inner sep=5pt, label={[font=\scriptsize\bfseries, text=adv]above left:Advisory plane (no authority)}] {};
-\node[fit=(ev)(pkg), draw=dec!60, dashed, rounded corners=3pt, inner sep=5pt, label={[font=\scriptsize\bfseries, text=dec]below left:Decision plane (deterministic)}] {};
-\node[fit=(psp)(chain), draw=cus!60, dashed, rounded corners=3pt, inner sep=5pt, label={[font=\scriptsize\bfseries, text=cus]below left:Custody and anchoring}] {};
-\end{scope}
-\end{tikzpicture}}
-\caption{The three planes. Solid arrows carry signed data. Dashed arrows carry model output, which stops at the
-buyer: only the approved, signed terms enter the decision plane.}
-\label{fig:arch}
+\begin{tikzpicture}[x=0.965cm,y=1cm,font=\sffamily\scriptsize,
+  head/.style={draw=ink,line width=0.4pt,minimum height=5.2mm,inner xsep=3pt,fill=white,align=center},
+  life/.style={draw=rule,line width=0.35pt},
+  msg/.style={-{Stealth[length=3.6pt,width=2.8pt]},draw=ink,line width=0.45pt},
+  adv/.style={msg,dashed,draw=mute},
+  lbl/.style={inner sep=1.2pt,fill=white,text=ink},
+  note/.style={inner sep=1.5pt,text=mute,font=\sffamily\scriptsize\itshape},
+  num/.style={circle,draw=ink,line width=0.3pt,fill=white,inner sep=0.5pt,minimum size=2.6mm,font=\sffamily\fontsize{5.5}{6}\selectfont}]
+\def\B{0}\def\M{2.5}\def\O{5.45}\def\C{8.5}\def\S{11.0}\def\L{13.45}\def\V{15.75}
+\foreach \x/\t/\s in {\B/Buyer/solid,\M/{Models}/dashed,\O/Operator/solid,\C/Custodian/solid,\S/Sources/solid,\L/{Attestors, ledger}/solid,\V/Verifier/solid}
+  { \draw[life] (\x,-0.26) -- (\x,-4.95); \node[head,\s] at (\x,0) {\t}; }
+% 1 draft (advisory)
+\draw[msg] (\B,-0.76) -- node[lbl,above]{description} (\M,-0.76);
+\draw[adv] (\M,-1.14) -- node[lbl,above]{draft $c$, risk score} (\B,-1.14);
+\node[num] at (\B,-0.76) {1};
+% 2 terms
+\draw[msg] (\B,-1.64) -- node[lbl,above,pos=0.72]{approved terms} (\O,-1.64);
+\node[num] at (\B,-1.64) {2};
+\node[note,anchor=west] at (\O+0.1,-1.64) {signs $T$};
+% 3 authorisation
+\draw[msg] (\B,-2.14) -- node[lbl,above,pos=0.84]{authorise} (\C,-2.14);
+\node[num] at (\B,-2.14) {3};
+\draw[msg] (\C,-2.52) -- node[lbl,above]{signed notification} (\O,-2.52);
+% 4 evidence
+\draw[msg] (\S,-3.02) -- node[lbl,above,pos=0.2]{attestation $a$} (\O,-3.02);
+\node[num] at (\S,-3.02) {4};
+\node[note,anchor=east] at (\O-0.1,-3.02) {issues receipt $r(a)$};
+% 5 decision and settlement
+\draw[msg] (\O,-3.52) -- node[lbl,above]{capture or void} (\C,-3.52);
+\node[num] at (\O,-3.52) {5};
+\node[note,anchor=east] at (\O-0.24,-3.52) {evaluates $\delta(T,E_t,t)$};
+% 6 confirmation
+\draw[msg] (\L,-4.02) -- node[lbl,above,pos=0.3]{query outcome} (\C,-4.02);
+\node[num] at (\L,-4.02) {6};
+\node[note,anchor=west] at (\L+0.24,-4.02) {$k$ of $n$ agree};
+% 7 export, 8 replay
+\draw[msg] (\O,-4.52) -- node[lbl,above,pos=0.3]{proof package $P$} (\V,-4.52);
+\node[num] at (\O,-4.52) {7};
+\node[num] at (\V,-4.52) {8};
+\node[note,anchor=east] at (\V-0.1,-4.78) {replays $\delta$};
+\end{tikzpicture}
+\caption{One order. \step{1}~A language model drafts a condition and a scorer rates the order; both outputs stop at
+the buyer (dashed). \step{2}~The buyer approves terms $T$, which the operator signs. \step{3}~The custodian reserves
+the amount and notifies the operator. \step{4}~Sources send signed attestations; the operator signs a receipt for
+each. \step{5}~The decision function returns \rel{} or \void, and the operator sends the matching instruction.
+\step{6}~Attestors query the custodian themselves and record the outcome on the ledger. \step{7}~The operator exports
+the package. \step{8}~Any verifier replays the decision offline.}
+\label{fig:flow}
 \end{figure}
 
-\subsection{Evidence}
+\subsection{Evidence and receipts}
 
-An \emph{attestation} is a message $m$ stating that an event of a given type happened for a given order, together
-with a signature under a registered key $k$:
+An \emph{attestation} states that an event of some type happened for some order. It consists of a message $m$, the
+identifier $k$ of a registered key, a signing time $\tau$ and a signature
 \begin{equation}\label{eq:att}
-a = (m, k, \sigma), \qquad \sigma = \mathrm{Sign}_{sk_k}\!\bigl(H(C(m))\bigr),
+\sigma = \mathrm{Sign}_{sk_k}\!\Bigl(C\bigl(\langle\, H(C(m)),\; k,\; \tau \,\rangle\bigr)\Bigr),
 \end{equation}
-where $C$ is a canonical serialisation~\cite{rfc8785} and $H$ a collision-resistant hash. A key registry gives each
-key one role (the operator, a named source, the arbiter) and a validity interval. A source key may sign only the
-event types of its role, so a carrier cannot attest an inspection.
+where $C$ is a canonical serialisation~\cite{rfc8785} and $H$ a hash function. The signature covers the key
+identifier and the time together with the hash; Section~\ref{sec:tamper} shows what happens when it covers the hash
+alone. A registry gives each key one role (the operator, a named source, the arbiter) and a validity interval. A
+source key may sign only the event types of its role: a carrier cannot attest an inspection.
 
-The time written inside $m$ is chosen by the signer and can be back-dated. The operator therefore issues a signed
-\emph{receipt} recording $r(a)$, the time at which it received $a$. For an order with terms $T$, deadline $D$ and
-evaluation time $t$, the admissible evidence is
+The event time written in $m$ is chosen by the signer and can be back-dated. The operator therefore signs a
+\emph{receipt} that records $r(a)$, the time at which it received attestation $a$. For terms $T$ with deadline $D$,
+the evidence admissible at evaluation time $t$ is
 \begin{equation}\label{eq:adm}
-E_t = \bigl\{\, a \;:\; \mathrm{Verify}_{pk_k}(a) \,\wedge\, \mathrm{role}(k) \ni \mathrm{type}(m) \,\wedge\,
+E_t = \bigl\{\, a \;:\; \mathrm{Verify}_{pk_k}(a) \,\wedge\, \mathrm{type}(m) \in \mathrm{role}(k) \,\wedge\,
 \mathrm{ref}(m) = \mathrm{id}(T) \,\wedge\, k \text{ valid at } r(a) \,\wedge\, r(a) \le \min(t, D) \,\bigr\}.
 \end{equation}
-Evidence that arrived before the deadline but is evaluated after it still counts; evidence that arrived late does
-not, whatever date it carries. Amounts are compared as decimals and references by exact equality.
+Evidence received before the deadline and evaluated after it counts. Evidence received after the deadline does not
+count, whatever date it carries. Amounts are compared as decimals and references by exact equality.
 
 \subsection{Conditions}
 
-A condition $c$ is a tree. A leaf $\ell = (\tau, s, b)$ asks for an event of type $\tau$ from source $s$, optionally
-dated before $b$. Internal nodes are \code{all}, \code{any} and \code{at\_least}~$k$. Satisfaction over an evidence
-set $E$ is
+A condition $c$ is a tree. A leaf $(\tau_e, s, b)$ asks for an event of type $\tau_e$ reported by source $s$, with an
+optional limit $b$ on the event time it states. An internal node is \code{all}, \code{any} or \code{at\_least}~$k$. An evidence set $E$
+satisfies $c$ when
 \begin{equation}\label{eq:sem}
 E \models c \iff
 \begin{cases}
-\exists\, a \in E:\ \mathrm{type}(a)=\tau,\ \mathrm{src}(a)=s,\ \mathrm{time}(a)\le b & c = (\tau,s,b),\\[2pt]
-\bigl|\{\, i : E \models c_i \,\}\bigr| \ge k & c = \texttt{at\_least}_k(c_1,\dots,c_n),
+\exists\, a \in E:\ \mathrm{type}(a)=\tau_e,\ \mathrm{src}(a)=s,\ \mathrm{time}(a)\le b & \text{if } c = (\tau_e,s,b),\\[2pt]
+\bigl|\{\, i : E \models c_i \,\}\bigr| \ge k & \text{if } c = \texttt{at\_least}_k(c_1,\dots,c_n),
 \end{cases}
 \end{equation}
-with \code{all} and \code{any} the cases $k=n$ and $k=1$. Satisfaction is monotone: adding evidence never turns a
-satisfied condition into an unsatisfied one. Relative limits such as ``within seven days'' are converted to absolute
-dates when the terms are signed, so the signed terms never depend on when they are evaluated. A condition holds at
-most ten leaves and four levels; the bound keeps a human able to read what they approve.
-Figure~\ref{fig:fsm} (right) shows an example.
-
-\subsection{The decision function}
-
-Let $\mathit{auth}(E)$ hold when the custody plane has attested an authorisation for exactly the agreed amount and
-currency, and let $t_{\mathrm{sat}}$ be the earliest reception time at which $E \models c$. A buyer may be granted a
-dispute window of $w$ hours after the condition is met, so the earliest release time is
-\begin{equation}\label{eq:trel}
-t_{\mathrm{rel}} = \min\bigl(t_{\mathrm{sat}} + w,\; D\bigr).
-\end{equation}
-Write $\alpha$ for the latest signed arbiter action received before $D$, and $\mathit{disp}$ for an open buyer
-dispute received before $t_{\mathrm{rel}}$. The decision is
-\begin{equation}\label{eq:delta}
-\delta(T, E_t, t) =
-\begin{cases}
-\alpha & \alpha \in \{\rel, \void\},\\
-\void & t > D \text{ and not } \bigl(\mathit{auth}(E_t) \wedge E_t \models c \wedge \neg\mathit{disp} \wedge \alpha \ne \hold \bigr),\\
-\hold & t \le D \text{ and } (\alpha = \hold \text{ or } \mathit{disp}),\\
-\rel & \mathit{auth}(E_t) \wedge E_t \models c \wedge t \ge t_{\mathrm{rel}},\\
-\wait & \text{otherwise.}
-\end{cases}
-\end{equation}
-The cases are read top to bottom. $\delta$ takes no input other than $T$, $E_t$ and $t$: no clock read, no network
-call, no floating-point arithmetic, no model. \rel{} and \void{} are final; the service signs the first final
-outcome, and the capture or void sent to the custody plane carries an idempotency key derived from the order and
-the decision, so a retry cannot produce the opposite action. Figure~\ref{fig:fsm} (left) gives the state diagram.
+where \code{all} and \code{any} are the cases $k=n$ and $k=1$, and a limit $b$ later than $D$, or absent, is read
+as $D$. The language has the shape of an endorsement policy in a
+permissioned ledger~\cite{androulaki2018}, applied to reports about the physical world. A condition has at most ten
+leaves and four levels, which keeps it readable by the person who approves it. Limits written relative to the order
+date (``within seven days'') become absolute dates when the terms are signed, so signed terms never depend on the
+time at which they are evaluated. Figure~\ref{fig:terms} (left) shows the terms of an order.
 
 \begin{figure}[t]
 \centering
-\begin{minipage}[c]{0.53\textwidth}
-\centering
-\resizebox{\textwidth}{!}{%
-\begin{tikzpicture}[font=\footnotesize, >={Stealth[length=4.5pt]},
-  st/.style={draw=ink, rounded corners=8pt, minimum width=16mm, minimum height=7mm, fill=white},
-  fin/.style={st, double, double distance=1pt},
-  lab/.style={font=\scriptsize, text=mute, align=center, inner sep=2pt}]
-\node[st] (wait) {\wait};
-\node[st, right=24mm of wait] (hold) {\hold};
-\node[fin, fill=dec!12, left=24mm of wait] (rel) {\rel};
-\path (wait) -- coordinate (mid) (hold);
-\node[fin, fill=cus!12, below=15mm of mid] (void) {\void};
-\draw[<-] (wait.south west) -- ++(-6mm,-6mm) node[lab, below left, inner sep=1pt]{authorised};
-\draw[->] (wait) to[bend left=14] node[lab, above]{dispute or\\arbiter hold} (hold);
-\draw[->] (hold) to[bend left=14] node[lab, below]{unhold} (wait);
-\draw[->] (wait) -- node[lab, above]{$E_t \models c$\\and $t \ge t_{\mathrm{rel}}$} (rel);
-\draw[->] (wait) -- node[lab, anchor=east, pos=0.55, xshift=-4pt]{$t > D$} (void);
-\draw[->] (hold) -- node[lab, anchor=west, pos=0.55, xshift=4pt]{$t > D$, or\\arbiter: void} (void);
-\draw[->] (hold.north) to[out=140, in=40, looseness=0.75] node[lab, above]{arbiter: release} (rel.north);
-\end{tikzpicture}}
+\begin{minipage}[c]{0.485\textwidth}
+\begin{Verbatim}[fontsize=\scriptsize,numbers=left,numbersep=4pt,frame=single,framesep=3pt,rulecolor=\color{rule},xleftmargin=10pt,baselinestretch=0.95]
+{"order_id": "5O1X", "rule": "conditions/1",
+ "amount": {"value": "120.00", "currency": "USD"},
+ "deadline": "2026-11-15T23:59:59Z",
+ "dispute_window_hours": 72,
+ "condition": {"all": [
+   {"evidence": "customs.cleared",
+    "source": "customs_broker"},
+   {"evidence": "shipment.delivered",
+    "source": "carrier",
+    "before": "2026-11-12T00:00:00Z"},
+   {"at_least": 1, "of": [
+     {"evidence": "inspection.passed",
+      "source": "lab_a"},
+     {"evidence": "inspection.passed",
+      "source": "lab_b"}]}]}}
+\end{Verbatim}
 \end{minipage}\hfill
-\begin{minipage}[c]{0.43\textwidth}
+\begin{minipage}[c]{0.49\textwidth}
 \centering
-\resizebox{\textwidth}{!}{%
-\begin{tikzpicture}[font=\scriptsize,
-  level 1/.style={sibling distance=30mm, level distance=12mm},
-  level 2/.style={sibling distance=27mm, level distance=12mm},
-  op/.style={draw=dec, fill=dec!10, rounded corners=2pt, inner sep=3pt},
-  lf/.style={draw=mute, inner sep=3pt, align=center},
-  edge from parent/.style={draw=ink, semithick}]
-\node[op] {\texttt{all}}
-  child {node[lf] {customs.cleared\\\textit{customs}}}
-  child {node[lf] {shipment.delivered\\\textit{carrier}}}
-  child {node[op] {\texttt{at\_least 1}}
-    child {node[lf] {inspection.passed\\\textit{lab A}}}
-    child {node[lf] {inspection.passed\\\textit{lab B}}}};
-\end{tikzpicture}}
+\begin{tikzpicture}[x=1cm,y=1cm,font=\sffamily\scriptsize,
+  tick/.style={draw=ink,line width=0.4pt},
+  bar/.style={draw=ink,line width=0.35pt,minimum height=2.6mm,inner sep=0pt},
+  lab/.style={inner sep=1pt,text=ink}]
+\def\ta{1.75}\def\tb{2.8}\def\tc{3.85}\def\td{5.65}\def\te{7.05}
+\draw[-{Stealth[length=3.6pt,width=2.8pt]},line width=0.45pt,draw=ink] (1.45,0) -- (7.75,0) node[right,inner sep=1.5pt]{$t$};
+\foreach \x/\l in {\ta/{authorised},\tb/{$r(a_1)$},\tc/{$t_{\mathrm{sat}}$},\td/{$t_{\mathrm{rel}}$},\te/{$D$}}
+  { \draw[tick] (\x,-0.07) -- (\x,0.07); \node[lab,above] at (\x,0.09) {\l}; }
+\draw[decorate,decoration={brace,amplitude=2.5pt,mirror},line width=0.35pt] (\tc,-0.16) -- node[below=2.5pt,lab]{window $w$} (\td,-0.16);
+\foreach \x in {\ta,\tc,\td,\te} \draw[draw=rule,line width=0.25pt,densely dotted] (\x,-0.07) -- (\x,-2.94);
+% row 1: no dispute
+\node[lab,anchor=east] at (1.5,-1.27) {no dispute};
+\draw[bar] (\ta,-1.40) rectangle node{\wait} (\td,-1.14);
+\fill[ink] (\td,-1.27) circle (1.5pt); \node[lab,anchor=west] at (\td+0.1,-1.27) {\rel};
+% row 2: dispute
+\node[lab,anchor=east] at (1.5,-1.97) {dispute};
+\draw[bar] (\ta,-2.10) rectangle node{\wait} (4.75,-1.84);
+\draw[bar,pattern=north east lines,pattern color=rule] (4.75,-2.10) rectangle (\te,-1.84);
+\node[lab,fill=white,inner sep=1pt] at (5.9,-1.97) {\hold};
+\fill[ink] (\te,-1.97) circle (1.5pt); \node[lab,anchor=west] at (\te+0.1,-1.97) {\void};
+% row 3: condition not met
+\node[lab,anchor=east,align=right] at (1.5,-2.67) {$c$ not met};
+\draw[bar] (\ta,-2.80) rectangle node{\wait} (\te,-2.54);
+\fill[ink] (\te,-2.67) circle (1.5pt); \node[lab,anchor=west] at (\te+0.1,-2.67) {\void};
+\end{tikzpicture}
 \end{minipage}
-\caption{Left: states of an order under $\delta$. Double borders mark final states. A hold that is still in place
-at the deadline ends in \void, so funds are never kept past the provider's authorisation period. Right: a condition
-tree with four leaves and three levels.}
-\label{fig:fsm}
+\caption{Left: signed terms with a four-leaf condition. Right: three courses of an order on a common time axis.
+The condition is met at $t_{\mathrm{sat}}$, when the last required attestation is received, and release follows after
+the dispute window $w$. A dispute received in the window suspends the order; a suspension still in place at $D$ ends
+in \void{} unless the arbiter has ruled.}
+\label{fig:terms}
 \end{figure}
 
-Three properties follow from the definitions, given unforgeable signatures and an honest key registry.
-\emph{Safety:} no \rel{} is produced without a matching authorisation and either evidence satisfying the approved
-condition or a signed arbiter ruling. \emph{Termination:} every order reaches \rel{} or \void{} at the first
-evaluation after $D$ at the latest, since no branch returns \wait{} or \hold{} once $t > D$. \emph{Non-interference:}
-advisory output does not appear among the arguments of $\delta$, so changing or removing the models changes no
-decision for fixed terms and evidence.
+\subsection{The decision function}\label{sec:decision}
+
+Let $\mathit{auth}(E)$ hold when $E$ contains the operator's attestation that the custodian reserved exactly the
+agreed amount and currency, and write $S$ for $\mathit{auth}(E_t) \wedge E_t \models c$. When $S$ holds,
+$t_{\mathrm{sat}}$ is the latest reception time among the authorisation and the attestations that witness the
+condition. The buyer may be granted a window of $w$ hours to object, so the release time is
+\begin{equation}\label{eq:trel}
+t_{\mathrm{rel}} = \min\bigl(t_{\mathrm{sat}} + w,\; D\bigr).
+\end{equation}
+Let $\alpha$ be the latest signed action of the arbiter named in $T$ that was dated and received by $\min(t, D)$,
+and let $\mathit{disp}$ hold when a buyer dispute was received by $t_{\mathrm{rel}}$ and the arbiter has not lifted
+it. The decision is the first matching case of
+\begin{equation}\label{eq:delta}
+\delta(T, E_t, t) =
+\begin{cases}
+\alpha & \text{if } \alpha \in \{\rel, \void\},\\
+\void & \text{if } t > D \text{ and } (\alpha = \hold \,\vee\, \neg S \,\vee\, \mathit{disp}),\\
+\hold & \text{if } t \le D \text{ and } \bigl(\alpha = \hold \,\vee\, (S \wedge \mathit{disp})\bigr),\\
+\rel & \text{if } S \,\wedge\, \neg\mathit{disp} \,\wedge\, t \ge t_{\mathrm{rel}},\\
+\wait & \text{otherwise.}
+\end{cases}
+\end{equation}
+The function reads $T$, $E_t$ and $t$ and nothing else. It makes no clock read and no network call, uses no
+floating-point arithmetic, and evaluates evidence in a fixed order (reception time, then identifier), so its result
+does not depend on how the caller stores the evidence. The outcomes \rel{} and \void{} are final. The service
+signs the first final outcome, and the instruction sent to the custodian carries an idempotency key derived from the order and the
+decision, so a retry cannot produce the opposite operation. Figure~\ref{fig:terms} (right) shows the three courses an
+order can take.
+
+\begin{proposition}[Evidence-bound release]\label{prop:release}
+If $\delta(T,E_t,t)=\rel$, then either the arbiter named in $T$ signed a release, or $E_t$ contains an authorisation
+for exactly the amount of $T$ and, for a set of leaves that satisfies $c$, attestations for the order $\mathrm{id}(T)$
+signed with the keys registered for the sources of those leaves.
+\end{proposition}
+\begin{proof}
+Only the first and fourth cases of Eq.~\eqref{eq:delta} return \rel. The first is a signed arbiter action. The fourth
+requires $S$, which unfolds by Eqs.~\eqref{eq:adm} and~\eqref{eq:sem} into the stated attestations.
+\end{proof}
+
+\begin{proposition}[Termination]\label{prop:term}
+If $t > D$, then $\delta(T,E_t,t) \in \{\rel, \void\}$.
+\end{proposition}
+\begin{proof}
+The third case requires $t \le D$. Suppose the first two cases do not apply. Then $\alpha \neq \hold$, $S$ holds and
+$\mathit{disp}$ does not. By Eq.~\eqref{eq:trel}, $t_{\mathrm{rel}} \le D < t$, so the fourth case applies.
+\end{proof}
+
+\begin{proposition}[Non-interference]\label{prop:ni}
+For fixed $T$ and $E_t$, the value of $\delta$ is the same whatever the learned components output.
+\end{proposition}
+\noindent This holds by construction: no model output is among the arguments. Proposition~\ref{prop:ni} says nothing
+about how $T$ came to be; that is the buyer's approval (Section~\ref{sec:ai}). One property that might be expected
+does not hold. $E \models c$ is monotone in $E$, but $t_{\mathrm{rel}}$ is not: the witness of a leaf is the matching
+attestation with the earliest event time, so a later duplicate that reports an earlier event time moves
+$t_{\mathrm{sat}}$ forward (Section~\ref{sec:diff}).
 
 \subsection{Proof packages and replay}
 
-When an order reaches a final state the service exports a package $P$: the terms, each attestation with its
-signature, the receipts, the decision $d$ with the hashes of the inputs it used and its evaluation time $t_d$, the
-key registry, and a manifest listing the hash of every file. A verifier accepts the package only if all three
-checks pass:
+When an order reaches a final outcome the operator exports a package $P$: the terms, each attestation with its
+signature, the receipts, the decision $d$ with the hashes of the evidence it cites and its evaluation time $t_d$, a
+key registry, and a manifest that lists the hash $h_f$ of every other file $f$. The verifier accepts when
 \begin{equation}\label{eq:verify}
 \mathrm{Valid}(P) \iff \underbrace{\forall f \in P:\ H(f) = h_f}_{\text{integrity}} \;\wedge\;
 \underbrace{\forall (x,\sigma) \in P:\ \mathrm{Verify}(x,\sigma)}_{\text{authenticity}} \;\wedge\;
 \underbrace{\delta(T, E_{t_d}, t_d) = d}_{\text{replay}}.
 \end{equation}
-The third conjunct is what distinguishes the method from a signed receipt. The verifier does not trust the
-operator's statement of the outcome; it recomputes the outcome from the inputs. An operator who captured without
-sufficient evidence cannot produce a package that passes, short of forging a source signature. The verifier pins the
-trusted keys out of band, since a package that ships its own registry would otherwise vouch for itself.
+The third conjunct separates the method from a signed receipt: the verifier recomputes the outcome instead of
+trusting the operator's statement of it. With Proposition~\ref{prop:release}, a package that passes for a release
+contains the sources' signatures on the required events. An operator that captured without them has no package to
+show, short of forging a signature. Figure~\ref{fig:verify} gives the procedure. After a capture, $n$ attestors query
+the custodian independently and the outcome is recorded on the ledger once $k$ of them agree, which removes the
+operator as the only witness of the custodian's state.
 
-After a capture, $n$ independent attestors query the provider themselves, and the outcome is recorded on the ledger
-once $k$ of them agree. This removes the operator as the single witness of the provider's state. It does not yet
-replicate $\delta$ itself (Section~\ref{sec:limits}).
+\begin{figure}[t]
+\centering\small
+\setlength{\fboxsep}{5pt}
+\fbox{\begin{minipage}{0.955\textwidth}
+\centerline{\textbf{Procedure} $\mathrm{Verify}(P, K)$}
+\vspace{2pt}\hrule\vspace{4pt}
+\textbf{Input:} the files of a package $P$; a key registry $K$ obtained out of band.\quad
+\textbf{Output:} \textsc{valid} or \textsc{invalid}, with a report.
+\begin{enumerate}[leftmargin=1.6em,itemsep=0.5pt,topsep=3pt,label=\arabic*.]
+\item \emph{Integrity.} Check that every file listed in the manifest is present with the listed hash and that no
+unlisted file exists.
+\item \emph{Manifest.} Check the operator's signature on the manifest, and that its signing time equals the creation
+time written in the manifest.
+\item \emph{Authenticity.} Check the operator's signature on the terms, the receipts and the decision, and each
+attestation's signature against the role of its key in $K$. Reject non-canonical encodings.
+\item \emph{Reception.} For each attestation, read $r(a)$ from the receipts and require the key to be valid at
+$r(a)$. Keep the attestations with $r(a) \le t_d$.
+\item \emph{Replay.} Evaluate $\delta$ on the terms, the kept attestations and $t_d$. Require the outcome and the
+set of cited attestations to equal those recorded.
+\end{enumerate}
+\vspace{1pt}
+Any failure, including input that cannot be parsed, yields \textsc{invalid}. The procedure never raises an error to
+its caller.
+\end{minipage}}
+\caption{Verification of a proof package. Step~2 and the last line are consequences of the defects reported in
+Section~\ref{sec:tamper}.}
+\label{fig:verify}
+\end{figure}
 
 \subsection{Learned components}\label{sec:ai}
 
 \paragraph{Drafting.} The language model receives the buyer's description and the list of registered sources, and
 returns a candidate tree. The output is parsed against the grammar of Eq.~\eqref{eq:sem}, the size bounds and the
-registry; anything else is discarded and a deterministic template is used, labelled as such. The summary and the
-workflow diagram shown to the buyer are computed from the tree, never copied from model text, so the buyer approves
-what will be executed and not what the model says it wrote. The model sees typed fields only (event types, sources,
-amounts, dates), without payer identity or raw third-party payloads, which narrows the channel for injected
-instructions~\cite{greshake2023}. Every generated text is stored in the package with the name of the model that
-produced it.
+registry, in the spirit of grammar-constrained generation~\cite{geng2023}. Output that fails is discarded and
+replaced by a fixed template, labelled as such. The summary and the diagram shown to the buyer are computed from
+the tree and never copied from model text, so the buyer approves what will be executed. The model is sent typed
+fields only (event types, sources, amounts, dates), with no payer identity and no raw third-party content, which
+narrows the channel for injected instructions~\cite{greshake2023}. Each generated text is stored in the package
+with the name of the model that produced it.
 
-\paragraph{Risk scoring.} The scorer returns a probability, a level and reasons before the buyer approves. It never
-blocks. Candidates are compared on validation PR-AUC over $S$ training seeds, and a candidate is eligible only if
-its spread across seeds is small:
+\paragraph{Risk scoring.} Before the buyer approves, a scorer returns a probability, a level and reasons. It never
+blocks an order. We prefer a model whose reasoning can be read directly~\cite{rudin2019}, and we treat variance
+across training seeds as a selection criterion~\cite{bouthillier2021}. Candidates are compared on validation PR-AUC
+over $S$ seeds, and a candidate is eligible only if its spread is small:
 \begin{equation}\label{eq:select}
 m^\star = \arg\max_{m \in \mathcal{M}}\ \overline{\mathrm{PR}}_{\mathrm{val}}(m) \quad \text{subject to} \quad
-\mathrm{sd}_{s=1..S}\,\mathrm{PR}_{\mathrm{val}}(m, s) \le \tau .
+\mathrm{sd}_{s=1..S}\,\mathrm{PR}_{\mathrm{val}}(m, s) \le \tau_{\mathrm{sd}} .
 \end{equation}
-The two alert thresholds have a fixed meaning, set on validation data only: the medium level must catch a stated
-share of fraud, and the high level must be right a stated share of the time,
+The two alert levels have fixed meanings, set on validation data only. The medium level must catch a stated share
+of fraud, and the high level must be right a stated share of the time:
 \begin{equation}\label{eq:thr}
 \theta_{\mathrm{med}} = \max\{\theta : \mathrm{Recall}_{\mathrm{val}}(\theta) \ge \rho\}, \qquad
 \theta_{\mathrm{high}} = \min\{\theta : \mathrm{Precision}_{\mathrm{val}}(\theta) \ge \pi\}.
 \end{equation}
-The displayed probability is the raw score mapped through isotonic regression fitted on the validation
-split~\cite{zadrozny2002}. For a linear model on standardised features, the SHAP value~\cite{lundberg2017} of
-feature $j$ has the closed form $\beta_j (x_j - \mu_j)/s_j$, so the reasons shown are exact and cost nothing to
-compute. A quorum of two scorer instances signs each response.
+The displayed probability is the raw score passed through an isotonic map fitted on the validation
+split~\cite{zadrozny2002,niculescu2005}. For a linear model on standardised features the SHAP
+value~\cite{lundberg2017} of feature $j$ is $\beta_j (x_j - \mu_j)/s_j$ exactly, so the reasons are computed without
+approximation. Each response is signed by a quorum of two scorer instances.
 
 \section{Reference implementation}\label{sec:impl}
 
-AURIX\footnote{Source, tests and raw results: \url{https://github.com/joeylukoji/Aurix}. The token and the network
-are a testnet without monetary value.} implements the method as a set of services behind a gateway. Custody is a
-PayPal order with intent \code{AUTHORIZE}; the provider honours an authorisation for at most 29 days, which bounds
-$D$. Evidence sources (carrier, inspector, customs) are simulated services, each with its own Ed25519 key, and are
-flagged as simulated in the interface, the package and the verifier report. Two rule versions are deployed:
-\code{delivery-attested/1} (one carrier attestation) and \code{conditions/1} (the tree language above). The
-decision function is about 300 lines of Python without dependencies beyond the standard library and a signature
-primitive. It is shared by the payment service and the command-line verifier and ported to JavaScript for an
-in-browser verifier; a parity test runs both on the same packages. The ledger is a Cosmos SDK chain on CometBFT
-with four validators and $k{=}2$ attestors. Drafting uses an open-weights model (Gemma) through an
-OpenAI-compatible endpoint. Table~\ref{tab:compare} places the design next to the two common alternatives.
+AURIX\footnote{Source, tests, experiment scripts and raw results: \url{https://github.com/joeylukoji/Aurix}. The
+network is a testnet whose token has no monetary value.} implements the method as services behind a gateway. The
+custodian is PayPal: an order is created with intent \code{AUTHORIZE}, and the provider honours an authorisation for
+at most 29 days, which bounds $D$. The carrier, inspector and customs sources are simulated services, each with its
+own Ed25519 key~\cite{bernstein2012}; the interface, the package and the verifier report all mark them as
+simulated. Two rule versions are deployed, \code{delivery-attested/1} (one carrier attestation) and
+\code{conditions/1} (the tree language). The decision function is about 300 lines of Python that depend on the
+standard library and a signature primitive. The payment service and the command-line verifier share it, and a
+JavaScript port runs in the browser. The ledger is a Cosmos SDK chain on CometBFT~\cite{buchman2018} with four
+validators, and $k = 2$ attestors must agree. Drafting uses an open-weights model (Gemma~4) through an
+OpenAI-compatible endpoint.
+
+\section{Evaluation}\label{sec:eval}
+
+The first two studies test the implementation against the definitions of Section~\ref{sec:method}. Both were run on
+the code as it stood (commit \code{7521339}) and again after the corrections they led to (commit \code{fb823b0}). The
+third study evaluates the risk scorer. Scripts and raw outputs are in \code{research/paper/} of the repository.
+
+\subsection{Decision function: differential and property testing}\label{sec:diff}
 
 \begin{table}[t]
 \centering\small
-\caption{Where the release decision lives in three designs.}
-\label{tab:compare}
-\begin{tabular}{@{}p{3.5cm}p{3.5cm}p{3.6cm}p{4.1cm}@{}}
+\caption{Random testing of the decision function on 20,000 orders. ``Violations'' counts cases that break the
+property, before and after the correction of the order dependence.}
+\label{tab:props}
+\begin{tabular}{@{}p{11.2cm}rrr@{}}
 \toprule
- & Provider authorisation with manual capture & On-chain escrow with an oracle & This method \\
+ & & \multicolumn{2}{c}{Violations} \\
+\cmidrule(l){3-4}
+Property & Cases checked & before & after \\
 \midrule
-Who holds the funds & provider & contract account & provider (or contract) \\
-Who decides the release & merchant & contract code on oracle data & public rule on signed evidence \\
-Recheck by a third party & no, private account history & yes, by re-executing the chain & yes, offline from one file \\
-Trust in event reports & merchant's word & oracle operator & named source keys, listed in the report \\
-Role of ML & provider-side, opaque & none, or inside the oracle & advisory, logged, outside the rule \\
+Python and JavaScript agree on outcome, cited evidence and reasons & 20,000 & 0 & 0 \\
+Termination: after $D$ the outcome is \rel{} or \void{} (Prop.~\ref{prop:term}) & 6,319 & 0 & 0 \\
+A release not ordered by the arbiter needs the authorisation (Prop.~\ref{prop:release}) & 2,192 & 0 & 0 \\
+\quad \ldots and needs source evidence (Prop.~\ref{prop:release}) & 2,192 & 0 & 0 \\
+Evidence with an invalid signature verdict changes nothing & 20,000 & 0 & 0 \\
+Outcome and cited evidence do not depend on the order of the evidence & 20,000 & 36 & 0 \\
+One more valid attestation does not undo a release (not promised) & 1,554 & 150 & 150 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\section{Evaluation}\label{sec:eval}
+Replay is only meaningful if independent implementations of $\delta$ agree. We generated 20,000 random orders
+(13,994 under \code{conditions/1}, 6,006 under \code{delivery-attested/1}) with condition trees up to the language
+bounds, evidence carrying valid and invalid signatures, wrong roles, foreign order references and mismatched
+amounts, and times placed on and around every boundary of Eqs.~\eqref{eq:adm}--\eqref{eq:delta}. The outcomes were
+11,929 \wait, 485 \hold, 2,544 \rel{} and 5,042 \void; 6,319 orders were evaluated after their deadline. Each order
+was evaluated by the Python function and by its JavaScript port, in the manner of differential
+testing~\cite{mckeeman1998,brubaker2014}, and the Python function was checked against properties in the manner of
+QuickCheck~\cite{claessen2000}. Table~\ref{tab:props} gives the counts.
 
-\subsection{Risk scorer}\label{sec:risk}
+The two implementations agree on every order, down to the text of the reasons. Propositions~\ref{prop:release}
+and~\ref{prop:term} hold on every case that exercises them. Two rows need comment. First, in 36 orders the cited
+evidence changed when the evidence was presented in another order: where two attestations both satisfied a
+requirement, the function took the first it was given. The payment service reads evidence by reception time and the
+verifier by file name, so for such an order the verifier recomputed the same outcome from a different witness and
+reported an honest package as \textsc{invalid}. We reproduced this with two valid delivery attestations. The
+function now sorts its input, and the row reads zero. Second, the last row probes a property the rule does not
+promise. Adding one valid attestation with an earlier event time turned a \rel{} into a \wait{} in 150 of 1,554
+cases, each with a dispute window. The duplicate becomes the witness of its leaf, $t_{\mathrm{sat}}$ becomes its
+reception time, and the window reopens. Only a registered source can cause this, a signed outcome is final, and the
+effect is a delay. We left the rule unchanged, because changing which attestation is cited would invalidate existing
+packages, and record the behaviour as a limit of \code{conditions/1}.
 
-\paragraph{Data and protocol.} PaySim~\cite{lopezrojas2016} simulates 6,362,620 mobile-money transactions over 744
-hourly steps, 8,213 of them fraudulent. We split by time: steps 1--400 for training (5,787,030 rows, 4,477 fraud),
-401--550 for validation (378,989 rows, 1,588 fraud) and 551--744 for test (196,601 rows, 2,148 fraud). Prevalence
-rises from 0.08\% to 0.42\% to 1.09\% across the splits, so the test set is a shifted population and not a random
-holdout. Six scale-free features known before confirmation are used (amount relative to balance, account drained,
-transaction type, sender history count, amount relative to sender mean, recipient history count). The hour of day
-and the absolute amount are dropped: the first is an artefact of the simulator and the second does not transfer
-across currencies. Candidates are a class-weighted logistic regression, LightGBM~\cite{ke2017} and a one-line
-business rule (an account emptied by a transfer to a recipient never paid before). In
-Eqs.~\eqref{eq:select}--\eqref{eq:thr}, $S=5$, $\tau=0.02$, $\rho=0.95$ and $\pi=0.90$. The test set is read once.
-Intervals are 95\% percentile intervals from 1,000 stratified bootstrap resamples~\cite{efron1979}.
 
-\paragraph{Deviation.} The first threshold rules (recall $\ge 0.90$ for medium, false-positive rate $\le 0.001$ for
-high) produced a high threshold below the medium one. We replaced them with Eq.~\eqref{eq:thr} after the test
-results of that first run had been seen. The model ranking does not depend on thresholds, but the precision and
-recall figures in Table~\ref{tab:ml} were obtained under rules chosen after one look at the test set, and should be
-read with that in mind.
-
-\paragraph{Results.} LightGBM fails the stability constraint: its validation PR-AUC is 0.093, 0.004, 0.815, 0.015
-and 0.004 over the five seeds (Figure~\ref{fig:seeds}). With about 4,500 positive rows among 5.8 million and a
-minimum leaf size of 200, the trees depend heavily on which rows the bagging draws. An earlier version of the
-project had reported a PR-AUC of 0.939 for the same model family, from a two-way split whose thresholds were tuned
-on test data; that figure is withdrawn. The logistic regression is selected. On test it reaches a PR-AUC of 0.973
-against 0.938 for the business rule; the paired bootstrap difference is 0.035 (95\% CI 0.029--0.041).
-Isotonic calibration lowers the Brier score from $3.06\times10^{-3}$ to $1.01\times10^{-3}$ and the expected
-calibration error from $1.48\times10^{-2}$ to $8.9\times10^{-4}$. The medium level was set for 95\% recall on
-validation and obtains 94.4\% on test (CI 93.4--95.4), so the target is met only at the edge of the interval.
-
-The gap between the rule and the model is small. A single hand-written predicate recovers most of the signal, which
-says as much about PaySim as about the models: fraud in the simulator follows one script. We keep the logistic model
-because it is calibrated and gives per-feature reasons, not because the benchmark proves it would do well on real
-payment traffic.
+\subsection{Proof packages: exhaustive bit-level corruption}\label{sec:tamper}
 
 \begin{table}[t]
 \centering\small
-\caption{Test results on PaySim steps 551--744 at true prevalence (1.09\%). Thresholds come from validation.
-Brackets: 95\% bootstrap intervals. The LightGBM row is the first seed and is shown for reference only.}
-\label{tab:ml}
-\begin{tabular}{@{}lccccccc@{}}
+\caption{Exhaustive single-bit corruption of proof packages. ``Rejected'': the report says \textsc{invalid}.
+``Exception'': the verifier raised. ``Accepted'': the report says \textsc{valid}. Packages rebuilt after the
+correction are slightly larger because signature blocks carry a version field.}
+\label{tab:tamper}
+\begin{tabular}{@{}lrrrrrrr@{}}
 \toprule
- & & & \multicolumn{2}{c}{Medium level} & \multicolumn{2}{c}{High level} & Val.\ PR-AUC \\
-\cmidrule(lr){4-5}\cmidrule(lr){6-7}
-Model & ROC-AUC & PR-AUC & Prec. & Recall & Prec. & Recall & sd over seeds \\
+ & \multicolumn{4}{c}{Before correction} & \multicolumn{3}{c}{After correction} \\
+\cmidrule(lr){2-5}\cmidrule(l){6-8}
+Package & Trials & Rejected & Exception & Accepted & Trials & Rejected & Other \\
 \midrule
-Logistic regression & 0.9990 & 0.973 {\scriptsize[0.967, 0.978]} & 0.940 & 0.944 & 0.951 & 0.812 & 0.000 \\
-Business rule       & 0.9972 & 0.938 {\scriptsize[0.929, 0.948]} & 0.938 & 0.969 & 0.979 & 0.606 & n/a \\
-LightGBM (rejected) & 0.9646 & 0.203 & 0.288 & 0.940 & 0.173 & 0.476 & 0.353 \\
+\code{delivery-attested/1}, release & 63,824 & 63,332 & 451 & 41 & 64,592 & 64,592 & 0 \\
+\code{conditions/1}, release & 78,304 & 77,736 & 527 & 41 & 79,200 & 79,200 & 0 \\
+\code{delivery-attested/1}, void & 50,752 & 50,341 & 370 & 41 & 51,392 & 51,392 & 0 \\
+Earlier signature format, release & & & & & 63,824 & 63,824 & 0 \\
+\midrule
+Total & 192,880 & 191,409 & 1,348 & 123 & 259,008 & 259,008 & 0 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{figure}[t]
 \centering
-\begin{tikzpicture}
-\begin{axis}[width=0.62\textwidth, height=4.3cm, font=\footnotesize,
-  xlabel={Training seed}, ylabel={Validation PR-AUC}, ymin=0, ymax=1.05, xmin=0.6, xmax=5.4,
-  xtick={1,2,3,4,5}, ytick={0,0.25,0.5,0.75,1}, grid=major, grid style={draw=black!10},
-  legend style={at={(1.03,0.5)}, anchor=west, draw=none, font=\footnotesize, cells={anchor=west}},
-  axis line style={draw=mute}, tick style={draw=mute}]
-\addplot[adv, thick, mark=*, mark size=1.8pt] coordinates {(1,0.9523)(2,0.9523)(3,0.9523)(4,0.9523)(5,0.9523)};
-\addlegendentry{Logistic regression}
-\addplot[cus, thick, dashed, mark=none] coordinates {(0.6,0.9037)(5.4,0.9037)};
-\addlegendentry{Business rule}
-\addplot[dec, thick, mark=square*, mark size=1.8pt] coordinates {(1,0.0925)(2,0.0042)(3,0.8149)(4,0.0154)(5,0.0042)};
-\addlegendentry{LightGBM}
-\end{axis}
-\end{tikzpicture}
-\caption{Validation PR-AUC per training seed. The selection rule of Eq.~\eqref{eq:select} admits a model only if
-its standard deviation across seeds is at most 0.02. A single-seed report of LightGBM could have shown 0.81 or
-0.004.}
-\label{fig:seeds}
+\includegraphics[width=\textwidth]{figures/fig_tamper.pdf}
+\caption{Outcome of each single-bit flip in \code{manifest.sig.json}, by byte offset (horizontal) and bit
+(vertical), for the first package of Table~\ref{tab:tamper}. Brackets mark the value of each field. Before the
+corrections, flips in the signing time are accepted or crash the verifier, and three flips in the last character of
+the signature are accepted.}
+\label{fig:tamper}
 \end{figure}
 
-\subsection{Proof packages}
+We built three packages, a release under each rule and a void. For every file in each package we flipped every bit
+in turn and ran the verifier with pinned keys: 192,880 trials on the original code (Table~\ref{tab:tamper}). Every
+flip in the terms, the attestations, the receipts, the decision, the registry and the manifest was rejected. The
+remaining flips exposed two defects in the handling of detached signature files.
 
-\paragraph{Functional tests.} The verifier test suite has 55 cases, all passing at the evaluated commit. They
-cover the paths of Eq.~\eqref{eq:delta}: release, void at the deadline, arbiter hold and ruling, buyer dispute,
-evidence signed by an unregistered key, by a key with the wrong role, by a key revoked before or after signing,
-evidence for another order or another amount, and back-dated evidence received after the deadline. Two cases run
-the JavaScript verifier on the same packages and compare the reports.
+\paragraph{An unsigned envelope.} In each package, 41 flips in \code{manifest.sig.json} were accepted. A signature
+file carried a signing time next to the signature, and the signature covered the content hash only. The manifest
+lists the hash of every other signature file, which protects their content, but it cannot list its own signature
+file. Of the 41 flips, 38 changed the signing time into another well-formed time inside the key's validity interval,
+and 3 changed unused trailing bits of the base64 text of the signature (Figure~\ref{fig:tamper}). None altered what
+was decided or on what evidence. The signing time is not inert, however: it decides whether a signature made with a
+key revoked later is reported as valid. The defect is an instance of a known class, in which a verifier accepts
+several encodings of one signed
+object~\cite{decker2014,chalkias2020}, and of the older rule that a signature should cover what is
+meant~\cite{wagner1996}. Signature blocks now follow Eq.~\eqref{eq:att}, base64 text has one accepted spelling, and
+the manifest's signing time is tied to the manifest (step~2 of Figure~\ref{fig:verify}), which also protects
+packages issued in the earlier format.
 
-\paragraph{Tamper study.} We built three packages (a release under each rule and a void) and, for every file in
-each, flipped every bit in turn and ran the verifier with pinned keys: 192,880 trials in total
-(Table~\ref{tab:tamper}). Every flip in the terms, the attestations, the receipts, the decision, the key registry
-and the manifest was rejected. Two defects appeared, both in the handling of detached signature files.
+\paragraph{Unhandled input.} In 1,348 trials the verifier returned no report. The flipped bit had made a signing
+time unparseable and the date parser raised an exception. A crash is a refusal, but the verifier's contract is to
+report, and a service that calls it without a guard could be stopped by a crafted package. The verifier now handles
+malformed times, types and structures with specific checks, and reports \textsc{invalid} if an error still escapes
+them.
 
-First, 123 flips were accepted (41 per package), all in \code{manifest.sig.json}. A signature file carries a
-\code{created\_at} time next to the signature, and the signature covers the content hash only. The other signature
-files are protected because the manifest lists their hashes; the manifest's own signature file is not. Of the 41
-accepted flips, 38 turn \code{created\_at} into another well-formed time inside the key's validity interval, and 3
-change the unused trailing bits of the base64 signature. None changes what was decided or on what evidence. The
-first kind matters all the same: \code{created\_at} feeds the verdict on a key revoked after signing, so an attacker
-holding a package signed with a since-revoked operator key could move that time. The fix is to sign the pair
-(hash, time) and to decode base64 strictly.
+\paragraph{After correction.} We repeated the study on packages built by the corrected code, and on a package in
+the earlier signature format: 259,008 trials, all rejected by a specific check, none by the last-resort guard. The
+JavaScript verifier was run on the same trials and gave the same verdict on each. Verification takes time
+proportional to the number of signatures: about 0.20~ms per signature in Python and 0.33~ms in Node.js on one
+core of a shared virtual machine, or 1.1~ms and 2.1~ms for a two-attestation package. The verifier's test suite
+grew from 55 to 113 cases.
 
-Second, in 1,348 trials the verifier returned no report: the flipped bit made a \code{created\_at} value
-unparseable and the date parser raised an exception. A crash is still a refusal, but the verifier's contract is to
-report problems and never raise, and a service that calls it without guarding the call could be stopped by a
-crafted package. Neither defect is caught by the hand-written test suite. The script
-(\code{research/paper/tamper\_experiment.py}) and its raw output are in the repository. Replaying a valid package
-takes about 1~ms on one core.
+
+
+\subsection{Risk scorer}\label{sec:risk}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/fig_scorer.pdf}
+\caption{Risk scorer on PaySim. (a)~Transactions per hourly step (light: raw; dark: 24-step mean) and fraud cases
+per step, with the split. (b)~Precision--recall curves on the test split; circles mark the two alert thresholds.
+(c)~Observed fraud rate against mean predicted probability in logarithmic bins, before and after the isotonic map;
+marker area grows with the number of transactions in the bin.}
+\label{fig:scorer}
+\end{figure}
 
 \begin{table}[t]
 \centering\small
-\caption{Exhaustive single-bit corruption. ``Rejected'': the report says \textsc{invalid}. ``Exception'': the
-verifier raised instead of reporting. ``Accepted'': the report says \textsc{valid}; all such flips are in
-\code{manifest.sig.json}. Median verification time over 200 runs, one core.}
-\label{tab:tamper}
-\begin{tabular}{@{}lrrrrrrr@{}}
+\caption{PaySim, test split (steps 551--743, prevalence 1.09\%). Thresholds are set on validation. Brackets: 95\%
+bootstrap intervals. The LightGBM row gives the range over five seeds.}
+\label{tab:ml}
+\setlength{\tabcolsep}{4.6pt}
+\begin{tabular}{@{}lcccccccc@{}}
 \toprule
-Package & Files & Bytes & Trials & Rejected & Exception & Accepted & Verify (ms) \\
+ & \multicolumn{2}{c}{Validation PR-AUC} & & & \multicolumn{2}{c}{Medium level} & \multicolumn{2}{c}{High level} \\
+\cmidrule(lr){2-3}\cmidrule(lr){6-7}\cmidrule(l){8-9}
+Model & mean & sd & Test ROC-AUC & Test PR-AUC & Prec. & Recall & Prec. & Recall \\
 \midrule
-\code{delivery-attested/1}, release & 14 & 7,978 & 63,824 & 63,332 & 451 & 41 & 1.05 \\
-\code{conditions/1}, release & 16 & 9,788 & 78,304 & 77,736 & 527 & 41 & 1.33 \\
-\code{delivery-attested/1}, void & 12 & 6,344 & 50,752 & 50,341 & 370 & 41 & 0.76 \\
-\midrule
-Total & & & 192,880 & 191,409 & 1,348 & 123 & \\
+Logistic regression & 0.952 & 0.000 & 0.9990 & 0.973 {\scriptsize[0.967, 0.978]} & 0.940 & 0.944 & 0.951 & 0.812 \\
+Business rule       & 0.904 & --- & 0.9972 & 0.938 {\scriptsize[0.929, 0.948]} & 0.938 & 0.969 & 0.979 & 0.606 \\
+LightGBM (rejected) & 0.186 & 0.353 & --- & 0.011--0.841 & --- & --- & --- & --- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsection{What was not measured}
+\paragraph{Data and protocol.} PaySim~\cite{lopezrojas2016} simulates 6,362,620 mobile-money transactions over 743
+hourly steps, of which 8,213 are fraudulent. Operational fraud data drifts and is heavily
+imbalanced~\cite{dalpozzolo2018}, and results inflated by leakage between training and test data are
+common~\cite{kapoor2023}, so we split by time: steps 1--400 for training (5,787,030 rows, 4,477 fraud), 401--550 for
+validation (378,989 rows, 1,588 fraud) and the rest for test (196,601 rows, 2,148 fraud). Transaction volume
+collapses after step 400 while fraud continues at about ten cases per step, so the fraud share rises from 0.08\% to
+0.42\% to 1.09\% (Figure~\ref{fig:scorer}a) and the test split is a shifted population. All candidates use six scale-free features known before confirmation: amount relative to balance, account drained,
+transaction type, sender history count, amount relative to the sender's mean, and recipient history count. The hour
+of day (an artefact of the simulator) and the absolute amount (which does not transfer across currencies) are
+dropped. The candidates are a class-weighted
+logistic regression, LightGBM~\cite{ke2017} and a one-line business rule (an account emptied by a transfer to a
+recipient never paid before). In Eqs.~\eqref{eq:select}--\eqref{eq:thr}, $S=5$, $\tau_{\mathrm{sd}}=0.02$,
+$\rho=0.95$ and $\pi=0.90$. Because of the imbalance, candidates are ranked by PR-AUC, and ROC-AUC is reported for
+reference only~\cite{davis2006,saito2015}. Intervals are 95\% percentile intervals from 1,000 stratified bootstrap
+resamples~\cite{efron1979}.
 
-We did not measure how often the language model drafts the condition a buyer intended; that requires a labelled
-set of purchase descriptions and human raters, which we do not have. The carrier, inspector and customs services
-are simulations, so no claim is made about integration with real logistics data. Captures were exercised end to
-end against a local simulator of the provider's API and the ledger; a full capture on the provider's sandbox is
-still outstanding. The scorer was evaluated on synthetic data only.
+\paragraph{Deviation from the plan.} The protocol was fixed before the test split was read~\cite{nosek2018}, with
+one exception. The first threshold rules (recall $\ge 0.90$ for medium, false-positive rate $\le 0.001$ for high) put
+the high threshold below the medium one. We replaced them with Eq.~\eqref{eq:thr} after the test results of that run
+had been seen. Model ranking does not depend on thresholds, but the precision and recall columns of
+Table~\ref{tab:ml} come from rules chosen after one look at the test split.
 
-\section{Limits}\label{sec:limits}
+\paragraph{Results.} LightGBM fails the stability constraint. Its validation PR-AUC over the five seeds is 0.093,
+0.004, 0.815, 0.015 and 0.004, and for the second and fifth seeds its test PR-AUC is 0.011, the test prevalence,
+which is what a constant score obtains. An earlier version of the project reported a PR-AUC of 0.939 for the same model
+family from a two-way split with thresholds tuned on test data; that figure is withdrawn. We report the instability
+without a diagnosis. The logistic regression is selected and reaches a test PR-AUC of 0.973, against 0.938 for the
+business rule; the paired bootstrap difference is 0.035 (95\% CI 0.029--0.041). The medium level, set for 95\%
+recall on validation, obtains 94.4\% on test (CI 93.4--95.4), at the edge of its target.
+
+The class-weighted model overstates probabilities: no fraud at all is observed in bins where the mean raw score
+reaches 0.29 (Figure~\ref{fig:scorer}c). The isotonic map lowers the Brier score~\cite{brier1950} from
+$3.06\times10^{-3}$ to $1.01\times10^{-3}$ and the expected calibration error~\cite{naeini2015} from
+$1.48\times10^{-2}$ to $8.9\times10^{-4}$. That error is dominated by the 194,037 transactions scored near zero.
+Among the 2,216 transactions in the top calibrated bin the mean prediction is 0.88 and the observed rate 0.94: a
+map fitted at 0.42\% prevalence understates risk when prevalence is 1.09\%.
+
+The attributions show that the model relies on very little. Among fraudulent test transactions the mean absolute
+contribution to the log-odds is 10.8 for the drained-account flag and 8.6 for the transaction type, against 1.2
+for the amount-to-balance ratio and less than 0.01 for either sender-history feature. Fraud in PaySim follows one
+script, which is also why a hand-written predicate comes within 0.035 of the model. We retain the logistic model
+because it is stable, calibrated and explained exactly. The benchmark does not show that it would perform on real
+payment traffic.
+
+\paragraph{Reproduction.} We re-ran the frozen protocol twice on a second machine, from the dataset file identified
+by its SHA-256 hash. Every stored number was reproduced exactly, including the five LightGBM seeds.
+
+
+
+\section{Related work}\label{sec:related}
+
+\paragraph{Fair exchange and contracts.} Asokan, Shoup and Waidner~\cite{asokan2000} exchange signatures with a
+third party that intervenes only on failure; our arbiter has that optimistic role, reduced to a suspension and a
+ruling. FairSwap~\cite{dziembowski2018} and hashed timelock contracts~\cite{herlihy2018} make a payment conditional on
+a fact that a contract can check by itself, such as a preimage or a proof of misbehaviour. The conditions we target
+are events outside any ledger, which no contract can check. Contract
+languages~\cite{peytonjones2000,bartoletti2018,lamela2018} show that a few combinators cover many financial
+agreements, and we adopt their restraint so that two implementations can be kept in agreement by testing.
+
+\paragraph{Oracles and tamper evidence.} Town Crier~\cite{zhang2016} and DECO~\cite{zhang2020} authenticate the
+path from a web source to a contract. They do not remove the source's ability to state something
+false~\cite{caldarelli2020,eskandari2021}, and neither do we; the verifier report says so on every run. Linked
+time-stamping~\cite{haber1991} makes later alteration of a record detectable.
+We use a BFT ledger~\cite{buchman2018} for that purpose only: it stores a commitment to the outcome and the
+attestors' confirmations, and none of the business logic. Our two studies of the verifier follow work that found
+accepting bugs in TLS certificate validation by cross-checking implementations~\cite{brubaker2014} and
+disagreements between Ed25519 verifiers on edge cases~\cite{chalkias2020}.
+
+
+
+\section{Limitations}\label{sec:limits}
+
+\paragraph{What was not measured.} We did not measure how often the language model drafts the condition a buyer
+intended; that needs purchase descriptions labelled by human raters, which we do not have. The carrier, inspector
+and customs services are simulations. Captures were exercised end to end against a local simulator of the provider's
+interface and the ledger, and a capture on the provider's sandbox remains to be done.
 
 \paragraph{Signatures do not observe the world.} The method reduces ``did the goods arrive'' to ``did the agreed
 carrier sign that they arrived''. A dishonest or mistaken source produces a valid package for a false event. The
-\code{at\_least} connective lets the parties require agreement among several sources, and the dispute window gives
-the buyer a period to object, but neither is a proof of physical fact. The verifier prints this limitation in every
-report.
+\code{at\_least} connective and the dispute window reduce the exposure and do not remove it.
 
-\paragraph{The operator is still a single evaluator.} $\delta$ is public and replayable, so a wrong decision is
-detectable after the fact, but it is taken by one service. The operator also issues the receipts that fix $r(a)$,
-and could withhold or delay evidence. Moving evaluation of $\delta$ and receipt issuance to the validators would
-remove this; the ledger currently anchors outcomes only.
+\paragraph{The operator is a single evaluator and timekeeper.} A wrong decision is detectable after the fact, but
+one service takes it. The same service issues the receipts, so it can withhold evidence or misdate its arrival, and
+a package cannot show what was left out of it. Moving receipt issuance and the evaluation of $\delta$ to the
+validators would close this gap. The ledger currently anchors outcomes only.
 
-\paragraph{Keys.} A compromised source key can release funds until it is revoked. Validity is checked at reception
-time, which limits back-dating but not real-time misuse. Hardware-held keys and short validity intervals are the
-standard mitigations, and neither is implemented here.
+\paragraph{Keys and time formats.} A compromised source key can release funds until it is revoked; checking
+validity at reception time limits back-dating only. The two verifiers parse signing times strictly, but read the
+other times in a package with their platform's ISO~8601 parser. The parsers differ on unusual strings, so an
+operator that signed one could make the verifiers disagree.
 
-\paragraph{Models.} Bounding the drafted condition by a schema prevents malformed output from executing. It does
-not prevent a well-formed condition that differs from what the buyer meant; the buyer's reading is the only
-control. The risk scorer was fitted on a simulator with one fraud pattern and will need re-estimation and drift
-monitoring~\cite{dalpozzolo2018} before any use on live traffic.
+\paragraph{Models.} A schema stops malformed drafts from executing. It does not stop a well-formed condition that
+differs from what the buyer meant, against which the only control is the buyer's reading. The scorer was fitted on
+synthetic data with one fraud pattern, and its calibration already shifts between two splits of that data.
 
 \section{Conclusion}
 
-Conditional payments can be made checkable by a party who was not involved, without moving custody away from the
-provider that already holds the money and without putting a model in the trusted path. The required pieces are
-modest: signed evidence with reception receipts, a small decision function that an independent program can replay,
-and a rule that model output becomes binding only through terms a human signed. Our tamper study found no undetected change to
-terms, evidence or decisions, and two defects in the signature envelope that tests written by hand had missed. Our scoring study found that an unstable model can look
-excellent or useless depending on the seed, and that a time-ordered protocol with a stability constraint catches
-this before deployment. Two pieces of work come next: replicating the decision function across validators, and a
-human-rated study of drafted conditions against buyer intent.
+A conditional payment can be made checkable by an outsider while the money stays with the provider that already
+holds it and no model sits in the trusted path. The method needs signed evidence with reception receipts, a small
+decision function that independent programs replay, and a rule that model output binds nobody until a person signs
+it as terms. Testing our implementation against these definitions was more productive than we expected: random
+cross-checking and exhaustive bit flips found an order dependence, an unsigned envelope and a crash path in code
+that passed its own tests, and a seed sweep rejected a model that a single run could have reported at 0.81 or at
+0.004. Two pieces of work come next: evaluating $\delta$ and issuing receipts on the validators, and a human-rated
+study of drafted conditions against buyer intent.
 
-\paragraph{Reproducibility.} All paths are relative to the repository root. The model evaluation script is
-\code{guardian/\allowbreak training/\allowbreak evaluate.py} and its raw output is under
-\code{research/\allowbreak results/\allowbreak raw/\allowbreak ml-eval/}. The PaySim file is identified by SHA-256
-\code{16910f90\ldots4eea6b}. The verifier tests are in \code{verifier/tests} and the tamper study in
-\code{research/paper/}.
+\paragraph{Availability.} The repository holds the services and both verifiers; experiment scripts, raw outputs
+and plotting code are under \code{research/paper}. The PaySim file has SHA-256 \code{16910f90\ldots4eea6b}.
 
-{\small
+\newpage
+{\footnotesize
+\setlength{\columnsep}{14pt}\setlength{\premulticols}{0pt}\setlength{\multicolsep}{2pt}
+\begin{multicols}{2}[\section*{\large References}]
+\renewcommand{\section}[2]{}% the heading is set above, across both columns
 \begin{thebibliography}{99}
-\setlength{\itemsep}{1pt}
+\setlength{\itemsep}{0.5pt}\setlength{\parskip}{0pt}
+
+\bibitem{androulaki2018} E.~Androulaki, A.~Barger, V.~Bortnikov, C.~Cachin, K.~Christidis, A.~De~Caro, et~al.
+Hyperledger Fabric: A distributed operating system for permissioned blockchains. In \emph{Proc.\ 13th EuroSys
+Conference}, 2018. doi:10.1145/3190508.3190538.
 
 \bibitem{asokan2000} N.~Asokan, V.~Shoup, and M.~Waidner. Optimistic fair exchange of digital signatures.
-\emph{IEEE Journal on Selected Areas in Communications}, 18(4):593--610, 2000.
+\emph{IEEE J.\ Sel.\ Areas Commun.}, 18(4):593--610, 2000. doi:10.1109/49.839935.
 
 \bibitem{bartoletti2018} M.~Bartoletti and R.~Zunino. BitML: A calculus for Bitcoin smart contracts. In
-\emph{Proc.\ ACM SIGSAC Conference on Computer and Communications Security (CCS)}, pages 83--100, 2018.
-doi:10.1145/3243734.3243795.
+\emph{Proc.\ ACM CCS}, pages 83--100, 2018. doi:10.1145/3243734.3243795.
 
 \bibitem{bernstein2012} D.~J. Bernstein, N.~Duif, T.~Lange, P.~Schwabe, and B.-Y. Yang. High-speed high-security
-signatures. \emph{Journal of Cryptographic Engineering}, 2(2):77--89, 2012. doi:10.1007/s13389-012-0027-1.
+signatures. \emph{J.\ Cryptogr.\ Eng.}, 2(2):77--89, 2012. doi:10.1007/s13389-012-0027-1.
+
+\bibitem{bouthillier2021} X.~Bouthillier, P.~Delaunay, M.~Bronzi, A.~Trofimov, B.~Nichyporuk, J.~Szeto, et~al.
+Accounting for variance in machine learning benchmarks. arXiv:2103.03098, 2021.
+
+\bibitem{brier1950} G.~W. Brier. Verification of forecasts expressed in terms of probability. \emph{Mon.\ Weather
+Rev.}, 78(1):1--3, 1950.
+
+\bibitem{brubaker2014} C.~Brubaker, S.~Jana, B.~Ray, S.~Khurshid, and V.~Shmatikov. Using Frankencerts for automated
+adversarial testing of certificate validation in SSL/TLS implementations. In \emph{Proc.\ IEEE S\&P}, pages 114--129, 2014. doi:10.1109/SP.2014.15.
 
 \bibitem{buchman2018} E.~Buchman, J.~Kwon, and Z.~Milosevic. The latest gossip on BFT consensus. arXiv:1807.04938,
 2018.
@@ -628,61 +802,81 @@ signatures. \emph{Journal of Cryptographic Engineering}, 2(2):77--89, 2012. doi:
 \bibitem{caldarelli2020} G.~Caldarelli. Understanding the blockchain oracle problem: A call for action.
 \emph{Information}, 11(11):509, 2020. doi:10.3390/info11110509.
 
+\bibitem{chalkias2020} K.~Chalkias, F.~Garillot, and V.~Nikolaenko. Taming the many EdDSAs. In \emph{Security
+Standardisation Research (SSR)}, LNCS 12529, pages 67--90. Springer, 2020. doi:10.1007/978-3-030-64357-7\_4.
+
+\bibitem{claessen2000} K.~Claessen and J.~Hughes. QuickCheck: A lightweight tool for random testing of Haskell
+programs. In \emph{Proc.\ ACM ICFP}, pages 268--279, 2000. doi:10.1145/351240.351266.
+
 \bibitem{dalpozzolo2018} A.~Dal~Pozzolo, G.~Boracchi, O.~Caelen, C.~Alippi, and G.~Bontempi. Credit card fraud
-detection: A realistic modeling and a novel learning strategy. \emph{IEEE Transactions on Neural Networks and
-Learning Systems}, 29(8), 2018. doi:10.1109/TNNLS.2017.2736643.
+detection: A realistic modeling and a novel learning strategy. \emph{IEEE Trans.\ Neural Netw.\ Learn.\ Syst.},
+29(8):3784--3797, 2018. doi:10.1109/TNNLS.2017.2736643.
 
 \bibitem{davis2006} J.~Davis and M.~Goadrich. The relationship between precision-recall and ROC curves. In
-\emph{Proc.\ 23rd International Conference on Machine Learning (ICML)}, pages 233--240, 2006.
-doi:10.1145/1143844.1143874.
+\emph{Proc.\ ICML}, pages 233--240, 2006. doi:10.1145/1143844.1143874.
 
-\bibitem{efron1979} B.~Efron. Bootstrap methods: Another look at the jackknife. \emph{The Annals of Statistics},
-7(1):1--26, 1979. doi:10.1214/aos/1176344552.
+\bibitem{decker2014} C.~Decker and R.~Wattenhofer. Bitcoin transaction malleability and MtGox. In \emph{Computer
+Security -- ESORICS 2014}, LNCS 8713, pages 313--326. Springer, 2014. doi:10.1007/978-3-319-11212-1\_18.
+
+\bibitem{dziembowski2018} S.~Dziembowski, L.~Eckey, and S.~Faust. FairSwap: How to fairly exchange digital goods.
+In \emph{Proc.\ ACM CCS}, pages 967--984, 2018. doi:10.1145/3243734.3243857.
+
+\bibitem{efron1979} B.~Efron. Bootstrap methods: Another look at the jackknife. \emph{Ann.\ Statist.}, 7(1):1--26,
+1979. doi:10.1214/aos/1176344552.
+
+\bibitem{eskandari2021} S.~Eskandari, M.~Salehi, W.~C. Gu, and J.~Clark. SoK: Oracles from the ground truth to
+market manipulation. In \emph{Proc.\ ACM AFT}, pages 127--141, 2021. doi:10.1145/3479722.3480994.
+
+\bibitem{geng2023} S.~Geng, M.~Josifoski, M.~Peyrard, and R.~West. Grammar-constrained decoding for structured NLP
+tasks without finetuning. In \emph{Proc.\ EMNLP}, pages 10932--10952, 2023. doi:10.18653/v1/2023.emnlp-main.674.
 
 \bibitem{greshake2023} K.~Greshake, S.~Abdelnabi, S.~Mishra, C.~Endres, T.~Holz, and M.~Fritz. Not what you've
 signed up for: Compromising real-world LLM-integrated applications with indirect prompt injection. In \emph{Proc.\
-16th ACM Workshop on Artificial Intelligence and Security (AISec)}, pages 79--90, 2023. doi:10.1145/3605764.3623985.
+ACM AISec}, pages 79--90, 2023. doi:10.1145/3605764.3623985.
 
-\bibitem{haber1991} S.~Haber and W.~S. Stornetta. How to time-stamp a digital document. \emph{Journal of
-Cryptology}, 3(2):99--111, 1991. doi:10.1007/BF00196791.
+\bibitem{haber1991} S.~Haber and W.~S. Stornetta. How to time-stamp a digital document. \emph{J.\ Cryptology},
+3(2):99--111, 1991. doi:10.1007/BF00196791.
 
-\bibitem{rfc8032} S.~Josefsson and I.~Liusvaara. Edwards-curve digital signature algorithm (EdDSA). RFC~8032, IETF,
-2017.
+\bibitem{herlihy2018} M.~Herlihy. Atomic cross-chain swaps. In \emph{Proc.\ ACM PODC}, pages 245--254, 2018.
+doi:10.1145/3212734.3212736.
 
 \bibitem{kapoor2023} S.~Kapoor and A.~Narayanan. Leakage and the reproducibility crisis in machine-learning-based
 science. \emph{Patterns}, 4(9):100804, 2023. doi:10.1016/j.patter.2023.100804.
 
 \bibitem{ke2017} G.~Ke, Q.~Meng, T.~Finley, T.~Wang, W.~Chen, W.~Ma, Q.~Ye, and T.-Y. Liu. LightGBM: A highly
-efficient gradient boosting decision tree. In \emph{Advances in Neural Information Processing Systems 30}, 2017.
+efficient gradient boosting decision tree. In \emph{NeurIPS 30}, pages 3146--3154, 2017.
 
-\bibitem{lamela2018} P.~Lamela~Seijas and S.~Thompson. Marlowe: Financial contracts on blockchain. In
-\emph{Leveraging Applications of Formal Methods, Verification and Validation (ISoLA)}, LNCS 11247. Springer, 2018.
-doi:10.1007/978-3-030-03427-6\_27.
-
-\bibitem{rfc6962} B.~Laurie, A.~Langley, and E.~Kasper. Certificate transparency. RFC~6962, IETF, 2013.
+\bibitem{lamela2018} P.~Lamela~Seijas and S.~Thompson. Marlowe: Financial contracts on blockchain. In \emph{ISoLA 2018}, LNCS 11247, pages 356--375. Springer, 2018. doi:10.1007/978-3-030-03427-6\_27.
 
 \bibitem{lopezrojas2016} E.~A. Lopez-Rojas, A.~Elmir, and S.~Axelsson. PaySim: A financial mobile money simulator
-for fraud detection. In \emph{Proc.\ 28th European Modeling and Simulation Symposium (EMSS)}, Larnaca, 2016.
+for fraud detection. In \emph{Proc.\ 28th European Modeling and Simulation Symposium}, 2016.
 
 \bibitem{lundberg2017} S.~M. Lundberg and S.-I. Lee. A unified approach to interpreting model predictions. In
-\emph{Advances in Neural Information Processing Systems 30}, pages 4765--4774, 2017.
+\emph{NeurIPS 30}, pages 4765--4774, 2017.
+
+\bibitem{mckeeman1998} W.~M. McKeeman. Differential testing for software. \emph{Digital Technical Journal},
+10(1):100--107, 1998.
+
+\bibitem{naeini2015} M.~Pakdaman~Naeini, G.~F. Cooper, and M.~Hauskrecht. Obtaining well calibrated probabilities
+using Bayesian binning. In \emph{Proc.\ AAAI}, 2015. doi:10.1609/aaai.v29i1.9602.
 
 \bibitem{niculescu2005} A.~Niculescu-Mizil and R.~Caruana. Predicting good probabilities with supervised learning.
-In \emph{Proc.\ 22nd International Conference on Machine Learning (ICML)}, pages 625--632, 2005.
-doi:10.1145/1102351.1102430.
+In \emph{Proc.\ ICML}, pages 625--632, 2005. doi:10.1145/1102351.1102430.
 
 \bibitem{nosek2018} B.~A. Nosek, C.~R. Ebersole, A.~C. DeHaven, and D.~T. Mellor. The preregistration revolution.
-\emph{Proceedings of the National Academy of Sciences}, 115(11):2600--2606, 2018. doi:10.1073/pnas.1708274114.
+\emph{Proc.\ Natl.\ Acad.\ Sci.}, 115(11):2600--2606, 2018. doi:10.1073/pnas.1708274114.
 
 \bibitem{pagnia1999} H.~Pagnia and F.~C. G\"artner. On the impossibility of fair exchange without a trusted third
 party. Technical Report TUD-BS-1999-02, Darmstadt University of Technology, 1999.
 
 \bibitem{peytonjones2000} S.~Peyton~Jones, J.-M. Eber, and J.~Seward. Composing contracts: An adventure in
-financial engineering. In \emph{Proc.\ 5th ACM SIGPLAN International Conference on Functional Programming (ICFP)},
-pages 280--292, 2000. doi:10.1145/351240.351267.
+financial engineering. In \emph{Proc.\ ACM ICFP}, pages 280--292, 2000. doi:10.1145/351240.351267.
 
-\bibitem{rfc8785} A.~Rundgren, B.~Jordan, and S.~Erdtman. JSON canonicalization scheme (JCS). RFC~8785, IETF,
-2020.
+\bibitem{rudin2019} C.~Rudin. Stop explaining black box machine learning models for high stakes decisions and use
+interpretable models instead. \emph{Nat.\ Mach.\ Intell.}, 1(5):206--215, 2019. doi:10.1038/s42256-019-0048-x.
+
+\bibitem{rfc8785} A.~Rundgren, B.~Jordan, and S.~Erdtman. JSON canonicalization scheme (JCS). RFC~8785, 2020.
+doi:10.17487/RFC8785.
 
 \bibitem{saito2015} T.~Saito and M.~Rehmsmeier. The precision-recall plot is more informative than the ROC plot
 when evaluating binary classifiers on imbalanced datasets. \emph{PLoS ONE}, 10(3):e0118432, 2015.
@@ -691,18 +885,19 @@ doi:10.1371/journal.pone.0118432.
 \bibitem{szabo1997} N.~Szabo. Formalizing and securing relationships on public networks. \emph{First Monday},
 2(9), 1997. doi:10.5210/fm.v2i9.548.
 
+\bibitem{wagner1996} D.~Wagner and B.~Schneier. Analysis of the SSL 3.0 protocol. In \emph{Proc.\ 2nd USENIX
+Workshop on Electronic Commerce}, pages 29--40, 1996.
+
 \bibitem{zadrozny2002} B.~Zadrozny and C.~Elkan. Transforming classifier scores into accurate multiclass
-probability estimates. In \emph{Proc.\ 8th ACM SIGKDD International Conference on Knowledge Discovery and Data
-Mining (KDD)}, 2002. doi:10.1145/775047.775151.
+probability estimates. In \emph{Proc.\ ACM KDD}, pages 694--699, 2002. doi:10.1145/775047.775151.
 
 \bibitem{zhang2016} F.~Zhang, E.~Cecchetti, K.~Croman, A.~Juels, and E.~Shi. Town Crier: An authenticated data
-feed for smart contracts. In \emph{Proc.\ ACM SIGSAC Conference on Computer and Communications Security (CCS)},
-pages 270--282, 2016. doi:10.1145/2976749.2978326.
+feed for smart contracts. In \emph{Proc.\ ACM CCS}, pages 270--282, 2016. doi:10.1145/2976749.2978326.
 
 \bibitem{zhang2020} F.~Zhang, D.~Maram, H.~Malvai, S.~Goldfeder, and A.~Juels. DECO: Liberating web data using
-decentralized oracles for TLS. In \emph{Proc.\ ACM SIGSAC Conference on Computer and Communications Security
-(CCS)}, pages 1919--1938, 2020. doi:10.1145/3372297.3417239.
+decentralized oracles for TLS. In \emph{Proc.\ ACM CCS}, pages 1919--1938, 2020. doi:10.1145/3372297.3417239.
 
 \end{thebibliography}
+\end{multicols}
 }
 \end{document}

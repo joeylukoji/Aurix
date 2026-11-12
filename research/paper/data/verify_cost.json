@@ -1,0 +1,51 @@
+[
+ {
+  "attestations": 2,
+  "signatures": 6,
+  "bytes": 8074,
+  "python_ms": 1.087,
+  "javascript_ms": 2.129
+ },
+ {
+  "attestations": 3,
+  "signatures": 7,
+  "bytes": 9627,
+  "python_ms": 1.375,
+  "javascript_ms": 2.372
+ },
+ {
+  "attestations": 5,
+  "signatures": 9,
+  "bytes": 12733,
+  "python_ms": 1.659,
+  "javascript_ms": 3.083
+ },
+ {
+  "attestations": 9,
+  "signatures": 13,
+  "bytes": 18945,
+  "python_ms": 2.584,
+  "javascript_ms": 4.518
+ },
+ {
+  "attestations": 17,
+  "signatures": 21,
+  "bytes": 31397,
+  "python_ms": 4.26,
+  "javascript_ms": 7.207
+ },
+ {
+  "attestations": 33,
+  "signatures": 37,
+  "bytes": 56309,
+  "python_ms": 7.597,
+  "javascript_ms": 12.96
+ },
+ {
+  "attestations": 65,
+  "signatures": 69,
+  "bytes": 106133,
+  "python_ms": 13.948,
+  "javascript_ms": 22.788
+ }
+]

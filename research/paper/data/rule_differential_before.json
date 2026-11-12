@@ -1,0 +1,66 @@
+{
+ "cases": 20000,
+ "seed": 20261112,
+ "by_rule": {
+  "conditions/1": 13994,
+  "delivery-attested/1": 6006
+ },
+ "decisions": {
+  "WAIT": 11929,
+  "HOLD": 485,
+  "RELEASE": 2544,
+  "VOID": 5042
+ },
+ "evaluated_after_deadline": 6319,
+ "python_vs_javascript": {
+  "disagreements": {
+   "decision": 0,
+   "cited_evidence": 0,
+   "reasons": 0
+  },
+  "examples": {}
+ },
+ "properties": {
+  "termination": {
+   "checked": 6319,
+   "violations": 0
+  },
+  "needs_authorisation": {
+   "checked": 2192,
+   "violations": 0
+  },
+  "needs_evidence": {
+   "checked": 2192,
+   "violations": 0
+  },
+  "invalid_is_inert": {
+   "checked": 20000,
+   "violations": 0
+  },
+  "order_independent": {
+   "checked": 20000,
+   "violations": 36
+  },
+  "extra_evidence": {
+   "checked": 1554,
+   "violations": 150
+  }
+ },
+ "extra_evidence_examples": [
+  {
+   "case": 47,
+   "after": "WAIT",
+   "dispute_window_hours": 24
+  },
+  {
+   "case": 183,
+   "after": "WAIT",
+   "dispute_window_hours": 24
+  },
+  {
+   "case": 401,
+   "after": "WAIT",
+   "dispute_window_hours": 24
+  }
+ ]
+}

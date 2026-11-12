@@ -1,0 +1,236 @@
+[
+ {
+  "package": "delivery-attested/1, release",
+  "signature_blocks": "current",
+  "decision": "RELEASE",
+  "files": 14,
+  "bytes": 7978,
+  "trials": 63824,
+  "outcomes": {
+   "rejected": 63332,
+   "fallback": 0,
+   "exception": 451,
+   "accepted": 41
+  },
+  "by_file_class": {
+   "attestations/*": {
+    "rejected": 14088,
+    "fallback": 0,
+    "exception": 0,
+    "accepted": 0,
+    "bytes": 1761
+   },
+   "decision.json": {
+    "rejected": 3928,
+    "fallback": 0,
+    "exception": 0,
+    "accepted": 0,
+    "bytes": 491
+   },
+   "manifest.json": {
+    "rejected": 11936,
+    "fallback": 0,
+    "exception": 0,
+    "accepted": 0,
+    "bytes": 1492
+   },
+   "manifest.sig.json": {
+    "rejected": 2260,
+    "fallback": 0,
+    "exception": 75,
+    "accepted": 41,
+    "bytes": 297
+   },
+   "receipts.json": {
+    "rejected": 3368,
+    "fallback": 0,
+    "exception": 0,
+    "accepted": 0,
+    "bytes": 421
+   },
+   "signatures/*": {
+    "rejected": 11520,
+    "fallback": 0,
+    "exception": 376,
+    "accepted": 0,
+    "bytes": 1487
+   },
+   "terms.json": {
+    "rejected": 2896,
+    "fallback": 0,
+    "exception": 0,
+    "accepted": 0,
+    "bytes": 362
+   },
+   "trust/*": {
+    "rejected": 13336,
+    "fallback": 0,
+    "exception": 0,
+    "accepted": 0,
+    "bytes": 1667
+   }
+  },
+  "verify_ms_median": 1.032,
+  "manifest_sig": {
+   "text": "{\n  \"alg\": \"Ed25519\",\n  \"created_at\": \"2026-11-10T09:00:00Z\",\n  \"key_id\": \"aurix-escrow-test-1\",\n  \"signature\": \"AkkaDeRAdT3D8wQFmi8V4q6it25QTIqSQu9omcNCT93XUIzWxyZPGRG/8McKyhCMZkViOXwsqItOAbInG2AaDQ==\",\n  \"signed_hash\": \"sha256:ee2839a0fd12fe6db7a2c7f2612de01bd364bbf596d683d8834c03336f996270\"\n}\n",
+   "outcome_per_bit": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrArAxrrxrAAAAxrxrArAxrrxrArrxxrxrxxxxxrxrAxxxxrxrAxxxxrxrxxxxxrxrxAxxxrxrAAAAxrxrAAArAArrAxxxxrxrAxxAxrxrxxxxxrxrAAAxxrxrAAAAxrxrxxxxxrxrAAAxxrxrAAAAxrxrxxxxxxrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrAAArrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+  },
+  "verdicts_sha256": "504e4f00292601f9e75da0fd555daf41ccbb4110951a4f0791857545b7e66515"
+ },
+ {
+  "package": "conditions/1, release",
+  "signature_blocks": "current",
+  "decision": "RELEASE",
+  "files": 16,
+  "bytes": 9788,
+  "trials": 78304,
+  "outcomes": {
+   "rejected": 77736,
+   "fallback": 0,
+   "exception": 527,
+   "accepted": 41
+  },
+  "by_file_class": {
+   "attestations/*": {
+    "rejected": 20736,
+    "fallback": 0,
+    "exception": 0,
+    "accepted": 0,
+    "bytes": 2592
+   },
+   "decision.json": {
+    "rejected": 4376,
+    "fallback": 0,
+    "exception": 0,
+    "accepted": 0,
+    "bytes": 547
+   },
+   "manifest.json": {
+    "rejected": 13848,
+    "fallback": 0,
+    "exception": 0,
+    "accepted": 0,
+    "bytes": 1731
+   },
+   "manifest.sig.json": {
+    "rejected": 2260,
+    "fallback": 0,
+    "exception": 75,
+    "accepted": 41,
+    "bytes": 297
+   },
+   "receipts.json": {
+    "rejected": 4632,
+    "fallback": 0,
+    "exception": 0,
+    "accepted": 0,
+    "bytes": 579
+   },
+   "signatures/*": {
+    "rejected": 13852,
+    "fallback": 0,
+    "exception": 452,
+    "accepted": 0,
+    "bytes": 1788
+   },
+   "terms.json": {
+    "rejected": 4696,
+    "fallback": 0,
+    "exception": 0,
+    "accepted": 0,
+    "bytes": 587
+   },
+   "trust/*": {
+    "rejected": 13336,
+    "fallback": 0,
+    "exception": 0,
+    "accepted": 0,
+    "bytes": 1667
+   }
+  },
+  "verify_ms_median": 1.354,
+  "manifest_sig": {
+   "text": "{\n  \"alg\": \"Ed25519\",\n  \"created_at\": \"2026-11-10T09:00:00Z\",\n  \"key_id\": \"aurix-escrow-test-1\",\n  \"signature\": \"V7xLeXAbL8grO7fMKVa05XqXL3xzVl4aEo4vuh6s7tKPes5jMsaD67fNGzYlmd7QO9B7iM3Vnl1zOyGxICknDA==\",\n  \"signed_hash\": \"sha256:039e97e5d881a4225ea4b95fbf12dc2495bb5a19ca6c17f7906473f096d201c1\"\n}\n",
+   "outcome_per_bit": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrArAxrrxrAAAAxrxrArAxrrxrArrxxrxrxxxxxrxrAxxxxrxrAxxxxrxrxxxxxrxrxAxxxrxrAAAAxrxrAAArAArrAxxxxrxrAxxAxrxrxxxxxrxrAAAxxrxrAAAAxrxrxxxxxrxrAAAxxrxrAAAAxrxrxxxxxxrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrAAArrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+  },
+  "verdicts_sha256": "09cf5d60a5d82ac7743ea1573353a04f27042c7eb151174ceefb4aaf2a4e31d3"
+ },
+ {
+  "package": "delivery-attested/1, void",
+  "signature_blocks": "current",
+  "decision": "VOID",
+  "files": 12,
+  "bytes": 6344,
+  "trials": 50752,
+  "outcomes": {
+   "rejected": 50341,
+   "fallback": 0,
+   "exception": 370,
+   "accepted": 41
+  },
+  "by_file_class": {
+   "attestations/*": {
+    "rejected": 7432,
+    "fallback": 0,
+    "exception": 0,
+    "accepted": 0,
+    "bytes": 929
+   },
+   "decision.json": {
+    "rejected": 3152,
+    "fallback": 0,
+    "exception": 0,
+    "accepted": 0,
+    "bytes": 394
+   },
+   "manifest.json": {
+    "rejected": 9952,
+    "fallback": 0,
+    "exception": 0,
+    "accepted": 0,
+    "bytes": 1244
+   },
+   "manifest.sig.json": {
+    "rejected": 2262,
+    "fallback": 0,
+    "exception": 73,
+    "accepted": 41,
+    "bytes": 297
+   },
+   "receipts.json": {
+    "rejected": 2104,
+    "fallback": 0,
+    "exception": 0,
+    "accepted": 0,
+    "bytes": 263
+   },
+   "signatures/*": {
+    "rejected": 9207,
+    "fallback": 0,
+    "exception": 297,
+    "accepted": 0,
+    "bytes": 1188
+   },
+   "terms.json": {
+    "rejected": 2896,
+    "fallback": 0,
+    "exception": 0,
+    "accepted": 0,
+    "bytes": 362
+   },
+   "trust/*": {
+    "rejected": 13336,
+    "fallback": 0,
+    "exception": 0,
+    "accepted": 0,
+    "bytes": 1667
+   }
+  },
+  "verify_ms_median": 0.801,
+  "manifest_sig": {
+   "text": "{\n  \"alg\": \"Ed25519\",\n  \"created_at\": \"2026-11-16T00:00:01Z\",\n  \"key_id\": \"aurix-escrow-test-1\",\n  \"signature\": \"yqztxwNzKkHhkrzlyQz8ybWUMIPfyF48xPzUTnlUCuk8DZzeR4kCUt3DDPdvLcEe3uDmJ9rAFugRXq6xilxfCg==\",\n  \"signed_hash\": \"sha256:af960dff6faade43a929c7b5489d7891422934433b9f7dd9510a157371f29ac5\"\n}\n",
+   "outcome_per_bit": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrArAxrrxrAAAAxrxrArAxrrxrArrxxrxrxxxxxrxrAxxxxrxrAxxxxrxrxxxxxrxrAxxxxrxrAAAxxrxrAAArAArrAAxxxrxrAAAAxrxrxxxxxrxrAAAxxrxrAAAAxrxrxxxxxrxrAAAxxrxrAAAAxrxrxxxxxxrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrArrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+  },
+  "verdicts_sha256": "e15f14f803ac55cde02c95462f867a7e1308f2519a08b59ff4fb153ad14e4dba"
+ }
+]

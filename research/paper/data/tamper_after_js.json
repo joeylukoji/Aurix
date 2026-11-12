@@ -1,0 +1,58 @@
+[
+ {
+  "package": "delivery-attested/1, release",
+  "signature_blocks": "current",
+  "trials": 64592,
+  "outcomes": {
+   "rejected": 64592,
+   "fallback": 0,
+   "exception": 0,
+   "accepted": 0
+  },
+  "disagreements_with_python": 0,
+  "first_disagreement": null,
+  "seconds": 132
+ },
+ {
+  "package": "conditions/1, release",
+  "signature_blocks": "current",
+  "trials": 79200,
+  "outcomes": {
+   "rejected": 79200,
+   "fallback": 0,
+   "exception": 0,
+   "accepted": 0
+  },
+  "disagreements_with_python": 0,
+  "first_disagreement": null,
+  "seconds": 174
+ },
+ {
+  "package": "delivery-attested/1, void",
+  "signature_blocks": "current",
+  "trials": 51392,
+  "outcomes": {
+   "rejected": 51392,
+   "fallback": 0,
+   "exception": 0,
+   "accepted": 0
+  },
+  "disagreements_with_python": 0,
+  "first_disagreement": null,
+  "seconds": 71
+ },
+ {
+  "package": "delivery-attested/1, release",
+  "signature_blocks": "earlier",
+  "trials": 63824,
+  "outcomes": {
+   "rejected": 63824,
+   "fallback": 0,
+   "exception": 0,
+   "accepted": 0
+  },
+  "disagreements_with_python": 0,
+  "first_disagreement": null,
+  "seconds": 111
+ }
+]
