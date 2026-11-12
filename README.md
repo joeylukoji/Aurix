@@ -1,3 +1,5 @@
+<p align="center"><img src="web/assets/aurix-icon.svg" width="96" alt="AURIX logo"></p>
+
 # AURIX — Programmable Value, Verifiable Trust
 
 > Project for the **PayPal AI Hackathon 2026** · testnet (AUR has no monetary value).
@@ -39,7 +41,7 @@ Every page has an **EN / FR** switch; the AI answers in the chosen language.
 
 | Layer | Content | Authority |
 | --- | --- | --- |
-| 4. External | PayPal (simulator or Sandbox), evidence sources | None over AUR balances |
+| 4. External | PayPal Sandbox (or the local simulator), evidence sources | None over AUR balances |
 | 3. Intelligence | Neural Guardian, AI advisor (Gemma 4) | Advisory only |
 | 2. Programmable money | Decision rules `delivery-attested/1`, `conditions/1`; `x/smartmoney` | Deterministic |
 | 1. Monetary protocol | AUR, CometBFT, `x/aurixbank` | Source of truth for balances |
@@ -51,7 +53,7 @@ flowchart LR
     GW --> IDX[Indexer :8086<br/>PostgreSQL]
     PAY --> AI[Neural Guardian x2 :8000]
     PAY --> LLM[Gemma 4<br/>Google AI Studio]
-    PAY --> PP[PayPal simulator :8090<br/>or Sandbox]
+    PAY --> PP[PayPal Sandbox<br/>or local simulator :8090]
     SRC[Evidence sources :8087<br/>carrier, inspector, customs] -- signed evidence --> GW
     PAY -- proof --> CHAIN[4 validators aurixd]
     AT[2 attestors] -- re-check capture --> PP
@@ -111,7 +113,7 @@ including for `conditions/1`. The gateway and indexer suites start a real `aurix
 | Conditional USD payment, `conditions/1`, AI-drafted conditions, offline / browser verifier | ✅ |
 | AI advisor with Gemma 4 (Google AI Studio) | ✅ tested live; 30 to 100 s per answer |
 | Guided demo, proof page, EN / FR | ✅ |
-| PayPal | ✅ simulator end to end · ⚠️ Sandbox: orders created, full capture + signed webhook not yet validated end to end |
+| PayPal Sandbox | ✅ integrated with a real PayPal Sandbox app: OAuth, orders created on the Sandbox (Orders v2, `AUTHORIZE`) with their sandbox.paypal.com approval link, webhook registered through the API · 🚧 full capture + signed webhook round trip being validated · the local simulator runs the whole flow offline |
 | Public HTTPS on aurixfin.duckdns.org | 🚧 certificate obtained; deployment being finalised (until December 1, 2026) |
 | Demo video | 📝 script: [`docs/submission/demo-script.md`](docs/submission/demo-script.md) |
 | Research contributions | C1 (deterministic execution / k-of-n attestation / advisory AI) demonstrated; C2 threat-model analysis and C3 ablation study not done yet |
@@ -137,7 +139,7 @@ including for `conditions/1`. The gateway and indexer suites start a real `aurix
 
 ## Limitations
 
-- Testnet only: **AUR has no monetary value**; PayPal runs as a simulator (or Sandbox).
+- Testnet only: **AUR has no monetary value**; PayPal runs in Sandbox mode (no real money) or as a local simulator.
 - The 4 validators run on one machine, operated by one team: real BFT, not yet independent operators.
 - The demo evidence sources (carrier, inspector, customs) are simulated; a valid signature proves who signed, not
   that goods physically arrived.

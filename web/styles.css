@@ -144,3 +144,7 @@ li.warn{color:var(--amber)}
 .wf-out.hit{box-shadow:0 8px 24px rgba(17,27,48,.1)}.wf-out.ok.hit{background:#f6fbea}.wf-out.void.hit{background:#f3f5f9}.wf-out.hold.hit{background:#fff8ea}
 .cond-json{margin:8px 0}
 @media (max-width:640px){.wf{padding:16px}.wf-ev code{margin-left:0;width:100%}}
+.brand{min-height:40px}.lang button{min-height:36px;min-width:40px}
+
+/* AURIX mark (assets/aurix-icon.svg as inline SVG) */
+.amark{display:inline-block;vertical-align:-0.12em;flex:none}

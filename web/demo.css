@@ -58,3 +58,6 @@ button.ghost{background:none;border-style:dashed;color:var(--red)}
   .stage{padding:18px}.stage-body{margin-left:0}
 }
 .sources button.got{background:#f1f6e4;border-color:#cfe6a3;color:#4c6f0c;opacity:1;cursor:default}
+/* touch targets: at least 40px high on every screen */
+header.slim .brand{min-height:40px}nav.pages a{display:inline-flex;align-items:center;min-height:40px}
+.lang button{min-height:36px;min-width:40px}

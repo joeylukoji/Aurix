@@ -27,3 +27,6 @@ PRODUCT.md
 .claude/
 CLAUDE.md
 skills-lock.json
+
+# Generated presentation videos
+brag-output/

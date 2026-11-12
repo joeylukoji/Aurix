@@ -122,3 +122,8 @@ h2{font:400 clamp(32px,4vw,56px)/1.08 var(--display);letter-spacing:-.025em;marg
 .lang button:focus-visible{outline:2px solid var(--lime);outline-offset:2px}
 .nav .btn{white-space:nowrap}
 @media (max-width:640px){.nav .btn{padding:9px 14px;font-size:14px}.nav .btn span{display:none}.nav-end{gap:6px}.lang button{padding:6px 8px}}
+/* touch targets: at least 40px high on every screen */
+.brand{min-height:40px}.lang button{min-height:36px;min-width:40px}.link{display:inline-block;padding:10px 0 8px}
+
+/* AURIX mark (assets/aurix-icon.svg as inline SVG) */
+.amark{display:inline-block;vertical-align:-0.12em;flex:none}
