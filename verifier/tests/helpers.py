@@ -54,6 +54,14 @@ def att(kind, order_id="ORDER-1", amount="120.00", when="2026-11-09T10:00:00Z", 
         provenance={"connector_id": "test", "raw_payload_hash": "sha256:" + "0" * 64})
 
 
+def legacy_sign(self, obj, created_at):
+    """A signature block in the format used before version 2: the signature covers the hash only.
+    Orders stored before the change carry such blocks; patch `crypto.Signer.sign` with this to build them."""
+    h = digest(obj)
+    return {"alg": crypto.ALG, "key_id": self.key_id, "signed_hash": h,
+            "signature": crypto.b64(self.private_key.sign(h.encode())), "created_at": created_at}
+
+
 def signed(a, signer=None):
     signer = signer or {"payment.authorized": AURIX, "shipment.delivered": CARRIER, "inspection.passed": INSPECTOR,
                         "buyer.disputed": AURIX, "arbiter.decision": ARBITER}[a["event"]["type"]]

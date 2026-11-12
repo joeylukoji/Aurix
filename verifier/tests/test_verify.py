@@ -10,7 +10,7 @@ from aurix_verify.jcs import canonicalize
 from aurix_verify.package import FORBIDDEN_WORDS, read_zip, verify_package
 from aurix_verify.rule import Evidence, decide
 
-from helpers import ARBITER, AURIX, CARRIER, INTRUDER, att, keys, package, signed, terms
+from helpers import ARBITER, AURIX, CARRIER, INTRUDER, att, keys, legacy_sign, package, signed, terms
 
 
 # ---------- JCS ----------
@@ -40,6 +40,67 @@ def test_signature_verdicts():
     assert reg.verify(obj, INTRUDER.sign(obj, "2026-11-08T08:00:00Z")) == crypto.UNKNOWN_KEY
     forged = dict(sig, key_id=CARRIER.key_id)  # AURIX's signature claimed as the carrier's
     assert reg.verify(obj, forged) == crypto.INVALID
+
+
+def test_signature_covers_the_whole_block():
+    reg = crypto.KeyRegistry(keys())
+    obj = {"hello": "world"}
+    sig = AURIX.sign(obj, "2026-11-08T08:00:00Z")
+    assert sig["version"] == crypto.SIGNATURE_VERSION and reg.verify(obj, sig) == crypto.VALID
+    assert reg.verify(obj, dict(sig, created_at="2026-11-09T08:00:00Z")) == crypto.INVALID  # time is signed
+    assert reg.verify(obj, dict(sig, note="added later")) == crypto.INVALID                 # so is any new field
+    assert reg.verify(obj, dict(sig, version=3)) == crypto.INVALID
+    assert reg.verify(obj, dict(sig, version=True)) == crypto.INVALID
+    without_version = {k: v for k, v in sig.items() if k != "version"}                      # no downgrade
+    assert reg.verify(obj, without_version) == crypto.INVALID
+
+
+def test_block_of_the_earlier_format_still_verifies():
+    reg = crypto.KeyRegistry(keys())
+    obj = {"hello": "world"}
+    sig = legacy_sign(AURIX, obj, "2026-11-08T08:00:00Z")
+    assert "version" not in sig and reg.verify(obj, sig) == crypto.VALID
+    assert reg.verify({"hello": "World"}, sig) == crypto.INVALID
+
+
+def test_base64_has_one_accepted_spelling():
+    reg = crypto.KeyRegistry(keys())
+    obj = {"hello": "world"}
+    sig = AURIX.sign(obj, "2026-11-08T08:00:00Z")
+    text = sig["signature"]
+    assert text.endswith("==")
+    twin = text[:-3] + chr(ord(text[-3]) + 1) + "=="  # same bytes under a lenient decoder: unused trailing bits
+    assert reg.verify(obj, dict(sig, signature=twin)) == crypto.INVALID
+    assert reg.verify(obj, dict(sig, signature=text + "\n")) == crypto.INVALID
+    with pytest.raises(ValueError):
+        crypto.unb64(twin)
+
+
+@pytest.mark.parametrize("when", ["2026-11-08t08:00:00Z", "2026-11-08 08:00:00Z", "2026-13-08T08:00:00Z",
+                                  "2026-02-30T08:00:00Z", ":026-11-08T08:00:00Z", "2026-11-08T08:00:00+00:00",
+                                  "", None, 1794816000, ["2026-11-08T08:00:00Z"]])
+def test_signing_time_is_strict_and_never_raises(when):
+    reg = crypto.KeyRegistry(keys())
+    obj = {"hello": "world"}
+    for make in (AURIX.sign, lambda o, t: legacy_sign(AURIX, o, t)):
+        assert reg.verify(obj, dict(make(obj, "2026-11-08T08:00:00Z"), created_at=when)) == crypto.INVALID
+
+
+def test_malformed_blocks_and_registries_give_a_verdict():
+    reg = crypto.KeyRegistry(keys())
+    obj = {"hello": "world"}
+    sig = AURIX.sign(obj, "2026-11-08T08:00:00Z")
+    for bad in (None, [], "x", 3, {}, dict(sig, key_id=["a"]), dict(sig, signature=None), dict(sig, signed_hash=7),
+                dict(sig, signature="not base64!")):
+        assert reg.verify(obj, bad) in (crypto.INVALID, crypto.UNKNOWN_KEY)
+    assert reg.verify({"amount": 1.5}, sig) == crypto.INVALID  # no canonical form
+    for doc in (None, [], {"keys": "x"}, {"keys": [None, 3, {"key_id": 5}, {"no": "id"}]}):
+        assert crypto.KeyRegistry(doc).keys == {}
+    kd = keys()
+    kd["keys"][0]["valid_from"] = "not a time"
+    broken = crypto.KeyRegistry(kd)
+    assert broken.verify(obj, sig) == crypto.INVALID
+    assert broken.valid_at(AURIX.key_id, crypto.parse_time("2026-11-08T08:00:00Z")) is False
 
 
 def test_revoked_key_verdicts():
@@ -293,3 +354,121 @@ def test_forged_decision_without_time_is_reported_not_raised():
         assert r["result"] == "INVALID" and any("decided_at" in e for e in r["errors"])
     data = rewrite(package(), "decision.json", lambda b: b.replace(b'"decided_at"', b'"decided_on"'))
     assert verify_package(files_of(data), keys())["result"] == "INVALID"
+
+
+# ---------- the signature envelope and malformed packages ----------
+def edit_json(data, path, fn):
+    """The package with one JSON file changed by fn(doc) (which may return a replacement document)."""
+    def apply(raw):
+        doc = json.loads(raw)
+        out = fn(doc)
+        return json.dumps(doc if out is None else out, indent=2, sort_keys=True).encode()
+    return rewrite(data, path, apply)
+
+
+def legacy_package(monkeypatch, **kw):
+    monkeypatch.setattr(crypto.Signer, "sign", legacy_sign)
+    return package(**kw)
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_manifest_signing_time_cannot_be_moved(monkeypatch, legacy):
+    data = legacy_package(monkeypatch) if legacy else package()
+    assert verify_package(read_zip(data), keys())["result"] == "VALID"
+    moved = edit_json(data, "manifest.sig.json", lambda sig: sig.update(created_at="2026-11-10T09:00:01Z"))
+    r = verify_package(read_zip(moved), keys())
+    assert r["result"] == "INVALID" and any("manifest.sig.json" in e for e in r["errors"])
+
+
+def test_package_in_the_earlier_signature_format_verifies(monkeypatch):
+    data = legacy_package(monkeypatch)
+    assert "version" not in json.loads(read_zip(data)["manifest.sig.json"])
+    r = verify_package(read_zip(data), keys())
+    assert r["result"] == "VALID" and r["decision"]["replayed"] == "RELEASE"
+
+
+def test_reformatted_signature_text_is_refused():
+    def respell(sig):
+        text = sig["signature"]
+        sig["signature"] = text[:-3] + chr(ord(text[-3]) + 1) + "=="
+    r = verify_package(read_zip(edit_json(package(), "manifest.sig.json", respell)), keys())
+    assert r["result"] == "INVALID"
+
+
+MALFORMED = {
+    "sig time not a time": ("manifest.sig.json", lambda d: d.update(created_at=":026-11-10T09:00:00Z")),
+    "sig is a list": ("manifest.sig.json", lambda d: [d]),
+    "sig key id is a list": ("manifest.sig.json", lambda d: d.update(key_id=["aurix-escrow-test-1"])),
+    "manifest files is a list": ("manifest.json", lambda d: d.update(files=list(d["files"]))),
+    "manifest is a number": ("manifest.json", lambda d: 7),
+    "terms is a list": ("terms.json", lambda d: [d]),
+    "terms deadline is a number": ("terms.json", lambda d: d.update(deadline=20261115)),
+    "terms amount is a string": ("terms.json", lambda d: d.update(amount="120.00")),
+    "float in an attestation": ("attestations/att_payment_authorized_1.json", lambda d: d.update(extra=1.5)),
+    "attestation source is a list": ("attestations/att_shipment_delivered_1.json", lambda d: d.update(source=[1])),
+    "attestation event is a string": ("attestations/att_shipment_delivered_1.json", lambda d: d.update(event="x")),
+    "receipts is a string": ("receipts.json", lambda d: d.update(receipts="none")),
+    "receipt time is a number": ("receipts.json", lambda d: d["receipts"][0].update(received_at=5)),
+    "decision inputs is a number": ("decision.json", lambda d: d.update(inputs=3)),
+    "decision rule is a list": ("decision.json", lambda d: d.update(rule=["conditions/1"])),
+    "registry is a list": ("trust/public-keys.json", lambda d: d["keys"]),
+    "registry key time is a number": ("trust/public-keys.json", lambda d: d["keys"][0].update(valid_from=5)),
+    "trust metadata sources is a list": ("trust/trust-metadata.json", lambda d: d.update(sources=[])),
+}
+
+
+@pytest.mark.parametrize("name", sorted(MALFORMED))
+@pytest.mark.parametrize("pinned", [True, False])
+def test_malformed_package_is_reported_not_raised(name, pinned):
+    path, fn = MALFORMED[name]
+    r = verify_package(read_zip(edit_json(package(), path, fn)), keys() if pinned else None)
+    assert r["result"] == "INVALID" and r["errors"]
+    assert not any(e.startswith("malformed package") for e in r["errors"])  # reported by a specific check
+
+
+def test_unexpected_internal_error_fails_closed(monkeypatch):
+    import aurix_verify.package as pkg
+
+    def boom(files, trusted_keys):
+        raise RuntimeError("a case no check anticipated")
+    monkeypatch.setattr(pkg, "_verify_package", boom)
+    r = verify_package(read_zip(package()), keys())
+    assert r["result"] == "INVALID" and r["errors"] == ["malformed package (RuntimeError)"]
+
+
+def test_signed_but_unevaluable_terms_do_not_replay():
+    """Terms the issuer signed but the rule cannot evaluate: the package is refused, with a report."""
+    t = terms() | {"deadline": "soon"}
+    data = build_broken_terms_package(t)
+    r = verify_package(read_zip(data), keys())
+    assert r["result"] == "INVALID" and r["decision"]["matches"] is False
+
+
+def build_broken_terms_package(t):
+    from aurix_verify.package import build_package, receipts_doc
+    items = [signed(att("payment.authorized"))]
+    when = "2026-11-10T09:00:00Z"
+    receipts = receipts_doc(t["order_id"], [(a, a["timestamps"]["attested_at"]) for a, _ in items])
+    decision = {"schema": "aurix.escrow-decision", "schema_version": "1.0", "order_id": t["order_id"],
+                "rule": t["rule"], "decision": "WAIT", "inputs": [], "decided_at": when, "deadline": t["deadline"]}
+    return build_package(terms=t, terms_sig=AURIX.sign(t, when), attestations=items, receipts=receipts,
+                         receipts_sig=AURIX.sign(receipts, when), decision=decision,
+                         decision_sig=AURIX.sign(decision, when), keys=keys(), trust_metadata={"sources": {}},
+                         signer=AURIX, created_at=when)
+
+
+def test_replay_does_not_depend_on_the_order_evidence_is_held_in():
+    """Two valid deliveries, the one with the larger id received first. The service reads evidence by
+    reception time and the verifier by file name; both must cite the same delivery."""
+    first = signed(att("shipment.delivered", when="2026-11-10T08:00:00Z", n=2))
+    second = signed(att("shipment.delivered", when="2026-11-10T09:00:00Z", n=1))
+    auth = signed(att("payment.authorized"))
+    for items in ([auth, first, second], [second, first, auth]):
+        r = verify_package(read_zip(package(items=items, decided_at="2026-11-10T10:00:00Z")), keys())
+        assert r["result"] == "VALID" and r["decision"]["replayed"] == "RELEASE", r["errors"]
+    reg = crypto.KeyRegistry(keys())
+    held = [Evidence(a, s["key_id"], reg.role(s["key_id"]), reg.verify(a, s), a["timestamps"]["attested_at"])
+            for a, s in (auth, first, second)]
+    cited = {tuple(a["attestation_id"] for a in decide(terms(), order, "2026-11-10T10:00:00Z").inputs)
+             for order in (held, held[::-1], [held[1], held[2], held[0]])}
+    assert cited == {("att_payment_authorized_1", "att_shipment_delivered_2")}

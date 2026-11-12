@@ -120,6 +120,9 @@ decide(terms, evidence, now) ->
 Rules: amounts in decimal (never `float`); references compared exactly; the decision and its inputs (hash of each
 attestation) are signed by AURIX and added to the package.
 
+Evidence is evaluated in a canonical order (reception time, then attestation id): the decision and the evidence it
+cites do not depend on the order in which the service or a verifier holds the attestations.
+
 Why the **reception** time: an event's time is declared by its signer and can be backdated; the time AURIX received
 the evidence is recorded in a signed receipt (`receipts.json`). Evidence that arrived before the deadline but was
 evaluated after it still counts. For the same reason a key's validity is checked at reception time, not at the
@@ -136,7 +139,16 @@ Event types: `payment.authorized`, `payment.captured`, `payment.anchored`, `paym
 `shipment.shipped`, `shipment.delivered`, `inspection.passed`, `customs.cleared` (sources), `buyer.disputed` (AURIX),
 `arbiter.decision` (arbiter). `payment.anchored` references the on-chain `PaymentProof` once k attestors confirmed it.
 
+**Signature block** (`verifier/aurix_verify/crypto.py`): `{alg, key_id, signed_hash, created_at, version: 2, signature}`.
+The Ed25519 signature covers the canonical form of the whole block except `signature`, so the signing time and the
+key id are authenticated together with the hash. A block without `version` is the earlier format (signature over the
+hash only): it still verifies, because stored orders carry such blocks, and the verifier ties the manifest signature's
+`created_at` to the manifest's own `created_at`. `created_at` must be `YYYY-MM-DDTHH:MM:SSZ`, and base64 values have a
+single accepted spelling.
+
 **Signature verdicts:** `valid`, `invalid`, `unknown_key`, `revoked_key`, `valid_but_key_revoked_after_signing`.
+A malformed block or key entry gives `invalid`; the verifier never raises on package content and reports a package it
+cannot interpret as INVALID.
 
 **Decision:**
 

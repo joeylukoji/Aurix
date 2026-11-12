@@ -92,29 +92,61 @@ def read_zip(data: bytes, max_files: int = 500, max_bytes: int = 5_000_000) -> d
     return out
 
 
+def _obj(x) -> dict:
+    """x if it is a JSON object, otherwise an empty one (package content is untrusted input)."""
+    return x if isinstance(x, dict) else {}
+
+
+def _digest(obj) -> str | None:
+    """Canonical hash, or None when the object has no canonical form (a float, for instance)."""
+    try:
+        return digest(obj)
+    except (TypeError, ValueError):
+        return None
+
+
 def verify_package(files: dict[str, bytes], trusted_keys: dict | None = None) -> dict:
-    """Returns a verification report. Never raises on a bad package: problems become report entries."""
+    """Returns a verification report. Never raises on a bad package: problems become report entries, and a
+    package malformed in a way no check anticipated is reported INVALID (the verifier fails closed)."""
+    try:
+        return _verify_package(files, trusted_keys)
+    except Exception as exc:  # noqa: BLE001 - deliberate last line of defence, see the docstring
+        return _report(None, "invalid", "invalid", "unverified", "incomplete", [], None,
+                       [f"malformed package ({type(exc).__name__})"], [],
+                       "external" if trusted_keys is not None else "package (self-declared)")
+
+
+def _verify_package(files: dict[str, bytes], trusted_keys: dict | None) -> dict:
     errors: list[str] = []
     anomalies: list[dict] = []
 
     def load(path):
+        """A file's JSON object, or None (with a report entry) when it is missing or not a JSON object."""
         try:
-            return json.loads(files[path])
+            doc = json.loads(files[path])
         except KeyError:
             errors.append(f"missing file: {path}")
-        except ValueError:
+            return None
+        except (ValueError, RecursionError):
             errors.append(f"not valid JSON: {path}")
-        return None
+            return None
+        if not isinstance(doc, dict):
+            errors.append(f"not a JSON object: {path}")
+            return None
+        return doc
 
     manifest = load("manifest.json")
-    if not isinstance(manifest, dict) or manifest.get("schema") != SCHEMA:
+    if manifest is None or manifest.get("schema") != SCHEMA:
         return _report(None, "invalid", "invalid", "unverified", "incomplete", [], None,
                        errors + ["not an AURIX proof package"], [], "none")
     order_id = manifest.get("order_id")
 
     # 1. Integrity: every listed file present and unchanged; nothing unlisted.
-    listed = manifest.get("files") or {}
+    listed = manifest.get("files")
     integrity_ok = True
+    if not isinstance(listed, dict):
+        errors.append("manifest.json: no file list")
+        listed, integrity_ok = {}, False
     for path, h in listed.items():
         if path not in files:
             errors.append(f"listed file missing: {path}")
@@ -134,7 +166,7 @@ def verify_package(files: dict[str, bytes], trusted_keys: dict | None = None) ->
 
     sig_verdicts: list[str] = []
 
-    def check(obj, sig_path, role) -> str:
+    def check(obj, sig_path, role, signed_at=None) -> str:
         sig = load(sig_path)
         if obj is None or sig is None:
             sig_verdicts.append("missing")
@@ -143,12 +175,17 @@ def verify_package(files: dict[str, bytes], trusted_keys: dict | None = None) ->
         if v == crypto.VALID and registry.role(sig.get("key_id")) != role:
             errors.append(f"{sig_path}: signed by a {registry.role(sig.get('key_id'))} key, {role} required")
             v = crypto.INVALID
+        if v == crypto.VALID and signed_at is not None and sig.get("created_at") != signed_at:
+            errors.append(f"{sig_path}: signing time differs from the signed document's")
+            v = crypto.INVALID
         sig_verdicts.append(v)
         if v != crypto.VALID:
             errors.append(f"{sig_path}: {v}")
         return v
 
-    check(manifest, "manifest.sig.json", "aurix")
+    # Every other signature file is listed, with its hash, in the manifest. The manifest's own signature file
+    # cannot be, so its signing time is tied to the manifest's `created_at`, which the signature covers.
+    check(manifest, "manifest.sig.json", "aurix", signed_at=manifest.get("created_at") or "")
     terms = load("terms.json")
     terms_ok = check(terms, "signatures/terms.json", "aurix") == crypto.VALID
 
@@ -165,34 +202,37 @@ def verify_package(files: dict[str, bytes], trusted_keys: dict | None = None) ->
         sig_verdicts.append(v)
         if v != crypto.VALID:
             errors.append(f"attestation {aid}: signature {v}")
-        evidence.append(Evidence(att, sig.get("key_id", ""), registry.role(sig.get("key_id", "")), v))
-        src = att.get("source", {})
-        prov = src.get("provider", "?")
+        key_id = sig.get("key_id") if isinstance(sig.get("key_id"), str) else ""
+        evidence.append(Evidence(att, key_id, registry.role(key_id), v))
+        src = _obj(att.get("source"))
+        prov = src.get("provider") if isinstance(src.get("provider"), str) else "?"
         s = sources.setdefault(prov, {"provider": prov, "type": src.get("source_type", "unknown"),
                                       "environment": src.get("environment"), "verification_method":
                                       src.get("verification_method"), "status": "verified"})
         if v != crypto.VALID or src.get("verification_status") != "verified":
             s["status"] = "unverified"
-        declared = (meta.get("sources") or {}).get(prov, {}).get("type")
+        declared = _obj(_obj(meta.get("sources")).get(prov)).get("type")
         if declared and declared != s["type"]:
             anomalies.append({"class": 2, "code": "source_type_mismatch", "detail": prov})
 
     # 4. Consistency between the sources and the terms.
     if terms:
-        want = (str(terms.get("amount", {}).get("value")), str(terms.get("amount", {}).get("currency")))
+        amount = _obj(terms.get("amount"))
+        want = (str(amount.get("value")), str(amount.get("currency")))
         for e in evidence:
             a = e.attestation
             if a.get("operation_id") != order_id:
                 anomalies.append({"class": 2, "code": "foreign_order", "detail": a.get("attestation_id")})
-            amt = a.get("event", {}).get("amount")
-            if amt and (str(amt.get("value")), str(amt.get("currency"))) != want:
+            amt = _obj(a.get("event")).get("amount")
+            if amt and (str(_obj(amt).get("value")), str(_obj(amt).get("currency"))) != want:
                 anomalies.append({"class": 3, "code": "amount_mismatch", "detail": a.get("attestation_id")})
-        dup = [k for k, n in Counter((e.attestation.get("source", {}).get("provider"),
-                                      e.attestation.get("source", {}).get("provider_event_id"))
+        dup = [k for k, n in Counter((str(_obj(e.attestation.get("source")).get("provider")),
+                                      str(_obj(e.attestation.get("source")).get("provider_event_id") or ""))
                                      for e in evidence).items() if n > 1 and k[1]]
         for k in dup:
             anomalies.append({"class": 2, "code": "duplicate_event", "detail": f"{k[0]}:{k[1]}"})
-    types = {e.type for e in evidence if e.verdict == crypto.VALID}
+    types = {_obj(e.attestation.get("event")).get("type") for e in evidence if e.verdict == crypto.VALID}
+    types = {x for x in types if isinstance(x, str)}
     if "payment.authorized" not in types:
         anomalies.append({"class": 1, "code": "missing_payment_authorization", "detail": order_id})
     if "shipment.delivered" not in types and "payment.voided" not in types:
@@ -201,10 +241,18 @@ def verify_package(files: dict[str, bytes], trusted_keys: dict | None = None) ->
     # 5. Replay the decision with the evidence AURIX had received at decision time.
     receipts = load("receipts.json") if "receipts.json" in listed else None
     receipts_ok = receipts is not None and check(receipts, "signatures/receipts.json", "aurix") == crypto.VALID
-    received_at = {r["attestation_hash"]: crypto.parse_time(r["received_at"])
-                   for r in (receipts or {}).get("receipts", [])} if receipts_ok else {}
+    received_at = {}
+    if receipts_ok:
+        entries = receipts.get("receipts")
+        for r in entries if isinstance(entries, list) else []:
+            when = crypto.try_time(_obj(r).get("received_at"))
+            if when is None or not isinstance(_obj(r).get("attestation_hash"), str):
+                errors.append("receipts.json: malformed entry")
+            else:
+                received_at[r["attestation_hash"]] = when
+    hashes = {id(e): _digest(e.attestation) for e in evidence}
     for e in evidence:
-        rec = received_at.get(digest(e.attestation))
+        rec = received_at.get(hashes[id(e)])
         if rec is None:
             errors.append(f"no AURIX receipt for attestation {e.attestation.get('attestation_id')}")
         elif e.verdict == crypto.VALID and not registry.valid_at(e.key_id, rec):
@@ -216,27 +264,31 @@ def verify_package(files: dict[str, bytes], trusted_keys: dict | None = None) ->
     if "decision.json" in listed:
         decision = load("decision.json")
         dec_ok = check(decision, "signatures/decision.json", "aurix") == crypto.VALID
-        decided = decision.get("decided_at") if isinstance(decision, dict) else None
-        try:
-            at = crypto.parse_time(decided) if isinstance(decided, str) else None
-        except ValueError:
-            at = None
+        at = crypto.try_time(decision.get("decided_at")) if decision else None
         if decision is not None and at is None:
             errors.append("decision.json: decided_at missing or not a valid time")
         if decision and terms and terms_ok and at is not None:
             known = []
             for e in evidence:
-                rec = received_at.get(digest(e.attestation))
+                rec = received_at.get(hashes[id(e)])
                 if rec is not None and rec <= at:
                     e.received_at = crypto.format_time(rec)
                     known.append(e)
-            out = decide(terms, known, decision["decided_at"])
-            same_inputs = sorted(digest(a) for a in out.inputs) == sorted(decision.get("inputs", []))
-            replay = {"recorded": decision.get("decision"), "replayed": out.decision,
-                      "matches": dec_ok and out.decision == decision.get("decision") and same_inputs,
-                      "rule": decision.get("rule"), "reasons": out.reasons}
-            if decision.get("rule") not in RULES or decision.get("rule") != terms.get("rule", RULE_ID):
-                errors.append(f"unknown rule {decision.get('rule')}")
+            rule = decision.get("rule")
+            try:
+                out = decide(terms, known, decision["decided_at"])
+                inputs = decision.get("inputs")
+                same_inputs = isinstance(inputs, list) and all(isinstance(h, str) for h in inputs) and \
+                    sorted(digest(a) for a in out.inputs) == sorted(inputs)
+                replay = {"recorded": decision.get("decision"), "replayed": out.decision,
+                          "matches": dec_ok and out.decision == decision.get("decision") and same_inputs,
+                          "rule": rule, "reasons": out.reasons}
+            except (ValueError, KeyError, TypeError, AttributeError, ArithmeticError):
+                # signed terms or evidence the rule cannot evaluate: the recorded decision is not reproducible
+                replay = {"recorded": decision.get("decision"), "replayed": None, "matches": False,
+                          "rule": rule, "reasons": ["the rule cannot be evaluated on these terms and evidence"]}
+            if not isinstance(rule, str) or rule not in RULES or rule != terms.get("rule", RULE_ID):
+                errors.append(f"unknown rule {rule}")
                 replay["matches"] = False
             if not replay["matches"]:
                 errors.append("recorded decision does not match the replayed rule")

@@ -11,7 +11,7 @@ the decision recorded in a proof package. See docs/architecture/evidence-escrow.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 from .crypto import VALID, format_time, parse_time
@@ -59,7 +59,17 @@ def _refs(a: dict) -> dict:
     return a.get("source", {}).get("provider_reference") or {}
 
 
+def _canonical_order(e: Evidence):
+    """Reception time, then attestation id; evidence without a reception time (never trusted) goes last."""
+    rec = parse_time(e.received_at) if e.received_at else None
+    return (rec is None, rec or datetime.min.replace(tzinfo=timezone.utc), str(e.attestation.get("attestation_id", "")))
+
+
 def decide(terms: dict, evidence: list[Evidence], now: str) -> Outcome:
+    # The outcome and the evidence it cites must not depend on the order in which a caller happens to hold
+    # the evidence: the service reads it by reception time, the verifier by file name. Where several pieces
+    # of evidence would do, the rules below take the first in this order.
+    evidence = sorted(evidence, key=_canonical_order)
     if terms.get("rule") == RULE_CONDITIONS:
         return _decide_conditions(terms, evidence, now)
     return _decide_delivery(terms, evidence, now)

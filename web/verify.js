@@ -34,8 +34,30 @@
   const hexOf = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
   async function sha256Hex(bytes) { return hexOf(await subtle.digest("SHA-256", bytes)); }
   async function digest(obj) { return "sha256:" + await sha256Hex(te.encode(canon(obj))); }
-  const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
-  const t = (s) => (s ? Date.parse(s) : NaN);
+  // Strict base64: one accepted spelling per byte string (alphabet, padding, zero trailing bits).
+  const unb64 = (s) => {
+    if (typeof s !== "string") throw new Error("base64 value must be a string");
+    const bin = atob(s);
+    if (btoa(bin) !== s) throw new Error("non-canonical base64");
+    return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  };
+  const t = (s) => (typeof s === "string" && s ? Date.parse(s) : NaN);
+  // A signing time in exactly YYYY-MM-DDTHH:MM:SSZ (a real date), or NaN: the same strings the Python verifier accepts.
+  const strictT = (s) => {
+    if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(s)) return NaN;
+    const ms = Date.parse(s);
+    return !Number.isNaN(ms) && new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z") === s ? ms : NaN;
+  };
+  const isObj = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
+  // Bytes a signature block's signature covers. Version 2: the whole block except `signature` (canonical form),
+  // so the signing time and key id are authenticated. No version: the earlier format, the hash only.
+  const signedMessage = (sig) => {
+    if (sig.version === undefined) return te.encode(sig.signed_hash);
+    if (sig.version !== 2) throw new Error("unknown signature block version");
+    const body = {};
+    for (const k of Object.keys(sig)) if (k !== "signature") body[k] = sig[k];
+    return te.encode(canon(body));
+  };
 
   // ---------- zip (stored or deflate) ----------
   // Decompresses with a hard cap: the sizes declared in the zip are attacker-controlled (zip bomb).
@@ -87,27 +109,37 @@
 
   // ---------- keys ----------
   class KeyRegistry {
-    constructor(doc) { this.keys = Object.fromEntries((doc?.keys || []).map((k) => [k.key_id, k])); }
-    role(id) { return this.keys[id]?.role ?? null; }
-    validAt(id, when) {
-      const k = this.keys[id]; if (!k) return false;
-      const start = t(k.valid_from), end = t(k.valid_until), revoked = t(k.revoked_at);
-      return !(when < start || when > end || when >= revoked);
+    constructor(doc) { // a registry read from a package is untrusted input: malformed entries are dropped
+      const entries = isObj(doc) && Array.isArray(doc.keys) ? doc.keys : [];
+      this.keys = new Map(entries.filter((k) => isObj(k) && typeof k.key_id === "string").map((k) => [k.key_id, k]));
     }
-    async verify(obj, sig) {
-      const k = this.keys[sig?.key_id || ""];
+    get(id) { return typeof id === "string" ? this.keys.get(id) : undefined; }
+    role(id) { const r = this.get(id)?.role; return typeof r === "string" ? r : null; }
+    // A validity bound: null when absent, NaN when present but not a time (the key is then unusable).
+    static bound(v) { return v === null || v === undefined || v === "" ? null : t(v); }
+    validAt(id, when) {
+      const k = this.get(id); if (!k) return false;
+      const [start, end, revoked] = [k.valid_from, k.valid_until, k.revoked_at].map(KeyRegistry.bound);
+      if ([start, end, revoked].some(Number.isNaN)) return false;
+      return !((start !== null && when < start) || (end !== null && when > end) || (revoked !== null && when >= revoked));
+    }
+    async verify(obj, sig) { // never throws on a malformed block: the verdict is then "invalid"
+      if (!isObj(sig)) return INVALID;
+      const k = this.get(sig.key_id);
       if (!k || k.alg !== "Ed25519" || sig.alg !== "Ed25519") return UNKNOWN_KEY;
-      if (sig.signed_hash !== await digest(obj)) return INVALID;
       try {
+        if (sig.signed_hash !== await digest(obj)) return INVALID;
         const key = await subtle.importKey("raw", unb64(k.public_key), { name: "Ed25519" }, false, ["verify"]);
-        if (!await subtle.verify({ name: "Ed25519" }, key, unb64(sig.signature), te.encode(sig.signed_hash))) return INVALID;
+        if (!await subtle.verify({ name: "Ed25519" }, key, unb64(sig.signature), signedMessage(sig))) return INVALID;
       } catch (e) {
         if (e && /not supported|Unrecognized|NotSupported/i.test(String(e.name) + String(e.message))) throw new Error("ED25519_UNSUPPORTED");
         return INVALID;
       }
-      const signed = t(sig.created_at), start = t(k.valid_from), end = t(k.valid_until), revoked = t(k.revoked_at);
-      if (Number.isNaN(signed) || signed < start || signed > end) return INVALID;
-      if (!Number.isNaN(revoked)) return signed < revoked ? VALID_KEY_REVOKED_LATER : REVOKED_KEY;
+      const [start, end, revoked] = [k.valid_from, k.valid_until, k.revoked_at].map(KeyRegistry.bound);
+      if ([start, end, revoked].some(Number.isNaN)) return INVALID;
+      const signed = strictT(sig.created_at);
+      if (Number.isNaN(signed) || (start !== null && signed < start) || (end !== null && signed > end)) return INVALID;
+      if (revoked !== null) return signed < revoked ? VALID_KEY_REVOKED_LATER : REVOKED_KEY;
       return VALID;
     }
   }
@@ -126,6 +158,10 @@
   const type = (e) => e.attestation?.event?.type || "";
   const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
   function decide(terms, evidence, now) {
+    // Canonical order (reception time, then attestation id; no reception time goes last), so that the outcome and
+    // the evidence it cites do not depend on the order in which the caller holds the evidence.
+    const key = (e) => { const r = e.received_at ? t(e.received_at) : NaN; return [Number.isNaN(r) ? 1 : 0, Number.isNaN(r) ? 0 : r, String(e.attestation?.attestation_id ?? "")]; };
+    evidence = evidence.map((e) => [key(e), e]).sort(([a], [b]) => a[0] - b[0] || a[1] - b[1] || (a[2] < b[2] ? -1 : a[2] > b[2] ? 1 : 0)).map(([, e]) => e);
     return terms.rule === RULE_CONDITIONS ? decideConditions(terms, evidence, now) : decideDelivery(terms, evidence, now);
   }
   function checks(terms, reasons) {
@@ -249,17 +285,32 @@
   }
 
   // ---------- package (port of aurix_verify/package.py verify_package) ----------
+  // Never rejects on a bad package: problems become report entries, and a package malformed in a way no check
+  // anticipated is reported INVALID (the verifier fails closed). Only a missing Ed25519 implementation throws.
   async function verifyPackage(files, trustedKeys = null) {
+    try {
+      return await verifyPackageInner(files, trustedKeys);
+    } catch (e) {
+      if (e && e.message === "ED25519_UNSUPPORTED") throw e;
+      return report(null, "invalid", "invalid", "unverified", "incomplete", [], null,
+        [`malformed package (${(e && e.name) || "Error"})`], [], trustedKeys ? "external" : "package (self-declared)");
+    }
+  }
+  async function verifyPackageInner(files, trustedKeys) {
     const errors = [], anomalies = [];
-    const load = (p) => {
-      if (!(p in files)) { errors.push(`missing file: ${p}`); return null; }
-      try { return JSON.parse(td.decode(files[p])); } catch { errors.push(`not valid JSON: ${p}`); return null; }
+    const load = (p) => { // a file's JSON object, or null (with a report entry)
+      if (!Object.prototype.hasOwnProperty.call(files, p)) { errors.push(`missing file: ${p}`); return null; }
+      let doc;
+      try { doc = JSON.parse(td.decode(files[p])); } catch { errors.push(`not valid JSON: ${p}`); return null; }
+      if (!isObj(doc)) { errors.push(`not a JSON object: ${p}`); return null; }
+      return doc;
     };
     const manifest = load("manifest.json");
-    if (!manifest || typeof manifest !== "object" || manifest.schema !== SCHEMA)
+    if (!manifest || manifest.schema !== SCHEMA)
       return report(null, "invalid", "invalid", "unverified", "incomplete", [], null, [...errors, "not an AURIX proof package"], [], "none");
-    const orderId = manifest.order_id, listed = manifest.files || {};
-    let integrityOk = true;
+    const orderId = manifest.order_id;
+    let integrityOk = true, listed = manifest.files;
+    if (!isObj(listed)) { errors.push("manifest.json: no file list"); listed = {}; integrityOk = false; }
     for (const [p, h] of Object.entries(listed)) {
       if (!(p in files)) { errors.push(`listed file missing: ${p}`); integrityOk = false; }
       else if ("sha256:" + await sha256Hex(files[p]) !== h) { errors.push(`file modified: ${p}`); integrityOk = false; }
@@ -270,16 +321,19 @@
     const reg = new KeyRegistry(trustedKeys || load("trust/public-keys.json") || {});
     const meta = load("trust/trust-metadata.json") || {};
     const verdicts = [];
-    const check = async (obj, sigPath, role) => {
+    const check = async (obj, sigPath, role, signedAt = null) => {
       const sig = load(sigPath);
       if (obj == null || sig == null) { verdicts.push("missing"); return "missing"; }
       let v = await reg.verify(obj, sig);
       if (v === VALID && reg.role(sig.key_id) !== role) { errors.push(`${sigPath}: signed by a ${reg.role(sig.key_id)} key, ${role} required`); v = INVALID; }
+      if (v === VALID && signedAt !== null && sig.created_at !== signedAt) { errors.push(`${sigPath}: signing time differs from the signed document's`); v = INVALID; }
       verdicts.push(v);
       if (v !== VALID) errors.push(`${sigPath}: ${v}`);
       return v;
     };
-    await check(manifest, "manifest.sig.json", "aurix");
+    // Every other signature file is listed, with its hash, in the manifest. The manifest's own signature file
+    // cannot be, so its signing time is tied to the manifest's created_at, which the signature covers.
+    await check(manifest, "manifest.sig.json", "aurix", manifest.created_at || "");
     const terms = load("terms.json");
     const termsOk = (await check(terms, "signatures/terms.json", "aurix")) === VALID;
 
@@ -291,8 +345,9 @@
       const v = Object.keys(sig).length ? await reg.verify(att, sig) : "missing";
       verdicts.push(v);
       if (v !== VALID) errors.push(`attestation ${aid}: signature ${v}`);
-      evidence.push({ attestation: att, key_id: sig.key_id || "", role: reg.role(sig.key_id || ""), verdict: v });
-      const src = att.source || {}, prov = src.provider || "?";
+      const keyId = typeof sig.key_id === "string" ? sig.key_id : "";
+      evidence.push({ attestation: att, key_id: keyId, role: reg.role(keyId), verdict: v });
+      const src = isObj(att.source) ? att.source : {}, prov = typeof src.provider === "string" ? src.provider : "?";
       const s = sources[prov] ||= { provider: prov, type: src.source_type || "unknown", environment: src.environment ?? null,
         verification_method: src.verification_method ?? null, status: "verified" };
       if (v !== VALID || src.verification_status !== "verified") s.status = "unverified";
@@ -318,9 +373,13 @@
     const receipts = "receipts.json" in listed ? load("receipts.json") : null;
     const receiptsOk = receipts != null && (await check(receipts, "signatures/receipts.json", "aurix")) === VALID;
     const receivedAt = {};
-    if (receiptsOk) for (const r of receipts.receipts || []) receivedAt[r.attestation_hash] = t(r.received_at);
-    const dig = new Map();
-    for (const e of evidence) dig.set(e, await digest(e.attestation));
+    if (receiptsOk) for (const r of Array.isArray(receipts.receipts) ? receipts.receipts : []) {
+      const when = isObj(r) ? t(r.received_at) : NaN;
+      if (Number.isNaN(when) || typeof r.attestation_hash !== "string") errors.push("receipts.json: malformed entry");
+      else receivedAt[r.attestation_hash] = when;
+    }
+    const dig = new Map(); // canonical hash, or null when the object has no canonical form (a float, for instance)
+    for (const e of evidence) { try { dig.set(e, await digest(e.attestation)); } catch { dig.set(e, null); } }
     for (const e of evidence) {
       const rec = receivedAt[dig.get(e)];
       if (rec === undefined) errors.push(`no AURIX receipt for attestation ${e.attestation.attestation_id}`);
@@ -336,13 +395,19 @@
       const at = decision && typeof decision.decided_at === "string" ? t(decision.decided_at) : NaN;
       if (decision && Number.isNaN(at)) errors.push("decision.json: decided_at missing or not a valid time");
       if (decision && terms && termsOk && !Number.isNaN(at)) {
-        const known = evidence.filter((e) => dig.get(e) in receivedAt && receivedAt[dig.get(e)] <= at)
+        const known = evidence.filter((e) => dig.get(e) !== null && dig.get(e) in receivedAt && receivedAt[dig.get(e)] <= at)
           .map((e) => ({ ...e, received_at: new Date(receivedAt[dig.get(e)]).toISOString().replace(/\.\d{3}Z$/, "Z") }));
-        const out = decide(terms, known, decision.decided_at);
-        const got = (await Promise.all(out.inputs.map(digest))).sort();
-        const same = JSON.stringify(got) === JSON.stringify([...(decision.inputs || [])].sort());
-        replay = { recorded: decision.decision, replayed: out.decision, matches: decOk && out.decision === decision.decision && same,
-          rule: decision.rule, reasons: out.reasons };
+        try {
+          const out = decide(terms, known, decision.decided_at);
+          const got = (await Promise.all(out.inputs.map(digest))).sort();
+          const inputs = decision.inputs;
+          const same = Array.isArray(inputs) && inputs.every((h) => typeof h === "string") && JSON.stringify(got) === JSON.stringify([...inputs].sort());
+          replay = { recorded: decision.decision, replayed: out.decision, matches: decOk && out.decision === decision.decision && same,
+            rule: decision.rule, reasons: out.reasons };
+        } catch { // signed terms or evidence the rule cannot evaluate: the recorded decision is not reproducible
+          replay = { recorded: decision.decision, replayed: null, matches: false, rule: decision.rule,
+            reasons: ["the rule cannot be evaluated on these terms and evidence"] };
+        }
         if (![RULE_ID, RULE_CONDITIONS].includes(decision.rule) || decision.rule !== (terms.rule || RULE_ID)) { errors.push(`unknown rule ${decision.rule}`); replay.matches = false; }
         if (!replay.matches) errors.push("recorded decision does not match the replayed rule");
       }

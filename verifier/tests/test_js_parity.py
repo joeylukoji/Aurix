@@ -4,12 +4,15 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from unittest import mock
+
 import pytest
 
+from aurix_verify import crypto
 from aurix_verify.package import read_zip, verify_package
 
-from helpers import ARBITER, att, cond_terms, keys, package, signed, terms
-from test_verify import rewrite
+from helpers import ARBITER, att, cond_terms, keys, legacy_sign, package, signed, terms
+from test_verify import MALFORMED, edit_json, rewrite
 
 NODE = shutil.which("node")
 JS = Path(__file__).resolve().parents[2] / "web" / "verify.js"
@@ -42,7 +45,23 @@ def cases():
     dispute = signed(att("buyer.disputed", when="2026-11-12T08:00:00Z"))
     either = {"at_least": 1, "of": [{"evidence": "inspection.passed", "source": "aurix_demo_inspection"},
                                     {"evidence": "shipment.delivered", "source": "aurix_demo_delivery"}]}
+    with mock.patch.object(crypto.Signer, "sign", legacy_sign):  # blocks in the format used before version 2
+        legacy = package(items=[signed(att("payment.authorized")),
+                                signed(att("shipment.delivered", when="2026-11-10T08:00:00Z"))])
+
+    def respell(sig):  # another base64 spelling of the same signature bytes
+        sig["signature"] = sig["signature"][:-3] + chr(ord(sig["signature"][-3]) + 1) + "=="
+    two = [auth, signed(att("shipment.delivered", when="2026-11-10T08:00:00Z", n=2)),
+           signed(att("shipment.delivered", when="2026-11-10T09:00:00Z", n=1))]
     return {
+        "two_deliveries": (package(items=two, decided_at="2026-11-10T10:00:00Z"), keys()),
+        "legacy_signatures": (legacy, keys()),
+        "legacy_manifest_time_moved": (edit_json(legacy, "manifest.sig.json",
+                                                 lambda d: d.update(created_at="2026-11-10T09:00:01Z")), keys()),
+        "manifest_time_moved": (edit_json(package(), "manifest.sig.json",
+                                          lambda d: d.update(created_at="2026-11-10T09:00:01Z")), keys()),
+        "respelled_signature": (edit_json(package(), "manifest.sig.json", respell), keys()),
+        "unknown_block_version": (edit_json(package(), "manifest.sig.json", lambda d: d.update(version=3)), keys()),
         "cond_release": (package(t=cond_terms(), items=[auth, dlv, insp], decided_at="2026-11-11T09:00:00Z"), keys()),
         "cond_at_least": (package(t=cond_terms(either), items=[auth, dlv, insp], decided_at="2026-11-11T09:00:00Z"),
                           keys()),
@@ -100,6 +119,29 @@ def test_browser_verifier_matches_python(tmp_path):
     assert results["cond_release"] == results["cond_at_least"] == results["cond_window_release"] == "VALID"
     assert results["cond_dispute_void"] == "VALID" and results["cond_falsified"] == "INVALID"
     assert results["tampered_byte"] == results["falsified_decision"] == results["revoked_carrier"] == "INVALID"
+    assert results["legacy_signatures"] == results["two_deliveries"] == "VALID"
+    assert results["legacy_manifest_time_moved"] == results["manifest_time_moved"] == "INVALID"
+    assert results["respelled_signature"] == results["unknown_block_version"] == "INVALID"
+
+
+@pytest.mark.skipif(not NODE, reason="node not installed")
+def test_browser_verifier_reports_malformed_packages(tmp_path):
+    """Both verifiers refuse a malformed package with a report; neither raises."""
+    paths = []
+    for i, (name, (path, fn)) in enumerate(sorted(MALFORMED.items())):
+        p = tmp_path / f"m{i}.zip"
+        p.write_bytes(edit_json(package(), path, fn))
+        paths.append((name, p))
+    kf = tmp_path / "keys.json"
+    kf.write_text(json.dumps(keys()))
+    for keyfile in (str(kf), "-"):
+        out = subprocess.run([NODE, "-e", RUNNER, str(JS), keyfile, *(str(p) for _, p in paths)],
+                             capture_output=True, text=True, check=True)
+        js = json.loads(out.stdout)
+        for name, p in paths:
+            py = verify_package(read_zip(p.read_bytes()), keys() if keyfile != "-" else None)
+            assert js[str(p)]["result"] == py["result"] == "INVALID", (name, keyfile)
+            assert js[str(p)]["errors"] and py["errors"], (name, keyfile)
 
 
 @pytest.mark.skipif(not NODE, reason="node not installed")
