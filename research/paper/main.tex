@@ -282,8 +282,8 @@ the evidence admissible at evaluation time $t$ is
 E_t = \bigl\{\, a \;:\; \mathrm{Verify}_{pk_k}(a) \,\wedge\, \mathrm{type}(m) \in \mathrm{role}(k) \,\wedge\,
 \mathrm{ref}(m) = \mathrm{id}(T) \,\wedge\, k \text{ valid at } r(a) \,\wedge\, r(a) \le \min(t, D) \,\bigr\}.
 \end{equation}
-Evidence received before the deadline and evaluated after it counts. Evidence received after the deadline does not
-count, whatever date it carries. Amounts are compared as decimals and references by exact equality.
+Evidence received before the deadline counts even if evaluated after it; evidence received after the deadline does
+not, whatever date it carries. Amounts are compared as decimals and references by exact equality.
 
 \subsection{Conditions}
 
@@ -494,7 +494,7 @@ approximation. Each response is signed by a quorum of two scorer instances.
 
 \section{Reference implementation}\label{sec:impl}
 
-AURIX\footnote{Source, tests, experiment scripts and raw results: \url{https://github.com/joeylukoji/Aurix}. The
+AURIX\footnote{Source, tests, experiment scripts, raw results and plotting code (\code{research/paper}): \url{https://github.com/joeylukoji/Aurix}. The
 network is a testnet whose token has no monetary value.} implements the method as services behind a gateway. The
 custodian is PayPal: an order is created with intent \code{AUTHORIZE}, and the provider honours an authorisation for
 at most 29 days, which bounds $D$. The carrier, inspector and customs sources are simulated services, each with its
@@ -619,10 +619,9 @@ them.
 
 \paragraph{After correction.} We repeated the study on packages built by the corrected code, and on a package in
 the earlier signature format: 259,008 trials, all rejected by a specific check, none by the last-resort guard. The
-JavaScript verifier was run on the same trials and gave the same verdict on each. Verification takes time
-proportional to the number of signatures: about 0.20~ms per signature in Python and 0.33~ms in Node.js on one
-core of a shared virtual machine, or 1.1~ms and 2.1~ms for a two-attestation package. The verifier's test suite
-grew from 55 to 113 cases.
+JavaScript verifier was run on the same trials and gave the same verdict on each. Verification costs about
+0.20~ms per signature in Python and 0.33~ms in Node.js (1.1~ms and 2.1~ms for a two-attestation package) on one
+core of a shared virtual machine. The verifier's test suite grew from 55 to 113 cases.
 
 
 
@@ -682,8 +681,8 @@ Table~\ref{tab:ml} come from rules chosen after one look at the test split.
 \paragraph{Results.} LightGBM fails the stability constraint. Its validation PR-AUC over the five seeds is 0.093,
 0.004, 0.815, 0.015 and 0.004, and for the second and fifth seeds its test PR-AUC is 0.011, the test prevalence,
 which is what a constant score obtains. An earlier version of the project reported a PR-AUC of 0.939 for the same model
-family from a two-way split with thresholds tuned on test data; that figure is withdrawn. We report the instability
-without a diagnosis. The logistic regression is selected and reaches a test PR-AUC of 0.973, against 0.938 for the
+family from a two-way split with thresholds tuned on test data; that figure is withdrawn. We do not diagnose the
+instability. The logistic regression is selected and reaches a test PR-AUC of 0.973, against 0.938 for the
 business rule; the paired bootstrap difference is 0.035 (95\% CI 0.029--0.041). The medium level, set for 95\%
 recall on validation, obtains 94.4\% on test (CI 93.4--95.4), at the edge of its target.
 
@@ -697,12 +696,11 @@ map fitted at 0.42\% prevalence understates risk when prevalence is 1.09\%.
 The attributions show that the model relies on very little. Among fraudulent test transactions the mean absolute
 contribution to the log-odds is 10.8 for the drained-account flag and 8.6 for the transaction type, against 1.2
 for the amount-to-balance ratio and less than 0.01 for either sender-history feature. Fraud in PaySim follows one
-script, which is also why a hand-written predicate comes within 0.035 of the model. We retain the logistic model
-because it is stable, calibrated and explained exactly. The benchmark does not show that it would perform on real
-payment traffic.
+script, which is why a one-line predicate comes within 0.035 of the model. We retain the logistic model because it is
+stable, calibrated and exactly explained; the benchmark does not show how it would perform on real traffic.
 
-\paragraph{Reproduction.} We re-ran the frozen protocol twice on a second machine, from the dataset file identified
-by its SHA-256 hash. Every stored number was reproduced exactly, including the five LightGBM seeds.
+\paragraph{Reproduction.} We re-ran the frozen protocol twice on a second machine, from the PaySim file with SHA-256
+\code{16910f90\ldots4eea6b}. Every stored number was reproduced exactly, including the five LightGBM seeds.
 
 
 
@@ -710,29 +708,25 @@ by its SHA-256 hash. Every stored number was reproduced exactly, including the f
 
 \paragraph{Fair exchange and contracts.} Asokan, Shoup and Waidner~\cite{asokan2000} exchange signatures with a
 third party that intervenes only on failure; our arbiter has that optimistic role, reduced to a suspension and a
-ruling. FairSwap~\cite{dziembowski2018} and hashed timelock contracts~\cite{herlihy2018} make a payment conditional on
-a fact that a contract can check by itself, such as a preimage or a proof of misbehaviour. The conditions we target
-are events outside any ledger, which no contract can check. Contract
+ruling. FairSwap~\cite{dziembowski2018} and hashed timelock contracts~\cite{herlihy2018} condition a payment on a fact
+that a contract can check itself, such as a preimage. Our conditions are events outside any ledger. Contract
 languages~\cite{peytonjones2000,bartoletti2018,lamela2018} show that a few combinators cover many financial
-agreements, and we adopt their restraint so that two implementations can be kept in agreement by testing.
+agreements; we adopt their restraint so that two implementations can be tested against each other.
 
 \paragraph{Oracles and tamper evidence.} Town Crier~\cite{zhang2016} and DECO~\cite{zhang2020} authenticate the
 path from a web source to a contract. They do not remove the source's ability to state something
-false~\cite{caldarelli2020,eskandari2021}, and neither do we; the verifier report says so on every run. Linked
-time-stamping~\cite{haber1991} makes later alteration of a record detectable.
-We use a BFT ledger~\cite{buchman2018} for that purpose only: it stores a commitment to the outcome and the
-attestors' confirmations, and none of the business logic. Our two studies of the verifier follow work that found
-accepting bugs in TLS certificate validation by cross-checking implementations~\cite{brubaker2014} and
-disagreements between Ed25519 verifiers on edge cases~\cite{chalkias2020}.
+false~\cite{caldarelli2020,eskandari2021}, and neither do we; the verifier report says so on every run. We use a BFT
+ledger~\cite{buchman2018} as linked time-stamping does~\cite{haber1991}: it stores a commitment to the outcome and
+the attestors' confirmations, not the business logic. Our studies of the verifier follow cross-checking work on TLS certificate validation~\cite{brubaker2014} and on
+Ed25519 verifiers~\cite{chalkias2020}.
 
 
 
 \section{Limitations}\label{sec:limits}
 
 \paragraph{What was not measured.} We did not measure how often the language model drafts the condition a buyer
-intended; that needs purchase descriptions labelled by human raters, which we do not have. The carrier, inspector
-and customs services are simulations. Captures were exercised end to end against a local simulator of the provider's
-interface and the ledger, and a capture on the provider's sandbox remains to be done.
+intended; that needs descriptions labelled by human raters. The carrier, inspector and customs services are
+simulations, and captures ran against a local simulator of the provider, not its sandbox.
 
 \paragraph{Signatures do not observe the world.} The method reduces ``did the goods arrive'' to ``did the agreed
 carrier sign that they arrived''. A dishonest or mistaken source produces a valid package for a false event. The
@@ -740,31 +734,39 @@ carrier sign that they arrived''. A dishonest or mistaken source produces a vali
 
 \paragraph{The operator is a single evaluator and timekeeper.} A wrong decision is detectable after the fact, but
 one service takes it. The same service issues the receipts, so it can withhold evidence or misdate its arrival, and
-a package cannot show what was left out of it. Moving receipt issuance and the evaluation of $\delta$ to the
-validators would close this gap. The ledger currently anchors outcomes only.
+a package cannot show what was left out of it. Moving receipts and the evaluation of $\delta$ to the validators
+would close this gap; the ledger currently anchors outcomes only.
 
 \paragraph{Keys and time formats.} A compromised source key can release funds until it is revoked; checking
-validity at reception time limits back-dating only. The two verifiers parse signing times strictly, but read the
-other times in a package with their platform's ISO~8601 parser. The parsers differ on unusual strings, so an
-operator that signed one could make the verifiers disagree.
+validity at reception time limits back-dating only. The verifiers parse signing times strictly but read the other
+times with their platform's ISO~8601 parser, and the parsers differ on unusual strings.
 
-\paragraph{Models.} A schema stops malformed drafts from executing. It does not stop a well-formed condition that
-differs from what the buyer meant, against which the only control is the buyer's reading. The scorer was fitted on
-synthetic data with one fraud pattern, and its calibration already shifts between two splits of that data.
+\paragraph{Models.} A schema stops malformed drafts from executing, not a well-formed condition that differs from
+what the buyer meant; the only control is the buyer's reading. The scorer was fitted on synthetic data with one fraud
+pattern, and its calibration already shifts between two splits of that data.
 
 \section{Conclusion}
 
 A conditional payment can be made checkable by an outsider while the money stays with the provider that already
 holds it and no model sits in the trusted path. The method needs signed evidence with reception receipts, a small
 decision function that independent programs replay, and a rule that model output binds nobody until a person signs
-it as terms. Testing our implementation against these definitions was more productive than we expected: random
-cross-checking and exhaustive bit flips found an order dependence, an unsigned envelope and a crash path in code
-that passed its own tests, and a seed sweep rejected a model that a single run could have reported at 0.81 or at
-0.004. Two pieces of work come next: evaluating $\delta$ and issuing receipts on the validators, and a human-rated
-study of drafted conditions against buyer intent.
+it as terms. Random cross-checking and exhaustive bit flips found an order dependence, an unsigned envelope and a crash
+path in code that passed its own tests, and a seed sweep rejected a model that a single run could have reported at
+0.81 or at 0.004. Next come evaluating $\delta$ and issuing receipts on the validators, and a human-rated
+study of drafted conditions.
 
-\paragraph{Availability.} The repository holds the services and both verifiers; experiment scripts, raw outputs
-and plotting code are under \code{research/paper}. The PaySim file has SHA-256 \code{16910f90\ldots4eea6b}.
+\paragraph{Declaration of AI assistance.} The author, a French speaker, used a generative AI assistant (Claude Code,
+Anthropic) to help translate and choose complex English technical terms and to correct small errors of language. It
+also helped draft and revise parts of the text, write and run the experiment scripts and the verifier corrections
+(Section~\ref{sec:eval}), and produce the figures. The author is responsible for the content.
+
+\begin{otherlanguage}{french}
+\paragraph{Déclaration d'usage de l'IA.} L'auteur, francophone, a utilisé un assistant d'IA générative (Claude Code,
+Anthropic) pour l'aider à traduire et à choisir des termes techniques anglais complexes et à corriger de petites
+erreurs de langue. Il a aussi aidé à rédiger et réviser une partie du texte, à écrire et exécuter les scripts
+d'expérience et les corrections du vérificateur (section~\ref{sec:eval}), et à produire les figures. L'auteur est
+responsable du contenu.
+\end{otherlanguage}
 
 \newpage
 {\footnotesize
